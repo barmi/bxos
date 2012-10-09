@@ -45,6 +45,7 @@ struct FIFO32 {
 };
 void fifo32_init(struct FIFO32 *fifo, int size, int *buf, struct TASK *task);
 int fifo32_put(struct FIFO32 *fifo, int data);
+int fifo32_put_io(struct FIFO32 *fifo, int data);
 int fifo32_get(struct FIFO32 *fifo);
 int fifo32_status(struct FIFO32 *fifo);
 
@@ -222,6 +223,8 @@ struct TASK {
 	int *fat;
 	char *cmdline;
 	unsigned char langmode, langbyte1;
+	char name[16];
+	unsigned int time;
 };
 struct TASKLEVEL {
 	int running; /* 동작하고 있는 태스크 수  */
@@ -233,6 +236,7 @@ struct TASKCTL {
 	char lv_change; /* 다음 번 태스크 스위치 시, 레벨도 바꾸는 편이 좋은 지 판단 */
 	struct TASKLEVEL level[MAX_TASKLEVELS];
 	struct TASK tasks0[MAX_TASKS];
+	int alloc, alive;
 };
 extern struct TASKCTL *taskctl;
 extern struct TIMER *task_timer;
@@ -242,6 +246,8 @@ struct TASK *task_alloc(void);
 void task_run(struct TASK *task, int level, int priority);
 void task_switch(void);
 void task_sleep(struct TASK *task);
+void task_free(struct TASK *task);
+void taskmgr_task(unsigned int memtotal);
 
 /* window.c */
 struct MENU {
@@ -307,6 +313,10 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 int *inthandler0d(int *esp);
 int *inthandler0c(int *esp);
 void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col);
+void dbg_init(struct SHEET *sht);
+void dbg_newline(struct DBGWIN *dbg);
+void dbg_putstr0(char *s, int c);
+void dbg_putstr1(char *s, int l, int c);
 
 /* file.c */
 struct FILEINFO {
@@ -320,9 +330,6 @@ void file_readfat(int *fat, unsigned char *img);
 void file_loadfile(int clustno, int size, char *buf, int *fat, char *img);
 struct FILEINFO *file_search(char *name, struct FILEINFO *finfo, int max);
 char *file_loadfile2(int clustno, int *psize, int *fat);
-void dbg_init(struct SHEET *sht);
-void dbg_putstr0(char *s, int c);
-void dbg_putstr1(char *s, int l, int c);
 
 
 /* tek.c */
@@ -338,5 +345,6 @@ struct MNLV {
 	unsigned short *buf;
 	int pos, num;
 };
+void keywin_on(struct SHEET *key_win);
 struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal);
 struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal);

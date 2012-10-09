@@ -213,7 +213,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 	} else if (strcmp(cmdline, "dir") == 0 && cons->sht != 0) {
 		cmd_dir(cons, cmdline);
 	} else if (strcmp(cmdline, "task") == 0) {
-//		cmd_task();
+		cmd_task();
 	} else if (strcmp(cmdline, "exit") == 0) {
 		cmd_exit(cons, fat);
 	} else if (strncmp(cmdline, "start ", 6) == 0) {
@@ -222,6 +222,8 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_ncst(cons, cmdline, memtotal);
 	} else if (strncmp(cmdline, "langmode ", 9) == 0) {
 		cmd_langmode(cons, cmdline);
+	} else if (strncmp(cmdline, "tmgr", 4) == 0) {
+		open_taskmgr(memtotal);
 	} else if (cmdline[0] != 0) {
 		if (cmd_app(cons, fat, cmdline) == 0) {
 			/* 커맨드도 아니고, 어플리케이션도 아니고, 빈 행도 아니다 */
@@ -282,7 +284,6 @@ void cmd_dir(struct CONSOLE *cons, char *cmdline)
 	return;
 }
 
-/*
 void cmd_task(void)
 {
 	int i;
@@ -301,7 +302,7 @@ void cmd_task(void)
 	}
 	return;
 }
-*/
+
 void cmd_exit(struct CONSOLE *cons, int *fat)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
@@ -416,6 +417,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 				q[esp + i] = p[dathrb + i];
 			}
 			start_app(0x1b, 0 * 8 + 4, esp, 1 * 8 + 4, &(task->tss.esp0));
+			strcpy(task->name, "console");
 			shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
 			for (i = 0; i < MAX_SHEETS; i++) {
 				sht = &(shtctl->sheets0[i]);

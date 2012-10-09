@@ -2,15 +2,17 @@
 
 #include "bootpack.h"
 #include <stdio.h>
+#include <string.h>
 
 #define KEYCMD_LED		0xed
 
-//struct TASK *fdc, *inout, *taskmgr;
+struct TASK *fdc, *inout, *taskmgr;
 
 void keywin_off(struct SHEET *key_win);
-void keywin_on(struct SHEET *key_win);
 void close_console(struct SHEET *sht);
 void close_constask(struct TASK *task);
+void close_taskmgr(void);
+void init_menu(struct MNLV *mnlv, struct MENU **menu);
 
 void HariMain(void)
 {
@@ -384,6 +386,8 @@ struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal)
 	task->tss.ds = 1 * 8;
 	task->tss.fs = 1 * 8;
 	task->tss.gs = 1 * 8;
+	task->time = 0;
+	strcpy(task->name, "console");
 	*((int *) (task->tss.esp + 4)) = (int) sht;
 	*((int *) (task->tss.esp + 8)) = memtotal;
 	task_run(task, 2, 2); /* level=2, priority=2 */
@@ -424,7 +428,6 @@ void close_console(struct SHEET *sht)
 	return;
 }
 
-#if 0
 void open_taskmgr(unsigned int memtotal)
 {
 	int i;
@@ -467,5 +470,4 @@ void close_taskmgr(void)
 	taskmgr = 0;
 	return;
 }
-#endif
 

@@ -39,6 +39,16 @@ int fifo32_put(struct FIFO32 *fifo, int data)
 	return 0;
 }
 
+int fifo32_put_io(struct FIFO32 *fifo, int data)
+/* fifo32_put궻뒆귟뜛귒뗕?붎 */
+{
+	int rc;
+	io_cli();
+	rc = fifo32_put(fifo, data);
+	io_sti();
+	return rc;
+}
+
 int fifo32_get(struct FIFO32 *fifo)
 /* FIFO로부터 데이터를 1개 가져온다 */
 {

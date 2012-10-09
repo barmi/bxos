@@ -93,6 +93,17 @@ void make_textbox8(struct SHEET *sht, int x0, int y0, int sx, int sy, int c)
 	return;
 }
 
+void make_header8(struct SHEET *sht, int x0, int y0, int sx, int sy, int c)
+{
+	int x1 = x0 + sx, y1 = y0 + sy;
+	boxfill8(sht->buf, sht->bxsize, c          , x0 + 0, y0 + 0, x1 - 1, y1 - 1);
+	boxfill8(sht->buf, sht->bxsize, COL8_FFFFFF, x0 + 0, y0 - 1, x1 + 0, y0 - 1);
+	boxfill8(sht->buf, sht->bxsize, COL8_FFFFFF, x0 - 1, y0 - 1, x0 - 1, y1 + 0);
+	boxfill8(sht->buf, sht->bxsize, COL8_848484, x0 + 0, y1 + 0, x1 - 1, y1 + 0);
+	boxfill8(sht->buf, sht->bxsize, COL8_848484, x1 + 0, y0 + 0, x1 + 0, y1 + 0);
+	return;
+}
+
 void change_wtitle8(struct SHEET *sht, char act)
 {
 	int x, y, xsize = sht->bxsize;
