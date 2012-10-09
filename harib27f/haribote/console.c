@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+struct DBGWIN dbg;
+
 void console_task(struct SHEET *sheet, int memtotal)
 {
 	struct TASK *task = task_now();
@@ -209,7 +211,9 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 	} else if (strcmp(cmdline, "cls") == 0 && cons->sht != 0) {
 		cmd_cls(cons);
 	} else if (strcmp(cmdline, "dir") == 0 && cons->sht != 0) {
-		cmd_dir(cons);
+		cmd_dir(cons, cmdline);
+	} else if (strcmp(cmdline, "task") == 0) {
+//		cmd_task();
 	} else if (strcmp(cmdline, "exit") == 0) {
 		cmd_exit(cons, fat);
 	} else if (strncmp(cmdline, "start ", 6) == 0) {
@@ -221,7 +225,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 	} else if (cmdline[0] != 0) {
 		if (cmd_app(cons, fat, cmdline) == 0) {
 			/* 커맨드도 아니고, 어플리케이션도 아니고, 빈 행도 아니다 */
-			cons_putstr0(cons, "Bad command.\n\n");
+			cons_putstr0(cons, "Bad command or file name.\n\n");
 		}
 	}
 	return;
@@ -250,7 +254,7 @@ void cmd_cls(struct CONSOLE *cons)
 	return;
 }
 
-void cmd_dir(struct CONSOLE *cons)
+void cmd_dir(struct CONSOLE *cons, char *cmdline)
 {
 	struct FILEINFO *finfo = (struct FILEINFO *) (ADR_DISKIMG + 0x002600);
 	int i, j;
@@ -269,6 +273,8 @@ void cmd_dir(struct CONSOLE *cons)
 				s[10] = finfo[i].ext[1];
 				s[11] = finfo[i].ext[2];
 				cons_putstr0(cons, s);
+				//s[22] = ' ';
+				dbg_putstr0(s,COL8_FFFFFF);
 			}
 		}
 	}
@@ -276,6 +282,26 @@ void cmd_dir(struct CONSOLE *cons)
 	return;
 }
 
+/*
+void cmd_task(void)
+{
+	int i;
+	char msg[40];
+	dbg_putstr0("ID  NAME            LV  TIME      \n", COL8_FFFFFF);
+	dbg_putstr0("--- --------------- --- ----------\n", COL8_FFFFFF);
+	for (i = 0; i < taskctl->alloc; i++) {
+		if (taskctl->tasks0[i].flags == 0) {
+			continue;
+		}
+		memset(msg, 0, sizeof(msg));
+		sprintf(msg, "%3d %-15s   %1d %7d.%02d\n", i,
+			taskctl->tasks0[i].name, taskctl->tasks0[i].level,
+			taskctl->tasks0[i].time / 100, taskctl->tasks0[i].time % 100);
+		dbg_putstr0(msg, COL8_FFFFFF);
+	}
+	return;
+}
+*/
 void cmd_exit(struct CONSOLE *cons, int *fat)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
@@ -436,14 +462,19 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 
 	if (edx == 1) {
+		// api_putchar
 		cons_putchar(cons, eax & 0xff, 1);
 	} else if (edx == 2) {
+		// api_putstr0
 		cons_putstr0(cons, (char *) ebx + ds_base);
 	} else if (edx == 3) {
+		// api_putstr1
 		cons_putstr1(cons, (char *) ebx + ds_base, ecx);
 	} else if (edx == 4) {
+		// api_end
 		return &(task->tss.esp0);
 	} else if (edx == 5) {
+		// api_openwin
 		sht = sheet_alloc(shtctl);
 		sht->task = task;
 		sht->flags |= 0x10;
@@ -453,37 +484,45 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 		sheet_updown(sht, shtctl->top); /* 지금의 마우스와 같은 높이가 되도록 지정： 마우스는 이 위가 된다 */
 		reg[7] = (int) sht;
 	} else if (edx == 6) {
+		// api_putstrwin
 		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		putfonts8_asc(sht->buf, sht->bxsize, esi, edi, eax, (char *) ebp + ds_base);
 		if ((ebx & 1) == 0) {
 			sheet_refresh(sht, esi, edi, esi + ecx * 8, edi + 16);
 		}
 	} else if (edx == 7) {
+		// api_boxfilwin
 		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		boxfill8(sht->buf, sht->bxsize, ebp, eax, ecx, esi, edi);
 		if ((ebx & 1) == 0) {
 			sheet_refresh(sht, eax, ecx, esi + 1, edi + 1);
 		}
 	} else if (edx == 8) {
+		// api_initmalloc
 		memman_init((struct MEMMAN *) (ebx + ds_base));
 		ecx &= 0xfffffff0;	/* 16바이트 단위로 */
 		memman_free((struct MEMMAN *) (ebx + ds_base), eax, ecx);
 	} else if (edx == 9) {
+		// api_malloc
 		ecx = (ecx + 0x0f) & 0xfffffff0; /* 16바이트 단위로 절상 */
 		reg[7] = memman_alloc((struct MEMMAN *) (ebx + ds_base), ecx);
 	} else if (edx == 10) {
+		// api_free
 		ecx = (ecx + 0x0f) & 0xfffffff0; /* 16바이트 단위로 절상 */
 		memman_free((struct MEMMAN *) (ebx + ds_base), eax, ecx);
 	} else if (edx == 11) {
+		// api_point
 		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		sht->buf[sht->bxsize * edi + esi] = eax;
 		if ((ebx & 1) == 0) {
 			sheet_refresh(sht, esi, edi, esi + 1, edi + 1);
 		}
 	} else if (edx == 12) {
+		// api_refreshwin
 		sht = (struct SHEET *) ebx;
 		sheet_refresh(sht, eax, ecx, esi, edi);
 	} else if (edx == 13) {
+		// api_linewin
 		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		hrb_api_linewin(sht, eax, ecx, esi, edi, ebp);
 		if ((ebx & 1) == 0) {
@@ -500,8 +539,10 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			sheet_refresh(sht, eax, ecx, esi + 1, edi + 1);
 		}
 	} else if (edx == 14) {
+		// api_closewin
 		sheet_free((struct SHEET *) ebx);
 	} else if (edx == 15) {
+		// api_getkey
 		for (;;) {
 			io_cli();
 			if (fifo32_status(&task->fifo) == 0) {
@@ -539,15 +580,20 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			}
 		}
 	} else if (edx == 16) {
+		// api_alloctimer
 		reg[7] = (int) timer_alloc();
 		((struct TIMER *) reg[7])->flags2 = 1;	/* 자동 캔슬 유효 */
 	} else if (edx == 17) {
+		// api_inittimer
 		timer_init((struct TIMER *) ebx, &task->fifo, eax + 256);
 	} else if (edx == 18) {
+		// api_settimer
 		timer_settime((struct TIMER *) ebx, eax);
 	} else if (edx == 19) {
+		// api_freetimer
 		timer_free((struct TIMER *) ebx);
 	} else if (edx == 20) {
+		// api_beep
 		if (eax == 0) {
 			i = io_in8(0x61);
 			io_out8(0x61, i & 0x0d);
@@ -560,6 +606,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			io_out8(0x61, (i | 0x03) & 0x0f);
 		}
 	} else if (edx == 21) {
+		// api_fopen
 		for (i = 0; i < 8; i++) {
 			if (task->fhandle[i].buf == 0) {
 				break;
@@ -578,10 +625,12 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			}
 		}
 	} else if (edx == 22) {
+		// api_fclose
 		fh = (struct FILEHANDLE *) eax;
 		memman_free_4k(memman, (int) fh->buf, fh->size);
 		fh->buf = 0;
 	} else if (edx == 23) {
+		// api_fseek
 		fh = (struct FILEHANDLE *) eax;
 		if (ecx == 0) {
 			fh->pos = ebx;
@@ -597,6 +646,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			fh->pos = fh->size;
 		}
 	} else if (edx == 24) {
+		// api_fsize
 		fh = (struct FILEHANDLE *) eax;
 		if (ecx == 0) {
 			reg[7] = fh->size;
@@ -606,6 +656,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 			reg[7] = fh->pos - fh->size;
 		}
 	} else if (edx == 25) {
+		// api_fread
 		fh = (struct FILEHANDLE *) eax;
 		for (i = 0; i < ecx; i++) {
 			if (fh->pos == fh->size) {
@@ -616,6 +667,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 		}
 		reg[7] = i;
 	} else if (edx == 26) {
+		// api_cmdline
 		i = 0;
 		for (;;) {
 			*((char *) ebx + ds_base + i) =  task->cmdline[i];
@@ -629,6 +681,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 		}
 		reg[7] = i;
 	} else if (edx == 27) {
+		// api_getlang
 		reg[7] = task->langmode;
 	}
 	return 0;
@@ -704,3 +757,103 @@ void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col)
 
 	return;
 }
+
+
+
+
+
+
+
+void dbg_init(struct SHEET *sht)
+{
+	dbg.sht = sht;
+	dbg.bc  = 16 + 1 + 3 * 6 + 4 * 36;
+	dbg.x0  = 300;
+	dbg.y0  = 480;
+	dbg.cx  = 0;
+	dbg.cy  = 0;
+	dbg.wd  = 400;
+	dbg.ht  = 240;
+	make_textbox8(dbg.sht, dbg.x0, dbg.y0, dbg.wd, dbg.ht, dbg.bc);
+	putfonts8_asc_sht(dbg.sht, dbg.x0, dbg.y0, COL8_FFFFFF, dbg.bc, "Debug Window", 12);
+	sheet_refresh(dbg.sht, dbg.x0 - 3, dbg.y0 - 3, dbg.x0 + dbg.wd + 3, dbg.y0 + dbg.ht + 3);
+	return;
+}
+
+void dbg_putchar(int chr, int fc)
+{
+	char s[2];
+	s[0] = chr;
+	s[1] = 0;
+	if (s[0] == 0x09) {	/* 탭 */
+		for (;;) {
+			if (dbg.sht != 0) {
+				putfonts8_asc_sht(dbg.sht, dbg.x0 + dbg.cx, dbg.y0 + dbg.cy, fc, dbg.bc, " ", 1);
+			}
+			dbg.cx += 8;
+			if (dbg.cx == dbg.wd) {
+				dbg_newline(&dbg);
+			}
+			if ((dbg.cx & 0x1f) == 0) {
+				break;	/* 32로 나누어 떨어지면 break */
+			}
+		}
+	} else if (s[0] == 0x0a) {	/* 개행 */
+		dbg_newline(&dbg);
+	} else if (s[0] == 0x0d) {	/* 복귀 */
+		/* 우선 아무것도 하지 않는다 */
+	} else {	/* 보통 문자 */
+		if (dbg.sht != 0) {
+			putfonts8_asc_sht(dbg.sht, dbg.x0 + dbg.cx, dbg.y0 + dbg.cy, fc, dbg.bc, s, 1);
+		}
+		dbg.cx += 8;
+		if (dbg.cx == dbg.wd) {
+			dbg_newline(&dbg);
+		}
+	}
+	return;
+}
+
+void dbg_newline(struct DBGWIN *dbg)
+{
+	int x, y;
+	struct SHEET *sht = dbg->sht;
+	dbg->cx = 0;
+	if (dbg->cy < dbg->ht - 16) {
+		dbg->cy += 16; /* 렅궻뛱귉 */
+	} else {
+		/* 긚긏깓?깑 */
+		if (sht != 0) {
+			for (y = dbg->y0; y < dbg->y0 + dbg->ht - 16; y++) {
+				for (x = dbg->x0; x < dbg->x0 + dbg->wd; x++) {
+					sht->buf[x + y * sht->bxsize] = sht->buf[x + (y + 16) * sht->bxsize];
+				}
+			}
+			for (y = dbg->y0 + dbg->ht - 16; y < dbg->y0 + dbg->ht; y++) {
+				for (x = dbg->x0; x < dbg->x0 + dbg->wd; x++) {
+					sht->buf[x + y * sht->bxsize] = dbg->bc;//COL8_000000;//table_8_565[dbg->bc];
+				}
+			}
+			sheet_refresh(sht, dbg->x0, dbg->y0, dbg->x0 + dbg->wd, dbg->y0 + dbg->ht);
+		}
+	}
+	return;
+}
+
+void dbg_putstr0(char *s, int c)
+{
+	for (; *s != 0; s++) {
+		dbg_putchar(*s, c);
+	}
+	return;
+}
+
+void dbg_putstr1(char *s, int l, int c)
+{
+	int i;
+	for (i = 0; i < l; i++) {
+		dbg_putchar(s[i], c);
+	}
+	return;
+}
+

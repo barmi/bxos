@@ -172,7 +172,43 @@ void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s
 void init_mouse_cursor8(char *mouse, char bc)
 /* 마우스 커서를 준비(16 x16) */
 {
-	static char cursor[16][16] = {
+	static char cursor[MAX_MOUSE_CURSOR][16][16] = {
+		{
+		"*...............",
+		"**..............",
+		"*O*.............",
+		"*OO*............",
+		"*OOO*...........",
+		"*OOOO*..........",
+		"*OOOOO*.........",
+		"*OOOOOO*........",
+		"*OOOOOOO*.......",
+		"*OOOOOOOO*......",
+		"*OOOOOOOOO*.....",
+		"*OOO*OO*****....",
+		"*OO*.*OO*.......",
+		"*O*..*OO*.......",
+		"**....*OO*......",
+		".......**......."
+		},{
+		"********........",
+		"*OOOOOO*........",
+		"*OOOOO*.........",
+		"*OOOO*..........",
+		"*OOOO*..........",
+		"*OO**O*.........",
+		"*O*..*O*........",
+		"**....*O*.......",
+		".......*O*....**",
+		"........*O*..*O*",
+		".........*O**OO*",
+		"..........*OOOO*",
+		"..........*OOOO*",
+		".........*OOOOO*",
+		"........*OOOOOO*",
+		"........********"
+		}
+/*
 		"**************..",
 		"*OOOOOOOOOOO*...",
 		"*OOOOOOOOOO*....",
@@ -189,19 +225,21 @@ void init_mouse_cursor8(char *mouse, char bc)
 		"*..........*OOO*",
 		"............*OO*",
 		".............***"
+*/
 	};
-	int x, y;
+	int x, y, c;
 
+	for (c = 0; c < MAX_MOUSE_CURSOR; c++)
 	for (y = 0; y < 16; y++) {
 		for (x = 0; x < 16; x++) {
-			if (cursor[y][x] == '*') {
-				mouse[y * 16 + x] = COL8_000000;
+			if (cursor[c][y][x] == '*') {
+				mouse[c * SIZE_MOUSE_CURSOR + y * 16 + x] = COL8_000000;
 			}
-			if (cursor[y][x] == 'O') {
-				mouse[y * 16 + x] = COL8_FFFFFF;
+			if (cursor[c][y][x] == 'O') {
+				mouse[c * SIZE_MOUSE_CURSOR + y * 16 + x] = COL8_FFFFFF;
 			}
-			if (cursor[y][x] == '.') {
-				mouse[y * 16 + x] = bc;
+			if (cursor[c][y][x] == '.') {
+				mouse[c * SIZE_MOUSE_CURSOR + y * 16 + x] = bc;
 			}
 		}
 	}

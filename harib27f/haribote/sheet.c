@@ -2,7 +2,9 @@
 
 #include "bootpack.h"
 
-#define SHEET_USE		1
+#define SHEET_USE			0x01
+#define SHEET_HAS_CURSOR	0x20	// HAS CURSOR
+#define SHEET_APP_WIN		0x10	// MAKE BY APPLICATION
 
 struct SHTCTL *shtctl_init(struct MEMMAN *memman, unsigned char *vram, int xsize, int ysize)
 {

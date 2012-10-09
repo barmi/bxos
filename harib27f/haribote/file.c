@@ -2,6 +2,7 @@
 
 #include "bootpack.h"
 
+
 void file_readfat(int *fat, unsigned char *img)
 /* 디스크 이미지내의 FAT의 압축을 푼다 */
 {

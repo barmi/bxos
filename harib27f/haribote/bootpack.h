@@ -1,14 +1,15 @@
 /* asmhead.nas */
 struct BOOTINFO { /* 0x0ff0-0x0fff */
-	char cyls; /* ƒu[ƒgƒZƒNƒ^‚Í‚Ç‚±‚Ü‚ÅƒfƒBƒXƒN‚ð“Ç‚ñ‚¾‚Ì‚© */
-	char leds; /* ƒu[ƒgŽž‚ÌƒL[ƒ{[ƒh‚ÌLED‚Ìó‘Ô */
-	char vmode; /* ƒrƒfƒIƒ‚[ƒh  ‰½ƒrƒbƒgƒJƒ‰[‚© */
+	char cyls; /* boot sector´Â ¾îµð±îÁö µð½ºÅ©¸¦ ÀÐ¾ú´Â°¡  */
+	char leds; /* ºÎÆ®½Ã Å°º¸µåÀÇ  LED»óÅÂ */
+	char vmode; /* ºñµð¿À ¸ðµå ¸î ºñÆ® ÄÃ·¯ÀÎ°¡  */
 	char reserve;
-	short scrnx, scrny; /* ‰æ–Ê‰ð‘œ“x */
+	short scrnx, scrny; /* È­¸éÇØ»óµµ */
 	char *vram;
 };
 #define ADR_BOOTINFO	0x00000ff0
 #define ADR_DISKIMG		0x00100000
+#define ADR_DMABUF		0x00268000
 
 /* naskfunc.nas */
 void io_hlt(void);
@@ -74,6 +75,9 @@ void putblock8_8(char *vram, int vxsize, int pxsize,
 #define COL8_008484		14
 #define COL8_848484		15
 
+#define MAX_MOUSE_CURSOR	2
+#define SIZE_MOUSE_CURSOR	(16*16)
+
 /* dsctbl.c */
 struct SEGMENT_DESCRIPTOR {
 	short limit_low, base_low;
@@ -132,12 +136,12 @@ void enable_mouse(struct FIFO32 *fifo, int data0, struct MOUSE_DEC *mdec);
 int mouse_decode(struct MOUSE_DEC *mdec, unsigned char dat);
 
 /* memory.c */
-#define MEMMAN_FREES		4090	/* ‚±‚ê‚Å–ñ32KB */
+#define MEMMAN_FREES		4090	/* ÀÌ°ÍÀ¸·Î ¾à 32KB */
 #define MEMMAN_ADDR			0x003c0000
-struct FREEINFO {	/* ‚ ‚«î•ñ */
+struct FREEINFO {	/* ºó Á¤º¸  */
 	unsigned int addr, size;
 };
-struct MEMMAN {		/* ƒƒ‚ƒŠŠÇ— */
+struct MEMMAN {		/* ¸Þ¸ð¸® ¸Å´ÏÁö¸ÕÆ® */
 	int frees, maxfrees, lostsize, losts;
 	struct FREEINFO free[MEMMAN_FREES];
 };
@@ -196,8 +200,8 @@ int timer_cancel(struct TIMER *timer);
 void timer_cancelall(struct FIFO32 *fifo);
 
 /* mtask.c */
-#define MAX_TASKS		1000	/* Å‘åƒ^ƒXƒN” */
-#define TASK_GDT0		3		/* TSS‚ðGDT‚Ì‰½”Ô‚©‚çŠ„‚è“–‚Ä‚é‚Ì‚© */
+#define MAX_TASKS		1000	/* ÃÖ´ë ÅÂ½ºÅ© ¼ö  */
+#define TASK_GDT0		3		/* TSS¸¦ GDTÀÇ ¸î ¹øºÎÅÍ ÇÒ´çÇÒ °ÍÀÎ°¡  */
 #define MAX_TASKS_LV	100
 #define MAX_TASKLEVELS	10
 struct TSS32 {
@@ -207,7 +211,7 @@ struct TSS32 {
 	int ldtr, iomap;
 };
 struct TASK {
-	int sel, flags; /* sel‚ÍGDT‚Ì”Ô†‚Ì‚±‚Æ */
+	int sel, flags; /* selÀº GDT ¹øÈ£ */
 	int level, priority;
 	struct FIFO32 fifo;
 	struct TSS32 tss;
@@ -220,13 +224,13 @@ struct TASK {
 	unsigned char langmode, langbyte1;
 };
 struct TASKLEVEL {
-	int running; /* “®ì‚µ‚Ä‚¢‚éƒ^ƒXƒN‚Ì” */
-	int now; /* Œ»Ý“®ì‚µ‚Ä‚¢‚éƒ^ƒXƒN‚ª‚Ç‚ê‚¾‚©•ª‚©‚é‚æ‚¤‚É‚·‚é‚½‚ß‚Ì•Ï” */
+	int running; /* µ¿ÀÛÇÏ°í ÀÖ´Â ÅÂ½ºÅ© ¼ö  */
+	int now; /* ÇöÀç µ¿ÀÛÇÏ°í ÀÖ´Â ÅÂ½ºÅ©ÀÇ ¹øÈ£ */
 	struct TASK *tasks[MAX_TASKS_LV];
 };
 struct TASKCTL {
-	int now_lv; /* Œ»Ý“®ì’†‚ÌƒŒƒxƒ‹ */
-	char lv_change; /* ŽŸ‰ñƒ^ƒXƒNƒXƒCƒbƒ`‚Ì‚Æ‚«‚ÉAƒŒƒxƒ‹‚à•Ï‚¦‚½‚Ù‚¤‚ª‚¢‚¢‚©‚Ç‚¤‚© */
+	int now_lv; /* ÇöÀç µ¿ÀÛ ÁßÀÇ ·¹º§  */
+	char lv_change; /* ´ÙÀ½ ¹ø ÅÂ½ºÅ© ½ºÀ§Ä¡ ½Ã, ·¹º§µµ ¹Ù²Ù´Â ÆíÀÌ ÁÁÀº Áö ÆÇ´Ü */
 	struct TASKLEVEL level[MAX_TASKLEVELS];
 	struct TASK tasks0[MAX_TASKS];
 };
@@ -240,23 +244,50 @@ void task_switch(void);
 void task_sleep(struct TASK *task);
 
 /* window.c */
+struct MENU {
+	int level;
+	char name[16], exec[32];
+	struct MENU *next, *sub;
+};
 void make_window8(unsigned char *buf, int xsize, int ysize, char *title, char act);
+void make_menu8(unsigned char *buf, int xsize, int ysize, char *title, struct MENU *menu, int num);
 void putfonts8_asc_sht(struct SHEET *sht, int x, int y, int c, int b, char *s, int l);
 void make_textbox8(struct SHEET *sht, int x0, int y0, int sx, int sy, int c);
+void make_header8(struct SHEET *sht, int x0, int y0, int sx, int sy, int c);
 void make_wtitle8(unsigned char *buf, int xsize, char *title, char act);
+void make_mtitle8(unsigned char *buf, int xsize, char *title, char act);
 void change_wtitle8(struct SHEET *sht, char act);
+void change_mtitle8(struct SHEET *sht, int level, int mn_flg, char act);
 
 /* console.c */
 struct CONSOLE {
 	struct SHEET *sht;
-	int cur_x, cur_y, cur_c;
+	int cur_x, cur_y;		// cursor position
+	int cur_c;				// cursor color
 	struct TIMER *timer;
+	// skshin
+	char *linebuf;			// ¹®ÀÚ¸¦ ³»¿ëÀ» ÀúÀå(È­¸é¿¡ º¸ÀÌ´Â ºÎºÐÀ» Æ÷ÇÔÇÏ´Â ÀüÃ¼ ¹öÆÛ)
+	int cwidth, cheight;	// ÄÜ¼ÖÀÇ ¹®ÀÚ´ÜÀ§ W,H
+	int scroll_y;			// ÇöÀç ½ºÅ©·ÑµÇ¾î ÀÖ´Â À§Ä¡
+	int bgcolor;
+	int width, height;
 };
+
+struct DBGWIN {
+	struct SHEET *sht;
+	int bc;				// -> bgcolor
+	int x0, y0;
+	int cx, cy;
+	int wd, ht;
+};
+
 struct FILEHANDLE {
 	char *buf;
 	int size;
 	int pos;
 };
+
+
 void console_task(struct SHEET *sheet, int memtotal);
 void cons_putchar(struct CONSOLE *cons, int chr, char move);
 void cons_newline(struct CONSOLE *cons);
@@ -265,7 +296,8 @@ void cons_putstr1(struct CONSOLE *cons, char *s, int l);
 void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal);
 void cmd_mem(struct CONSOLE *cons, int memtotal);
 void cmd_cls(struct CONSOLE *cons);
-void cmd_dir(struct CONSOLE *cons);
+void cmd_dir(struct CONSOLE *cons, char *cmdline);
+void cmd_task(void);
 void cmd_exit(struct CONSOLE *cons, int *fat);
 void cmd_start(struct CONSOLE *cons, char *cmdline, int memtotal);
 void cmd_ncst(struct CONSOLE *cons, char *cmdline, int memtotal);
@@ -283,15 +315,28 @@ struct FILEINFO {
 	unsigned short time, date, clustno;
 	unsigned int size;
 };
+
 void file_readfat(int *fat, unsigned char *img);
 void file_loadfile(int clustno, int size, char *buf, int *fat, char *img);
 struct FILEINFO *file_search(char *name, struct FILEINFO *finfo, int max);
 char *file_loadfile2(int clustno, int *psize, int *fat);
+void dbg_init(struct SHEET *sht);
+void dbg_putstr0(char *s, int c);
+void dbg_putstr1(char *s, int l, int c);
+
 
 /* tek.c */
 int tek_getsize(unsigned char *p);
 int tek_decomp(unsigned char *p, char *q, int size);
 
 /* bootpack.c */
+#define MAX_MENU		256
+#define MAX_MNLV		  8
+struct MNLV {
+	struct MENU *menu;
+	struct SHEET *sht;
+	unsigned short *buf;
+	int pos, num;
+};
 struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal);
 struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal);

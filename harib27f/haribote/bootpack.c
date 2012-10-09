@@ -5,6 +5,8 @@
 
 #define KEYCMD_LED		0xed
 
+//struct TASK *fdc, *inout, *taskmgr;
+
 void keywin_off(struct SHEET *key_win);
 void keywin_on(struct SHEET *key_win);
 void close_console(struct SHEET *sht);
@@ -21,7 +23,7 @@ void HariMain(void)
 	unsigned int memtotal;
 	struct MOUSE_DEC mdec;
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
-	unsigned char *buf_back, buf_mouse[256];
+	unsigned char *buf_back, buf_mouse[SIZE_MOUSE_CURSOR*MAX_MOUSE_CURSOR];
 	struct SHEET *sht_back, *sht_mouse;
 	struct TASK *task_a, *task;
 	static char keytable0[0x80] = {
@@ -125,6 +127,9 @@ void HariMain(void)
 	*((int *) 0x0fe8) = (int) nihongo;
 	memman_free_4k(memman, (int) fat, 4 * 2880);
 
+	// skshin 
+	dbg_init(sht_back);
+
 	for (;;) {
 		if (fifo32_status(&keycmd) > 0 && keycmd_wait < 0) {
 			/* 키보드 컨트롤러에 보낼 데이터가 있으면, 보낸다 */
@@ -159,6 +164,9 @@ void HariMain(void)
 				}
 			}
 			if (256 <= i && i <= 511) { /* 키보드 데이터 */
+				/*
+					keyboard code : http://ubuntuforums.org/archive/index.php/t-1059755.html
+				*/
 				if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
 					if (key_shift == 0) {
 						s[0] = keytable0[i - 256];
@@ -236,6 +244,9 @@ void HariMain(void)
 				}
 				if (i == 256 + 0x57) {	/* F11 */
 					sheet_updown(shtctl->sheets[1], shtctl->top - 1);
+				}
+				if (i == 256 + 0x58) {	/* F12 */
+					/* create debug console */
 				}
 				if (i == 256 + 0xfa) {	/* 키보드가 데이터를 무사하게 받았다 */
 					keycmd_wait = -1;
@@ -384,7 +395,7 @@ struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 	struct SHEET *sht = sheet_alloc(shtctl);
-	unsigned char *buf = (unsigned char *) memman_alloc_4k(memman, 256 * 165);
+	unsigned char *buf = (unsigned char *) memman_alloc_4k(memman, 256 * 165); // 256 / 8 = 32, 165 / 16 = 10 .. 5
 	sheet_setbuf(sht, buf, 256, 165, -1); /* 투명색없음 */
 	make_window8(buf, 256, 165, "console", 0);
 	make_textbox8(sht, 8, 28, 240, 128, COL8_000000);
@@ -412,3 +423,49 @@ void close_console(struct SHEET *sht)
 	close_constask(task);
 	return;
 }
+
+#if 0
+void open_taskmgr(unsigned int memtotal)
+{
+	int i;
+	struct SHEET *sht;
+	struct SHTCTL *ctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	if (taskmgr != 0) {
+		for (i = 0; i < MAX_SHEETS; i++) {
+			sht = &(ctl->sheets0[i]);
+			if (sht->task == taskmgr) {
+				keywin_on(sht);
+			}
+		}
+		return;
+	}
+	taskmgr = task_alloc();
+	int *tmgr_fifo = (int *) memman_alloc_4k(memman, 128 * 4);
+	taskmgr->tss.esp = memman_alloc_4k(memman, 64 * 1024) + 64 * 1024 - 8;
+	taskmgr->tss.eip = (int) &taskmgr_task;
+	taskmgr->tss.es = 1 * 8;
+	taskmgr->tss.cs = 2 * 8;
+	taskmgr->tss.ss = 1 * 8;
+	taskmgr->tss.ds = 1 * 8;
+	taskmgr->tss.fs = 1 * 8;
+	taskmgr->tss.gs = 1 * 8;
+	taskmgr->time = 0;
+	strcpy(taskmgr->name, "taskmgr");
+	*((int *) (taskmgr->tss.esp + 4)) = memtotal;
+	task_run(taskmgr, 2, 2); /* level=2, priority=2 */
+	fifo32_init(&taskmgr->fifo, 128, tmgr_fifo, taskmgr);
+	return;
+}
+
+void close_taskmgr(void)
+{
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	task_sleep(taskmgr);
+	memman_free_4k(memman, (int) taskmgr->fifo.buf, 128 * 4);
+	task_free(taskmgr);
+	taskmgr = 0;
+	return;
+}
+#endif
+
