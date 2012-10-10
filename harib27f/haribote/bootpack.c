@@ -349,6 +349,8 @@ void HariMain(void)
 				sht2 = shtctl->sheets0 + (i - 2024);
 				memman_free_4k(memman, (int) sht2->buf, 256 * 165);
 				sheet_free(sht2);
+			} else if (i == 2280) {	/* task manager¸¦ ´Ý´Â´Ù */
+				close_taskmgr();
 			}
 		}
 	}

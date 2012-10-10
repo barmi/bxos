@@ -292,13 +292,17 @@ void taskmgr_task(unsigned int memtotal)
 			io_sti();
 		} else {
 			i = fifo32_get(&task->fifo);
+			/*
+			sprintf(msg, "taskmgr->fifo : %d\n", i);
+			dbg_putstr0(msg, COL8_FFFFFF);
+			*/
 			io_sti();
 			if (i == 1) {
 				timer_settime(task_timer, 100);
 				curr_time = taskctl->tasks0[1].time;
 				task_display(sht, offset, 1, curr_time - prev_time, memtotal);
 				prev_time = curr_time;
-			} else if (i == 4) {	/* 「?」??ンクリック */
+			} else if (i == 4) {	/* task manager terminate */
 				timer_cancel(task_timer);
 				break;
 			} else if (256 <= i && i <= 511) { /* キ???ドデ??（?スクA経由） */
@@ -353,11 +357,11 @@ void task_display(struct SHEET *sht, int offset, int cpu, int time, unsigned int
 
 	boxfill8(sht->buf, sht->bxsize, COL8_FFFFFF, 8, 250, 8 + 280 - 1, 250 + 32 - 1);
 	memset(msg, 0, sizeof(msg));
-	sprintf(msg, "CPU    :        %3d ％     %4d TS",
+	sprintf(msg, "CPU    :        %3d %%     %4d TS",
 		100 - min(time, 100), taskctl->alive);
 	putfonts8_asc(sht->buf, sht->bxsize, x, y + 202, COL8_0000FF, /*1,*/ msg);
 	memset(msg, 0, sizeof(msg));
-	sprintf(msg, "Memory :    %7d ?  %7d KB",
+	sprintf(msg, "Memory :    %7d /  %7d KB",
 		(memtotal - memman_total(memman)) / 1024, memtotal / 1024);
 	putfonts8_asc(sht->buf, sht->bxsize, x, y + 218, COL8_0000FF, /*1,*/ msg);
 	sheet_refresh(sht, 8, 48, 8 + 280, 48 + 234);

@@ -222,7 +222,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_ncst(cons, cmdline, memtotal);
 	} else if (strncmp(cmdline, "langmode ", 9) == 0) {
 		cmd_langmode(cons, cmdline);
-	} else if (strncmp(cmdline, "tmgr", 4) == 0) {
+	} else if (strncmp(cmdline, "taskmgr", 7) == 0) {
 		open_taskmgr(memtotal);
 	} else if (cmdline[0] != 0) {
 		if (cmd_app(cons, fat, cmdline) == 0) {
