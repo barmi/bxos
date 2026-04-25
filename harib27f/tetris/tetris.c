@@ -68,8 +68,8 @@ static const unsigned char piece_color[7] = {
     5,   /* T : magenta       */
     2,   /* S : green         */
     1,   /* Z : red           */
-    33,  /* L : orange (216팔) */
-    4,   /* J : blue          */
+    33,  /* L : orange (216팔, RGB 255,102,0)  */
+    216, /* J : blue   (216팔, RGB 102,153,255) */
 };
 
 static unsigned int rng_state = 0x12345678;
