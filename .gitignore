@@ -1,0 +1,18 @@
+# 3단계 빌드 산출물
+build/
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# Wine prefix (사용자 홈에 만들어지지만 만약 프로젝트 안에 두는 경우 대비)
+.wine-bxos/
+
+# macOS
+.DS_Store
+
+# 에디터
+*.swp
+*.swo
+.vscode/
+.idea/

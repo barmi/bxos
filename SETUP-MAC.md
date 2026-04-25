@@ -131,19 +131,80 @@ chmod +x build-mac.sh tools/wine-wrappers/_run.sh tools/wine-wrappers/install-sy
 
 ---
 
-## 3단계 — Wine 의존 제거 (선택, 시간 많이 듬)
+## 3단계 — Wine 의존 제거 (NASM + i686-elf-gcc + Python)
 
-`tools/modern/` 에 일부 도구를 Python으로 작성해 두었습니다.
+원본 `z_tools/*.exe` 를 한 개도 부르지 않고 빌드합니다. 앱 `.hrb` 파일들은 OSASKCMP 압축이라 변환이 비현실적이라 기존 빌드본을 그대로 디스크 이미지에 복사합니다(원본 트리에 이미 빌드되어 있음). 커널 + 부트로더 + asmhead 는 처음부터 다시 빌드.
+
+### 3.1 사전 설치
 
 ```bash
-# 폰트 변환 (makefont 대체)
-python3 tools/modern/makefont.py harib27f/haribote/hankaku.txt out.bin
+brew install nasm qemu
 
-# FAT12 이미지 생성 (edimg 의 harib27f 사용 케이스 대체)
-python3 tools/modern/mkfat12.py --boot ipl.bin --out my.img file1 file2 ...
+# i686-elf-gcc 가 brew 에 있으면 ↓ 우선
+brew install i686-elf-gcc i686-elf-binutils
+
+# 폴백 (Makefile.modern 가 자동 감지·전환):
+brew install x86_64-elf-gcc x86_64-elf-binutils
 ```
 
-자세한 내용과 남은 작업은 `tools/modern/README.md` 참고. 어셈블러는 `brew install nasm`, 컴파일러는 `brew install i686-elf-gcc` (또는 `x86_64-elf-gcc -m32`) 가 필요합니다. `nask.exe` ↔ NASM 간 문법 차이를 메우는 `*.nas` 수정이 가장 큰 작업입니다.
+설치 확인:
+
+```bash
+nasm -v
+i686-elf-gcc --version || x86_64-elf-gcc --version
+```
+
+### 3.2 빌드
+
+```bash
+chmod +x build-modern.sh
+./build-modern.sh info        # 도구/경로 확인
+./build-modern.sh             # build/modern/haribote.img 까지 한번에
+./run-qemu.sh build/modern/haribote.img
+```
+
+### 3.3 단계별 빌드 (실패 시 어디서 막혔는지 좁힐 때)
+
+```bash
+make -f tools/modern/Makefile.modern build/modern/ipl09.bin       # NASM 만
+make -f tools/modern/Makefile.modern build/modern/asmhead.bin
+make -f tools/modern/Makefile.modern build/modern/naskfunc.o
+make -f tools/modern/Makefile.modern build/modern/bootpack.o      # gcc
+make -f tools/modern/Makefile.modern build/modern/bootpack.elf    # ld 링크
+make -f tools/modern/Makefile.modern build/modern/bootpack.hrb    # HRB 헤더
+make -f tools/modern/Makefile.modern build/modern/haribote.sys    # 합침
+make -f tools/modern/Makefile.modern build/modern/haribote.img    # 디스크
+```
+
+### 3.4 동작/구조 비교
+
+```bash
+# 원본과 사이즈/구조 비교
+ls -la harib27f/haribote.img build/modern/haribote.img
+file harib27f/haribote.img build/modern/haribote.img
+
+# 부트섹터(IPL) 비교 — nas2nasm 변환·재어셈블이 byte-identical 인지
+cmp -n 512 harib27f/haribote.img build/modern/haribote.img && echo "boot OK"
+```
+
+### 3.5 자주 발생할 만한 문제
+
+* **NASM 어셈블 에러 `parser: instruction expected`** — `nas2nasm.py` 가 잡지 못한 nask 디렉티브가 있는 경우. 해당 줄을 보고 수동으로 주석 처리하거나 `nas2nasm.py` 에 규칙 추가.
+* **`undefined reference to '_io_hlt'`** — nask 어셈블리는 심볼 앞에 `_` 를 강제로 붙이지만 i686-elf-gcc 는 `_` 없이 export 합니다. `nas2nasm.py` 에 `s/^_(\w+)/\1/` 규칙을 추가하거나, 임시로 `naskfunc.nasm.nas` 의 GLOBAL 선언만 일괄 치환:
+
+  ```bash
+  sed -i '' 's/_\([a-z_]\+\)/\1/g' build/modern/naskfunc.nasm.nas
+  ```
+
+  이때 ASCII 식별자만 영향을 받게 정확한 치환을 사용해야 함. 그 후 `make -f tools/modern/Makefile.modern build/modern/naskfunc.o` 재실행.
+
+* **`error: implicit declaration of function`** 류 경고가 에러로 — `Makefile.modern` 에서 `-Werror` 는 끈 상태이지만 만약 가족이 들어와 있다면 제거. 또는 `CFLAGS` 에 `-Wno-implicit-function-declaration -Wno-int-conversion -Wno-pointer-sign` 추가.
+
+* **`bootpack.elf` 가 0 바이트 / 링크 에러** — `linker-bootpack.lds` 의 ENTRY 지정이 안 맞거나 startup 의 `.text.startup` 섹션이 안 들어왔을 수 있음. `objdump -h build/modern/bootpack.elf` 로 섹션 배치 확인. 첫 32바이트가 0, 그 다음 `_HariStartup` 의 push/mov/pop/jmp 가 있어야 정상.
+
+* **부팅은 되는데 화면이 깨짐 / 멈춤** — 메모리 레이아웃 문제. `hrbify.py` 의 `--stack-top 3136k --esp-init 3136k` 가 원본 `obj2bim ... stack:3136k` 와 일치해야 함. 조정해 보고 동작 변화 관찰.
+
+자세한 트러블슈팅과 빌드 흐름 그림은 [`tools/modern/README.md`](tools/modern/README.md) 참고.
 
 ---
 
@@ -171,19 +232,27 @@ Cowork가 못 하는 것 (Mac에서 직접 해야 함):
 
 ```
 bxos/
-├── README.utf8.md                # README EUC-KR → UTF-8 사본
-├── SETUP-MAC.md                  # 이 문서
-├── run-qemu.sh                   # QEMU 실행 래퍼
-├── build-mac.sh                  # Wine 기반 빌드 진입점
+├── README.utf8.md                  # README EUC-KR → UTF-8 사본
+├── SETUP-MAC.md                    # 이 문서
+├── run-qemu.sh                     # QEMU 실행 래퍼
+├── build-mac.sh                    # 2단계 (Wine) 진입점
+├── build-modern.sh                 # 3단계 (NASM + gcc + Python) 진입점
+├── build/                          # 빌드 산출물 (gitignore 추천)
+│   └── modern/
 └── tools/
-    ├── shim/                     # build-mac.sh 가 자동 생성 (copy/del 흉내)
-    ├── wine-wrappers/
-    │   ├── _run.sh               # 공용 wine 호출 래퍼
-    │   └── install-symlinks.sh   # nask/cc1/... 심볼릭 링크 생성
-    └── modern/
+    ├── shim/                       # build-mac.sh 가 자동 생성 (copy/del 흉내)
+    ├── wine-wrappers/              # 2단계용 wine 래퍼들
+    │   ├── _run.sh
+    │   └── install-symlinks.sh
+    └── modern/                     # 3단계용 모듈
         ├── README.md
-        ├── makefont.py
-        └── mkfat12.py
+        ├── nas2nasm.py             # nask → NASM 패치
+        ├── hrbify.py               # 32B HRB 헤더 + 0x1B JMP 패치
+        ├── makefont.py             # hankaku.txt → 폰트 바이너리
+        ├── mkfat12.py              # FAT12 플로피 이미지 생성
+        ├── linker-bootpack.lds     # GNU ld 링커 스크립트
+        ├── startup_kernel.s        # 커널 진입점 + 32B 헤더 자리
+        └── Makefile.modern         # GNU make 빌드 정의
 ```
 
 원본 트리(`harib27f/`, `z_tools/`, `z_osabin/`, `z_new_o`, `z_new_w`)는 전혀 건드리지 않았습니다. 모두 add-only.

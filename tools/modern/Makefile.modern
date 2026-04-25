@@ -1,0 +1,170 @@
+# tools/modern/Makefile.modern
+#
+# Wine 의존을 제거하고 NASM + i686-elf-gcc + Python 도구로 BxOS 커널을 빌드합니다.
+# 호출 예:
+#     make -f tools/modern/Makefile.modern haribote.img
+#     make -f tools/modern/Makefile.modern haribote.sys
+#     make -f tools/modern/Makefile.modern clean
+#
+# 전제(macOS Apple Silicon):
+#     brew install nasm i686-elf-gcc i686-elf-binutils qemu
+#         ※ i686-elf-* 가 없는 brew 환경이면 brew install x86_64-elf-gcc 로 대체하고
+#           CC/LD/OBJCOPY 변수를 x86_64-elf-* 로 바꾸세요. (-m32 옵션 추가 필요)
+#
+# 빌드 흐름:
+#   1) ipl09.nas      ─ NASM ─►  ipl09.bin   (boot sector, ORG 0x7c00)
+#   2) asmhead.nas    ─ NASM ─►  asmhead.bin (ORG 0xc200)
+#   3) *.c            ─ gcc  ─►  *.o (ELF i386)
+#      naskfunc.nas   ─ NASM ─►  naskfunc.o
+#      hankaku.txt    ─ makefont.py ─► hankaku.bin ─ objcopy ─► hankaku.o
+#   4) ld(linker-bootpack.lds) → bootpack.elf
+#      objcopy -O binary → bootpack.bin
+#      hrbify.py → bootpack.hrb
+#   5) cat asmhead.bin bootpack.hrb > haribote.sys
+#   6) mkfat12.py 로 haribote.img 생성 (앱들은 기존 빌드본을 그대로 사용)
+
+# ─── 경로 ────────────────────────────────────────────────────────────
+# 이 Makefile 은 어디서 호출하든 PROJECT_ROOT 를 자기 위치 기준으로 잡는다.
+THIS_MK    := $(lastword $(MAKEFILE_LIST))
+TOOLS_DIR  := $(abspath $(dir $(THIS_MK)))
+PROJ_ROOT  := $(abspath $(TOOLS_DIR)/../..)
+KSRC       := $(PROJ_ROOT)/harib27f/haribote
+HARIB      := $(PROJ_ROOT)/harib27f
+BUILD      := $(PROJ_ROOT)/build/modern
+
+# ─── 도구 ────────────────────────────────────────────────────────────
+NASM       ?= nasm
+CC         ?= i686-elf-gcc
+LD         ?= i686-elf-ld
+OBJCOPY    ?= i686-elf-objcopy
+PY         ?= python3
+NAS2NASM   := $(PY) $(TOOLS_DIR)/nas2nasm.py
+HRBIFY     := $(PY) $(TOOLS_DIR)/hrbify.py
+MAKEFONT   := $(PY) $(TOOLS_DIR)/makefont.py
+MKFAT12    := $(PY) $(TOOLS_DIR)/mkfat12.py
+
+# 폴백: i686-elf-* 가 없으면 x86_64-elf-* + -m32, 그것도 없으면 시스템 gcc + -m32
+ifeq ($(shell command -v $(CC) 2>/dev/null),)
+  ifneq ($(shell command -v x86_64-elf-gcc 2>/dev/null),)
+    CC      := x86_64-elf-gcc
+    LD      := x86_64-elf-ld
+    OBJCOPY := x86_64-elf-objcopy
+    EXTRA_CFLAGS := -m32
+  else
+    CC      := gcc
+    LD      := ld
+    OBJCOPY := objcopy
+    EXTRA_CFLAGS := -m32
+  endif
+endif
+
+# ─── C 컴파일 옵션 ───────────────────────────────────────────────────
+CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
+         -fno-asynchronous-unwind-tables -fno-builtin -nostdlib \
+         -O2 -Wall -fno-common -I$(KSRC) $(EXTRA_CFLAGS)
+
+# ld 는 -m elf_i386 으로 32비트 출력 강제
+LDFLAGS = -m elf_i386 -nostdlib -static -T $(TOOLS_DIR)/linker-bootpack.lds
+
+# ─── 소스 ────────────────────────────────────────────────────────────
+KERNEL_C_SRCS := $(wildcard $(KSRC)/*.c)
+KERNEL_OBJS   := $(patsubst $(KSRC)/%.c,$(BUILD)/%.o,$(KERNEL_C_SRCS)) \
+                 $(BUILD)/naskfunc.o $(BUILD)/hankaku.o $(BUILD)/startup_kernel.o
+
+# 앱 .hrb 들 (이미 빌드된 원본을 그대로 사용)
+APP_HRBS := $(wildcard $(HARIB)/*/*.hrb)
+
+# 디스크 이미지에 들어갈 파일들 (원본 Makefile 의 wbinimg/copy 를 모사)
+IMG_FILES := $(KSRC)/ipl09.nas $(HARIB)/make.bat \
+             $(BUILD)/haribote.sys \
+             $(APP_HRBS) \
+             $(KSRC)/euc.txt
+
+# ─── 기본 타겟 ───────────────────────────────────────────────────────
+.PHONY: all clean info kernel
+all: $(BUILD)/haribote.img
+
+info:
+	@echo "PROJ_ROOT  = $(PROJ_ROOT)"
+	@echo "BUILD      = $(BUILD)"
+	@echo "CC         = $(CC)  (CFLAGS=$(CFLAGS))"
+	@echo "LD         = $(LD)"
+	@echo "NASM       = $(NASM)"
+	@echo "Kernel C   = $(words $(KERNEL_C_SRCS)) files"
+	@echo "App HRBs   = $(words $(APP_HRBS)) files"
+
+kernel: $(BUILD)/bootpack.hrb
+
+# ─── 빌드 디렉터리 ────────────────────────────────────────────────────
+$(BUILD):
+	mkdir -p $@
+
+# ─── *.nas → 패치 → NASM ─────────────────────────────────────────────
+# 1) ipl09 (boot sector, flat binary, ORG 0x7c00)
+$(BUILD)/ipl09.bin: $(KSRC)/ipl09.nas | $(BUILD)
+	$(NAS2NASM) $< $(BUILD)/ipl09.nasm.nas
+	$(NASM) -f bin -o $@ $(BUILD)/ipl09.nasm.nas
+
+# 2) asmhead (flat binary, ORG 0xc200)
+$(BUILD)/asmhead.bin: $(KSRC)/asmhead.nas | $(BUILD)
+	$(NAS2NASM) $< $(BUILD)/asmhead.nasm.nas
+	$(NASM) -f bin -o $@ $(BUILD)/asmhead.nasm.nas
+
+# 3) naskfunc (ELF object)
+$(BUILD)/naskfunc.o: $(KSRC)/naskfunc.nas | $(BUILD)
+	$(NAS2NASM) $< $(BUILD)/naskfunc.nasm.nas
+	$(NASM) -f elf32 -o $@ $(BUILD)/naskfunc.nasm.nas
+
+# ─── *.c → ELF object ────────────────────────────────────────────────
+$(BUILD)/%.o: $(KSRC)/%.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# ─── hankaku.txt → hankaku.bin → ELF object ──────────────────────────
+$(BUILD)/hankaku.bin: $(KSRC)/hankaku.txt | $(BUILD)
+	$(MAKEFONT) $< $@
+
+$(BUILD)/hankaku.o: $(BUILD)/hankaku.bin | $(BUILD)
+	# binary blob 을 _hankaku 라는 심볼로 export
+	cd $(BUILD) && $(OBJCOPY) -I binary -O elf32-i386 -B i386 \
+	    --rename-section .data=.rodata \
+	    --redefine-sym _binary_hankaku_bin_start=_hankaku \
+	    --redefine-sym _binary_hankaku_bin_end=_ehankaku \
+	    --redefine-sym _binary_hankaku_bin_size=_hankaku_size \
+	    hankaku.bin hankaku.o
+
+# ─── startup_kernel.s → ELF object ───────────────────────────────────
+$(BUILD)/startup_kernel.o: $(TOOLS_DIR)/startup_kernel.s | $(BUILD)
+	$(NASM) -f elf32 -o $@ $<
+
+# ─── 링크 → flat → HRB ───────────────────────────────────────────────
+$(BUILD)/bootpack.elf: $(KERNEL_OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
+
+$(BUILD)/bootpack.bin: $(BUILD)/bootpack.elf
+	$(OBJCOPY) -O binary $< $@
+
+# 원본 obj2bim 인자: stack:3136k → stack-top = 3136k.
+# malloc 은 bim2hrb 의 마지막 인자 0 → --malloc 0.
+$(BUILD)/bootpack.hrb: $(BUILD)/bootpack.bin
+	$(HRBIFY) --in $< --out $@ \
+	    --stack-top 3136k --esp-init 3136k --malloc 0
+
+# ─── haribote.sys = asmhead.bin + bootpack.hrb ───────────────────────
+$(BUILD)/haribote.sys: $(BUILD)/asmhead.bin $(BUILD)/bootpack.hrb
+	cat $(BUILD)/asmhead.bin $(BUILD)/bootpack.hrb > $@
+	@echo "[ok] $@: $$(stat -f%z $@ 2>/dev/null || stat -c%s $@) bytes"
+
+# ─── 디스크 이미지 ───────────────────────────────────────────────────
+$(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(BUILD)/haribote.sys $(APP_HRBS)
+	$(MKFAT12) --boot $(BUILD)/ipl09.bin --out $@ \
+	    $(BUILD)/haribote.sys \
+	    $(KSRC)/ipl09.nas \
+	    $(HARIB)/make.bat \
+	    $(APP_HRBS) \
+	    $(KSRC)/euc.txt
+	@echo
+	@echo "[ok] $@ 생성 완료. 다음 명령으로 부팅:"
+	@echo "    qemu-system-i386 -m 32 -fda $@ -boot a"
+
+clean:
+	rm -rf $(BUILD)
