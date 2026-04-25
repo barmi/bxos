@@ -369,6 +369,102 @@ void cmd_langmode(struct CONSOLE *cons, char *cmdline)
 	return;
 }
 
+/*
+ * HE2 (Haribote Executable v2) 헤더 — he2/libbxos/include/he2.h 와 동기.
+ * 커널은 stdint 가 없어 명시적 정수 타입을 쓴다.
+ */
+struct he2_hdr_kern {
+	char			magic[4];		/* "HE2\0"            */
+	unsigned short	version;		/* 1                  */
+	unsigned short	header_size;	/* 32                 */
+	unsigned int	entry_off;		/* DS-relative entry  */
+	unsigned int	image_size;		/* file image size    */
+	unsigned int	bss_size;		/* zero-fill after image */
+	unsigned int	stack_size;
+	unsigned int	heap_size;
+	unsigned int	flags;
+};
+
+static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
+		struct MEMMAN *memman, char *p, int appsiz)
+{
+	struct he2_hdr_kern *h = (struct he2_hdr_kern *) p;
+	unsigned int total_sz, image_sz, bss_sz, heap_sz, stack_sz;
+	int i, j;
+	char *q;
+	struct SHTCTL *shtctl;
+	struct SHEET *sht;
+
+	if ((unsigned) appsiz < sizeof(struct he2_hdr_kern)) {
+		cons_putstr0(cons, ".he2 too small.\n");
+		return 0;
+	}
+	if (h->header_size < sizeof(struct he2_hdr_kern)) {
+		cons_putstr0(cons, ".he2 header_size invalid.\n");
+		return 0;
+	}
+	if (h->image_size != (unsigned int) appsiz) {
+		cons_putstr0(cons, ".he2 image_size mismatch.\n");
+		return 0;
+	}
+	if (h->entry_off < h->header_size || h->entry_off >= h->image_size) {
+		cons_putstr0(cons, ".he2 entry_off out of range.\n");
+		return 0;
+	}
+
+	image_sz = h->image_size;
+	bss_sz   = h->bss_size;
+	heap_sz  = h->heap_size;
+	stack_sz = h->stack_size ? h->stack_size : (16 * 1024);
+
+	total_sz = image_sz + bss_sz + heap_sz + stack_sz;
+	total_sz = (total_sz + 0x0FFFu) & ~0x0FFFu;	/* 4K round-up */
+
+	q = (char *) memman_alloc_4k(memman, total_sz);
+	if (q == 0) {
+		cons_putstr0(cons, ".he2 out of memory.\n");
+		return 0;
+	}
+	task->ds_base = (int) q;
+
+	/* 코드와 데이터 양쪽 모두 같은 영역(q)을 가리키게 한다.        */
+	set_segmdesc(task->ldt + 0, total_sz - 1, (int) q, AR_CODE32_ER + 0x60);
+	set_segmdesc(task->ldt + 1, total_sz - 1, (int) q, AR_DATA32_RW + 0x60);
+
+	/* file image 복사 */
+	for (i = 0; i < (int) image_sz; i++) {
+		q[i] = p[i];
+	}
+	/* BSS + heap 영역 zero-fill (스택은 미초기화로 둠) */
+	for (j = i; j < (int) (image_sz + bss_sz + heap_sz); j++) {
+		q[j] = 0;
+	}
+
+	/* CS:EIP = 0:entry_off, ESP = total_sz (스택 top) */
+	start_app(h->entry_off, 0 * 8 + 4, total_sz, 1 * 8 + 4,
+			&(task->tss.esp0));
+
+	strcpy(task->name, "console");
+	shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	for (i = 0; i < MAX_SHEETS; i++) {
+		sht = &(shtctl->sheets0[i]);
+		if ((sht->flags & 0x11) == 0x11 && sht->task == task) {
+			sheet_free(sht);
+		}
+	}
+	for (i = 0; i < 8; i++) {
+		if (task->fhandle[i].buf != 0) {
+			memman_free_4k(memman, (int) task->fhandle[i].buf,
+					task->fhandle[i].size);
+			task->fhandle[i].buf = 0;
+		}
+	}
+	timer_cancelall(&task->fifo);
+	memman_free_4k(memman, (int) q, total_sz);
+	task->langbyte1 = 0;
+	return 1;
+}
+
 int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
@@ -391,20 +487,30 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 	/* 파일을 찾는다 */
 	finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
 	if (finfo == 0 && name[i - 1] != '.') {
-		/* 발견되지 않았기 때문에 뒤로 ".HRB"를 붙여 한번 더 찾아 본다 */
+		/* 새 포맷(.HE2) 우선, 없으면 기존 .HRB 도 시도 */
 		name[i    ] = '.';
 		name[i + 1] = 'H';
-		name[i + 2] = 'R';
-		name[i + 3] = 'B';
+		name[i + 2] = 'E';
+		name[i + 3] = '2';
 		name[i + 4] = 0;
 		finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+		if (finfo == 0) {
+			name[i + 1] = 'H';
+			name[i + 2] = 'R';
+			name[i + 3] = 'B';
+			finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+		}
 	}
 
 	if (finfo != 0) {
 		/* 파일이 발견되었을 경우 */
 		appsiz = finfo->size;
 		p = file_loadfile2(finfo->clustno, &appsiz, fat);
-		if (appsiz >= 36 && strncmp(p + 4, "Hari", 4) == 0 && *p == 0x00) {
+
+		/* HE2 인지 먼저 검사 (magic = "HE2\0") */
+		if (appsiz >= 32 && p[0] == 'H' && p[1] == 'E' && p[2] == '2' && p[3] == 0) {
+			load_and_run_he2(cons, task, memman, p, appsiz);
+		} else if (appsiz >= 36 && strncmp(p + 4, "Hari", 4) == 0 && *p == 0x00) {
 			segsiz = *((int *) (p + 0x0000));
 			esp    = *((int *) (p + 0x000c));
 			datsiz = *((int *) (p + 0x0010));
@@ -436,7 +542,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 			memman_free_4k(memman, (int) q, segsiz);
 			task->langbyte1 = 0;
 		} else {
-			cons_putstr0(cons, ".hrb file format error.\n");
+			cons_putstr0(cons, "exec format error (need .he2 or .hrb).\n");
 		}
 		memman_free_4k(memman, (int) p, appsiz);
 		cons_newline(cons);

@@ -249,6 +249,41 @@ endforeach()
 #   bxos_add_haribote_app(NAME a SOURCES a.c STACK 1k MALLOC 0k)
 #   bxos_register_built_app(a)
 
+# ─── 11b) HE2 (Haribote Executable v2) 앱 빌드 ──────────────────────
+#
+# 새 .he2 포맷: 32B 헤더 + flat 코드/데이터, INT 0x40 syscall은
+# C-inline-asm 으로 래핑된 libbxos 로 호출. 자세한 사양은
+# he2/docs/HE2-FORMAT.md 참고.
+#
+# 같은 앱 소스(harib27f/<name>/<name>.c)를 그대로 컴파일해서 .he2 로
+# 다시 빌드한다. 결과는 IMG 에 추가되어 콘솔에서 실행 가능.
+
+set(BXOS_HE2_DIR "${CMAKE_SOURCE_DIR}/he2")
+include("${BXOS_HE2_DIR}/cmake/HE2App.cmake")
+
+bxos_libbxos()
+
+# 마이그레이션 대상 앱들 — 일단 출력/창/입력 기본만.
+set(BXOS_HE2_APPS_BASIC
+    a hello3 hello4 hello5
+    winhelo winhelo2 winhelo3
+    star1 stars stars2 lines walk
+    color color2 sosu sosu2 sosu3
+    type beepdown noodle
+)
+foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
+    set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
+    if(EXISTS "${_src}")
+        he2_add_app(${_a} DIR "${BXOS_HARIB}/${_a}")
+    endif()
+endforeach()
+
+# IMG 에 추가
+get_property(_he2_outs GLOBAL PROPERTY BXOS_HE2_APPS)
+foreach(_h IN LISTS _he2_outs)
+    _bxos_img_extra_append("${_h}")
+endforeach()
+
 # ─── 12) haribote.img (FAT12 disk image) ─────────────────────────────
 get_property(BXOS_IMG_EXTRA_FILES GLOBAL PROPERTY BXOS_IMG_EXTRA_FILES)
 
