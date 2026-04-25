@@ -30,18 +30,29 @@ TOOLS_DIR  := $(abspath $(dir $(THIS_MK)))
 PROJ_ROOT  := $(abspath $(TOOLS_DIR)/../..)
 KSRC       := $(PROJ_ROOT)/harib27f/haribote
 HARIB      := $(PROJ_ROOT)/harib27f
+ZINC       := $(PROJ_ROOT)/z_tools/haribote
 BUILD      := $(PROJ_ROOT)/build/modern
 
 # ─── 도구 ────────────────────────────────────────────────────────────
 NASM       ?= nasm
-CC         ?= i686-elf-gcc
-LD         ?= i686-elf-ld
-OBJCOPY    ?= i686-elf-objcopy
 PY         ?= python3
 NAS2NASM   := $(PY) $(TOOLS_DIR)/nas2nasm.py
 HRBIFY     := $(PY) $(TOOLS_DIR)/hrbify.py
 MAKEFONT   := $(PY) $(TOOLS_DIR)/makefont.py
 MKFAT12    := $(PY) $(TOOLS_DIR)/mkfat12.py
+
+# GNU make has built-in defaults such as CC=cc and LD=ld, so '?=' would keep
+# the host compiler. Replace only those built-in defaults; explicit user
+# overrides from the command line or environment still win.
+ifneq ($(filter default undefined,$(origin CC)),)
+  CC       := i686-elf-gcc
+endif
+ifneq ($(filter default undefined,$(origin LD)),)
+  LD       := i686-elf-ld
+endif
+ifneq ($(filter default undefined,$(origin OBJCOPY)),)
+  OBJCOPY  := i686-elf-objcopy
+endif
 
 # 폴백: i686-elf-* 가 없으면 x86_64-elf-* + -m32, 그것도 없으면 시스템 gcc + -m32
 ifeq ($(shell command -v $(CC) 2>/dev/null),)
@@ -66,7 +77,7 @@ endif
 CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
          -fno-asynchronous-unwind-tables -fno-builtin -nostdlib \
          -fleading-underscore \
-         -O2 -Wall -fno-common -I$(KSRC) $(EXTRA_CFLAGS) \
+         -O2 -Wall -fno-common -I$(KSRC) -idirafter $(ZINC) $(EXTRA_CFLAGS) \
          -Wno-implicit-function-declaration -Wno-int-conversion \
          -Wno-pointer-sign -Wno-incompatible-pointer-types
 
@@ -74,9 +85,13 @@ CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 LDFLAGS = -m elf_i386 -nostdlib -static -T $(TOOLS_DIR)/linker-bootpack.lds
 
 # ─── 소스 ────────────────────────────────────────────────────────────
-KERNEL_C_SRCS := $(wildcard $(KSRC)/*.c)
-KERNEL_OBJS   := $(patsubst $(KSRC)/%.c,$(BUILD)/%.o,$(KERNEL_C_SRCS)) \
-                 $(BUILD)/naskfunc.o $(BUILD)/hankaku.o $(BUILD)/startup_kernel.o
+# 원본 harib27f/haribote/Makefile 의 OBJS_BOOTPACK 과 같은 커널 소스만 사용한다.
+KERNEL_C_NAMES := bootpack graphic dsctbl int fifo keyboard mouse memory sheet timer \
+                  mtask window console file tek
+KERNEL_C_SRCS := $(addprefix $(KSRC)/,$(addsuffix .c,$(KERNEL_C_NAMES)))
+KERNEL_OBJS   := $(addprefix $(BUILD)/,$(addsuffix .o,$(KERNEL_C_NAMES))) \
+                 $(BUILD)/naskfunc.o $(BUILD)/hankaku.o \
+                 $(BUILD)/modern_libc.o $(BUILD)/startup_kernel.o
 
 # 앱 .hrb 들 (이미 빌드된 원본을 그대로 사용)
 APP_HRBS := $(wildcard $(HARIB)/*/*.hrb)
@@ -85,10 +100,17 @@ APP_HRBS := $(wildcard $(HARIB)/*/*.hrb)
 IMG_FILES := $(KSRC)/ipl09.nas $(HARIB)/make.bat \
              $(BUILD)/haribote.sys \
              $(APP_HRBS) \
-             $(KSRC)/euc.txt
+             $(HARIB)/euc.txt \
+             $(HARIB)/mmldata/kirakira.mml \
+             $(HARIB)/mmldata/daigo.mml \
+             $(HARIB)/mmldata/daiku.mml \
+             $(HARIB)/pictdata/fujisan.jpg \
+             $(HARIB)/pictdata/night.bmp \
+             $(HARIB)/nihongo/nihongo.fnt
 
 # ─── 기본 타겟 ───────────────────────────────────────────────────────
-.PHONY: all clean info kernel
+.PHONY: all clean info kernel ipl09.bin asmhead.bin naskfunc.o bootpack.o \
+        bootpack.elf bootpack.hrb haribote.sys haribote.img
 all: $(BUILD)/haribote.img
 
 info:
@@ -101,6 +123,14 @@ info:
 	@echo "App HRBs   = $(words $(APP_HRBS)) files"
 
 kernel: $(BUILD)/bootpack.hrb
+ipl09.bin: $(BUILD)/ipl09.bin
+asmhead.bin: $(BUILD)/asmhead.bin
+naskfunc.o: $(BUILD)/naskfunc.o
+bootpack.o: $(BUILD)/bootpack.o
+bootpack.elf: $(BUILD)/bootpack.elf
+bootpack.hrb: $(BUILD)/bootpack.hrb
+haribote.sys: $(BUILD)/haribote.sys
+haribote.img: $(BUILD)/haribote.img
 
 # ─── 빌드 디렉터리 ────────────────────────────────────────────────────
 $(BUILD):
@@ -124,6 +154,9 @@ $(BUILD)/naskfunc.o: $(KSRC)/naskfunc.nas | $(BUILD)
 
 # ─── *.c → ELF object ────────────────────────────────────────────────
 $(BUILD)/%.o: $(KSRC)/%.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/modern_libc.o: $(TOOLS_DIR)/modern_libc.c | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # ─── hankaku.txt → hankaku.bin → ELF object ──────────────────────────
@@ -168,7 +201,13 @@ $(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(BUILD)/haribote.sys $(APP_HRBS)
 	    $(KSRC)/ipl09.nas \
 	    $(HARIB)/make.bat \
 	    $(APP_HRBS) \
-	    $(KSRC)/euc.txt
+	    $(HARIB)/euc.txt \
+	    $(HARIB)/mmldata/kirakira.mml \
+	    $(HARIB)/mmldata/daigo.mml \
+	    $(HARIB)/mmldata/daiku.mml \
+	    $(HARIB)/pictdata/fujisan.jpg \
+	    $(HARIB)/pictdata/night.bmp \
+	    $(HARIB)/nihongo/nihongo.fnt
 	@echo
 	@echo "[ok] $@ 생성 완료. 다음 명령으로 부팅:"
 	@echo "    qemu-system-i386 -m 32 -fda $@ -boot a"

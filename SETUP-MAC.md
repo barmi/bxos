@@ -166,14 +166,14 @@ chmod +x build-modern.sh
 ### 3.3 단계별 빌드 (실패 시 어디서 막혔는지 좁힐 때)
 
 ```bash
-make -f tools/modern/Makefile.modern build/modern/ipl09.bin       # NASM 만
-make -f tools/modern/Makefile.modern build/modern/asmhead.bin
-make -f tools/modern/Makefile.modern build/modern/naskfunc.o
-make -f tools/modern/Makefile.modern build/modern/bootpack.o      # gcc
-make -f tools/modern/Makefile.modern build/modern/bootpack.elf    # ld 링크
-make -f tools/modern/Makefile.modern build/modern/bootpack.hrb    # HRB 헤더
-make -f tools/modern/Makefile.modern build/modern/haribote.sys    # 합침
-make -f tools/modern/Makefile.modern build/modern/haribote.img    # 디스크
+./build-modern.sh ipl09.bin       # NASM 만
+./build-modern.sh asmhead.bin
+./build-modern.sh naskfunc.o
+./build-modern.sh bootpack.o      # gcc
+./build-modern.sh bootpack.elf    # ld 링크
+./build-modern.sh bootpack.hrb    # HRB 헤더
+./build-modern.sh haribote.sys    # 합침
+./build-modern.sh haribote.img    # 디스크
 ```
 
 ### 3.4 동작/구조 비교
@@ -193,9 +193,17 @@ cmp -n 512 harib27f/haribote.img build/modern/haribote.img && echo "boot OK"
 
 원본 ipl09.nas 의 한국어 번역 과정에서 `;` 가 빠진 주석 줄이 한 군데 있어요(`이하는 표준적인 FAT12 포맷...`). nask 는 non-ASCII 로 시작하는 줄을 묵시적 주석으로 받아주지만 NASM 은 엄격합니다. `nas2nasm.py` 가 `0x80` 이상으로 시작하는 줄에 자동으로 `;` 를 붙여 처리합니다.
 
-#### (b) `attempt to reserve non-constant quantity of memory` (RESB)
+#### (b) `non-constant argument supplied to TIMES` / RESB 패딩
 
-`RESB 0x7dfe-$` 같이 `$` (current address) 가 포함된 RESB 표현식은 NASM 에서는 안 됩니다(BSS 전용). flat 바이너리 패딩이라 `TIMES <expr> db 0` 으로 동등합니다. `nas2nasm.py` 가 식이 들어간 RESB 만 골라서 자동 변환합니다(상수 RESB 는 그대로 둠).
+`RESB 0x7dfe-$` 같이 `$` (current address) 가 포함된 RESB 표현식은 NASM 에서는 안 됩니다(BSS 전용). flat 바이너리 패딩이라 `TIMES ... db 0` 으로 바꾸되, `ORG 0x7c00` 이 섞인 절대주소 식은 NASM 이 상수로 못 보므로 `TIMES 0x1fe-($-$$) db 0` 처럼 섹션 시작 기준 offset 으로 변환합니다. `nas2nasm.py` 가 식이 들어간 RESB 만 골라서 자동 변환합니다(상수 RESB 는 그대로 둠).
+
+#### (b-2) `cc`/`ld`/`objcopy` 가 호출됨
+
+GNU make 는 `CC=cc`, `LD=ld` 같은 내장 기본값을 갖고 있어서 단순한 `?=` 기본값으로는 크로스 컴파일러가 선택되지 않을 수 있습니다. `Makefile.modern` 은 make 내장 기본값 또는 미정의 상태일 때만 `i686-elf-*` 로 바꾸고, 사용자가 명시한 `CC=...` override 는 그대로 존중합니다.
+
+#### (b-3) `stdio.h` / `sprintf` / `strcmp` 관련 오류
+
+원본 빌드는 `z_tools/haribote` 헤더와 `golibc.lib` 를 obj2bim 규칙에서 함께 링크합니다. 현대 빌드는 해당 라이브러리를 직접 링크하지 않고, `z_tools/haribote` 헤더를 보조 include 경로로 두며 커널에서 실제 쓰는 `sprintf`/문자열 함수는 `tools/modern/modern_libc.c` 로 제공합니다.
 
 #### (c) `undefined reference to '_io_hlt'` 또는 `'io_hlt'`
 

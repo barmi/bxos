@@ -15,6 +15,8 @@
 ```
 
 빌드 산출물은 모두 `build/modern/` 아래에 들어갑니다. 원본 트리는 안 건드립니다.
+단계별 확인이 필요하면 `./build-modern.sh ipl09.bin`, `./build-modern.sh bootpack.elf`
+처럼 짧은 타겟 이름을 넘기면 됩니다.
 
 ## 사전 설치 (macOS Apple Silicon)
 
@@ -40,6 +42,7 @@ brew install x86_64-elf-gcc x86_64-elf-binutils
 | `hrbify.py` | flat binary → 32B HRB 헤더 + 0x1B JMP 패치 → `.hrb` |
 | `mkfat12.py` | 1.44MB FAT12 플로피 이미지 from-scratch 생성 (edimg 대체) |
 | `makefont.py` | hankaku.txt → 4096B 폰트 바이너리 (makefont.exe 대체) |
+| `modern_libc.c` | 커널에서 필요한 `sprintf`/문자열 함수의 freestanding 구현 |
 | `linker-bootpack.lds` | 커널 링커 스크립트 (0x0부터 .text 배치) |
 | `startup_kernel.s` | 커널 진입점 (32B 헤더 자리 + HariStartup → HariMain) |
 | `Makefile.modern` | 위 모두 연결한 GNU make 빌드 정의 |
@@ -50,7 +53,7 @@ brew install x86_64-elf-gcc x86_64-elf-binutils
 ipl09.nas      ─ nas2nasm ─ nasm -f bin ─►  ipl09.bin    (boot sector)
 asmhead.nas    ─ nas2nasm ─ nasm -f bin ─►  asmhead.bin
 naskfunc.nas   ─ nas2nasm ─ nasm -f elf32 ─►  naskfunc.o
-*.c            ─ i686-elf-gcc ─►  *.o
+kernel *.c + modern_libc.c ─ i686-elf-gcc ─►  *.o
 hankaku.txt    ─ makefont.py ─►  hankaku.bin ─ objcopy ─►  hankaku.o
 startup_kernel.s ─ nasm -f elf32 ─►  startup_kernel.o    (.text.startup, 32B + HariStartup)
 
@@ -59,35 +62,29 @@ startup_kernel.s ─ nasm -f elf32 ─►  startup_kernel.o    (.text.startup, 3
         ─ hrbify.py ─►  bootpack.hrb          (32B HRB 헤더, 0x1B = JMP HariStartup)
 
 asmhead.bin + bootpack.hrb  ─ cat ─►  haribote.sys
-ipl09.bin + haribote.sys + 기존 앱 *.hrb 들 ─ mkfat12.py ─►  haribote.img
+ipl09.bin + haribote.sys + 기존 앱/데이터 파일들 ─ mkfat12.py ─►  haribote.img
 ```
 
 ## 검증된 부분 / 검증되지 않은 부분
 
-샌드박스(aarch64 Linux, 네트워크 allowlist + non-root)에서 검증한 것:
+Apple Silicon Mac(`i686-elf-gcc`, NASM, Python 3.13)에서 검증한 것:
 
-* `nas2nasm.py` — `naskfunc.nas`/`asmhead.nas`/`ipl09.nas` 변환 시 nask 디렉티브가 NASM 호환 형태로 정확히 치환됨.
-* `hrbify.py` — 32B 헤더 바이트 레이아웃이 a.hrb 와 동일한 형태로 생성 (`Hari` 매직, ESP, `0x1B = 0xE9`, rel32 entry).
-* `mkfat12.py` — 부트섹터 512B 가 원본 `haribote.img` 와 byte-identical, FAT12 메타 시그니처 일치.
+* `nas2nasm.py` — `ipl09.nas` 의 `RESB 0x7dfe-$` 를 NASM 이 받는 `TIMES 0x1fe-($-$$) db 0` 로 변환.
+* NASM — `ipl09.bin`, `asmhead.bin`, `naskfunc.o` 생성.
+* `i686-elf-gcc`/`i686-elf-ld` — 커널 C 오브젝트와 `bootpack.elf` 링크.
+* `hrbify.py` — 32B HRB 헤더 + `HariStartup` 점프 패치 생성.
+* `mkfat12.py` — `build/modern/haribote.img` 생성(39 files).
 * `makefont.py` — 4096B 폰트 바이너리 생성, 알려진 글리프 비트맵 일치.
 
-샌드박스에서 검증 못 한 것 (사용자 Mac에서 처음 돌아갈 부분):
+아직 검증하지 않은 것:
 
-* NASM 으로 `*.nasm.nas` 를 실제 어셈블 — 샌드박스에 NASM 설치 불가.
-* `i686-elf-gcc` 로 `*.c` 컴파일 — 샌드박스 aarch64 + 크로스 컴파일러 미설치.
-* `ld -T linker-bootpack.lds` 링크 — 위와 동일 이유.
 * QEMU 부팅 후 실제 동작.
 
 가능성이 있는 트러블 포인트:
 
-1. **NASM 문법 미세 차이** — `nas2nasm.py` 가 처리하는 3가지 외에도 `nask` 가 이상하게 인코딩하는 명령이 있을 수 있어요. 특히 `JMP DWORD 2*8:0x1b` 같은 far jump 는 nask/NASM 모두 받지만 인코딩 방식이 다를 수 있습니다. 어셈블 에러가 나면 그 줄을 보고 수정.
-2. **GCC C 코드 호환성** — bxos 의 C 는 K&R 스타일과 ANSI 가 섞여 있고, `int -> ptr` 캐스트 등에서 modern gcc 는 경고/에러를 냅니다. `Makefile.modern` 에 `-Wall` 만 켜고 `-Werror` 는 안 켰지만, 정 안 되면 `-Wno-int-conversion -Wno-implicit-int -Wno-pointer-sign` 등 추가.
-3. **링커 심볼 underscore 규칙** — `i686-elf-gcc` 는 보통 underscore 를 안 붙이는데, 옛 nask 코드는 `_io_hlt` 처럼 `_` 가 붙은 이름을 export 합니다. 두 가지 길:
-   * `nas2nasm.py` 단계에서 GLOBAL/EXTERN 의 `_` 를 떼는 추가 처리.
-   * 또는 `bootpack.h` 의 함수 선언 앞에 `__attribute__((noinline))` 등으로 우회 — 근본 해결은 첫 번째.
-   * 우선 그대로 빌드해 보고 unresolved symbol 에러가 뜨면 그 때 패치.
-4. **`hankaku` 심볼 이름** — Makefile 에서 `_hankaku` 로 export 하도록 `objcopy --redefine-sym _binary_hankaku_bin_start=_hankaku` 설정. C 쪽에서 `extern char hankaku[];` 로 보는지 `extern char _hankaku[];` 로 보는지 확인 필요.
-5. **bootpack 의 메모리 레이아웃** — 원본 obj2bim 은 stack/malloc/mmarea 를 정밀하게 배치하지만, 우리는 단일 flat .text 로만 묶음. 커널이 stack 영역을 자기 마음대로 쓰지 않고 ESP 만 의존한다면 OK. 부팅 후 비정상 동작 시 의심.
+1. **QEMU 부팅 후 런타임 동작** — 이미지 생성까지는 통과했지만, 화면 표시/앱 실행은 별도 확인이 필요합니다.
+2. **bootpack 의 메모리 레이아웃** — 원본 obj2bim 은 stack/malloc/mmarea 를 정밀하게 배치하지만, 현대 빌드는 linker script + HRB 헤더 생성으로 재현합니다. 부팅 후 비정상 동작 시 이 부분을 먼저 의심합니다.
+3. **modern_libc 범위** — 커널이 현재 쓰는 `sprintf`/문자열 함수만 구현했습니다. 새 코드가 더 많은 libc 함수를 쓰면 `modern_libc.c` 에 추가해야 합니다.
 
 ## 트러블슈팅 시나리오
 
@@ -98,24 +95,24 @@ ipl09.bin + haribote.sys + 기존 앱 *.hrb 들 ─ mkfat12.py ─►  haribote.
 ./build-modern.sh info
 
 # 1. 어셈블만 (NASM)
-make -f tools/modern/Makefile.modern build/modern/ipl09.bin
-make -f tools/modern/Makefile.modern build/modern/asmhead.bin
-make -f tools/modern/Makefile.modern build/modern/naskfunc.o
+./build-modern.sh ipl09.bin
+./build-modern.sh asmhead.bin
+./build-modern.sh naskfunc.o
 
 # 2. C 컴파일
-make -f tools/modern/Makefile.modern build/modern/bootpack.o
+./build-modern.sh bootpack.o
 
 # 3. 링크
-make -f tools/modern/Makefile.modern build/modern/bootpack.elf
+./build-modern.sh bootpack.elf
 
 # 4. flat 바이너리 + HRB 변환
-make -f tools/modern/Makefile.modern build/modern/bootpack.hrb
+./build-modern.sh bootpack.hrb
 
 # 5. 합치기
-make -f tools/modern/Makefile.modern build/modern/haribote.sys
+./build-modern.sh haribote.sys
 
 # 6. 디스크 이미지
-make -f tools/modern/Makefile.modern build/modern/haribote.img
+./build-modern.sh haribote.img
 
 # 7. 부팅
 qemu-system-i386 -m 32 -fda build/modern/haribote.img -boot a
