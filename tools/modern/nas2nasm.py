@@ -32,6 +32,14 @@ RX_INSTRSET = re.compile(r'^\s*\[\s*INSTRSET\s+"([^"]+)"\s*\]' + TAIL, re.IGNORE
 RX_BITS     = re.compile(r'^\s*\[\s*BITS\s+(\d+)\s*\]' + TAIL, re.IGNORECASE)
 RX_SECTION  = re.compile(r'^\s*\[\s*SECTION\s+([^\];]+?)\s*\]' + TAIL, re.IGNORECASE)
 
+# nask 는 RESB 가 $ 같은 라벨식을 받지만 NASM 의 RESB 는 .bss 용으로
+# 즉시값만 받는다. flat binary 에서 패딩 목적인 경우 'TIMES <expr> db 0' 가
+# 동등한 동작이므로 식이 들어간 RESB 만 골라 변환한다.
+# 예: '		RESB	0x7dfe-$			; ...주석'
+RX_RESB_EXPR = re.compile(
+    r'^(\s*)RESB(\s+)(.+?)(\s*(?:;.*)?)$', re.IGNORECASE
+)
+
 INSTRSET_MAP = {
     "i486p": "486",
     "i486":  "486",
@@ -43,7 +51,47 @@ INSTRSET_MAP = {
 }
 
 
+def _is_nonascii_comment_line(line: str) -> bool:
+    """
+    nask 는 한국어/일본어 번역에서 ';' 가 빠진 채 본문이 시작되는 줄도
+    묵시적으로 주석으로 받지만 NASM 은 그렇지 않다.
+    공백을 걷어낸 첫 글자가 high-bit (>= 0x80) 면 주석으로 간주한다.
+    이미 ';' 로 시작하는 줄은 영향받지 않음.
+    """
+    s = line.lstrip(" \t")
+    if not s:
+        return False
+    if s[0] == ";":
+        return False
+    # latin-1 디코딩이라 첫 char 의 ord 가 그대로 byte 값
+    return ord(s[0]) >= 0x80
+
+
+def _convert_resb_expr(line: str) -> str | None:
+    """
+    'RESB <expr>' 에서 expr 가 단순 정수가 아니면 'TIMES <expr> db 0' 으로 치환.
+    단순 정수(`RESB 18`, `RESB 0x10`)는 그대로 둔다.
+    """
+    m = RX_RESB_EXPR.match(line)
+    if not m:
+        return None
+    prefix, sep, expr, tail = m.groups()
+    expr_stripped = expr.strip()
+    # 16진/10진 단일 숫자면 그대로 둔다
+    if re.fullmatch(r'(?:0[xX][0-9a-fA-F]+|\d+)', expr_stripped):
+        return None
+    # 식이 들어있으면 TIMES 로 변환
+    return f"{prefix}TIMES{sep}{expr_stripped} db 0{tail}\n"
+
+
 def convert_line(line: str) -> str:
+    if _is_nonascii_comment_line(line):
+        # 라인 끝의 \n 을 살리되 앞에 ';' 를 끼워 NASM 에서 주석 처리되게 한다
+        # (Latin-1 1:1 통과를 유지하기 위해 원본 그대로 보존)
+        if line.endswith("\n"):
+            return ";" + line
+        return ";" + line + "\n"
+
     if RX_FORMAT.match(line):
         return f"; [nas2nasm] removed: {line.rstrip()}\n"
     if RX_FILE.match(line):
@@ -58,6 +106,11 @@ def convert_line(line: str) -> str:
     m = RX_SECTION.match(line)
     if m:
         return f"SECTION {m.group(1).strip()}\n"
+
+    converted = _convert_resb_expr(line)
+    if converted is not None:
+        return converted
+
     return line
 
 

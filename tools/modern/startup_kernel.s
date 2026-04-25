@@ -14,8 +14,10 @@
 BITS 32
 CPU 486
 
-GLOBAL HariStartup
-EXTERN HariMain
+; nask 와 옛 cc1 은 _ 접두 심볼을 강제하므로 우리도 그 convention 유지.
+; (Makefile.modern 의 -fleading-underscore 와 짝)
+GLOBAL _HariStartup
+EXTERN _HariMain
 
 SECTION .text.startup
 
@@ -23,8 +25,8 @@ SECTION .text.startup
 TIMES 32 db 0
 
 ; ─── 0x20 : 진입점 ──────────────────────────────────────────────────
-HariStartup:
+_HariStartup:
     push    ebp
     mov     ebp, esp
     pop     ebp
-    jmp     HariMain
+    jmp     _HariMain

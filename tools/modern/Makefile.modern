@@ -59,9 +59,16 @@ ifeq ($(shell command -v $(CC) 2>/dev/null),)
 endif
 
 # ─── C 컴파일 옵션 ───────────────────────────────────────────────────
+# -fleading-underscore : nask 어셈블리(naskfunc.nas)가 _io_hlt / _hrb_api 같은
+#                       _ 접두 심볼을 export 하므로, gcc 도 같은 규칙을 따라야
+#                       링크가 성립한다. 옛 cc1.exe(gcc 1.x) 의 기본 동작.
+# -Wno-* : modern gcc 가 K&R 스타일 옛 코드에 내는 경고 일부를 끔.
 CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
          -fno-asynchronous-unwind-tables -fno-builtin -nostdlib \
-         -O2 -Wall -fno-common -I$(KSRC) $(EXTRA_CFLAGS)
+         -fleading-underscore \
+         -O2 -Wall -fno-common -I$(KSRC) $(EXTRA_CFLAGS) \
+         -Wno-implicit-function-declaration -Wno-int-conversion \
+         -Wno-pointer-sign -Wno-incompatible-pointer-types
 
 # ld 는 -m elf_i386 으로 32비트 출력 강제
 LDFLAGS = -m elf_i386 -nostdlib -static -T $(TOOLS_DIR)/linker-bootpack.lds

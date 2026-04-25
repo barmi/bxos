@@ -18,7 +18,7 @@
 
 OUTPUT_FORMAT("elf32-i386")
 OUTPUT_ARCH(i386)
-ENTRY(HariStartup)
+ENTRY(_HariStartup)   /* nask/cc1 컨벤션 유지: 모든 심볼에 leading underscore */
 
 SECTIONS
 {

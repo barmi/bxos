@@ -187,16 +187,32 @@ file harib27f/haribote.img build/modern/haribote.img
 cmp -n 512 harib27f/haribote.img build/modern/haribote.img && echo "boot OK"
 ```
 
-### 3.5 자주 발생할 만한 문제
+### 3.5 알려진 이슈 / 수정 이력
 
-* **NASM 어셈블 에러 `parser: instruction expected`** — `nas2nasm.py` 가 잡지 못한 nask 디렉티브가 있는 경우. 해당 줄을 보고 수동으로 주석 처리하거나 `nas2nasm.py` 에 규칙 추가.
-* **`undefined reference to '_io_hlt'`** — nask 어셈블리는 심볼 앞에 `_` 를 강제로 붙이지만 i686-elf-gcc 는 `_` 없이 export 합니다. `nas2nasm.py` 에 `s/^_(\w+)/\1/` 규칙을 추가하거나, 임시로 `naskfunc.nasm.nas` 의 GLOBAL 선언만 일괄 치환:
+#### (a) `instruction expected, found '...'` (한글 주석 줄)
 
-  ```bash
-  sed -i '' 's/_\([a-z_]\+\)/\1/g' build/modern/naskfunc.nasm.nas
-  ```
+원본 ipl09.nas 의 한국어 번역 과정에서 `;` 가 빠진 주석 줄이 한 군데 있어요(`이하는 표준적인 FAT12 포맷...`). nask 는 non-ASCII 로 시작하는 줄을 묵시적 주석으로 받아주지만 NASM 은 엄격합니다. `nas2nasm.py` 가 `0x80` 이상으로 시작하는 줄에 자동으로 `;` 를 붙여 처리합니다.
 
-  이때 ASCII 식별자만 영향을 받게 정확한 치환을 사용해야 함. 그 후 `make -f tools/modern/Makefile.modern build/modern/naskfunc.o` 재실행.
+#### (b) `attempt to reserve non-constant quantity of memory` (RESB)
+
+`RESB 0x7dfe-$` 같이 `$` (current address) 가 포함된 RESB 표현식은 NASM 에서는 안 됩니다(BSS 전용). flat 바이너리 패딩이라 `TIMES <expr> db 0` 으로 동등합니다. `nas2nasm.py` 가 식이 들어간 RESB 만 골라서 자동 변환합니다(상수 RESB 는 그대로 둠).
+
+#### (c) `undefined reference to '_io_hlt'` 또는 `'io_hlt'`
+
+심볼 underscore 컨벤션 차이입니다. 옛 `cc1.exe` (gcc 1.x) 는 C 심볼 앞에 자동으로 `_` 를 붙이지만 modern `i686-elf-gcc` (ELF 타깃) 는 안 붙입니다. 반면 `naskfunc.nas` 는 `_io_hlt` 처럼 `_` 가 박힌 심볼을 export 합니다.
+
+`Makefile.modern` 이 `-fleading-underscore` 를 gcc 에 넘겨 옛 컨벤션을 유지하므로 둘 다 `_io_hlt` 로 매칭됩니다. 만약 사용 중인 `i686-elf-gcc` 가 `-fleading-underscore` 를 거부한다면(드물지만 빌드 옵션에 따라) 폴백:
+
+```bash
+# Makefile.modern 의 CFLAGS 에서 -fleading-underscore 빼고
+# 대신 sed 로 naskfunc.nas 의 _ 접두를 일괄 제거
+sed -i '' 's/\b_\([a-zA-Z][a-zA-Z0-9_]*\)/\1/g' build/modern/naskfunc.nasm.nas
+make -f tools/modern/Makefile.modern build/modern/naskfunc.o
+```
+
+#### (d) gcc 가 옛 K&R 스타일 코드에 경고 / 에러
+
+`Makefile.modern` 이 `-Wno-implicit-function-declaration -Wno-int-conversion -Wno-pointer-sign -Wno-incompatible-pointer-types` 를 미리 추가해 두었습니다. 그래도 막히는 곳이 있으면 메시지를 그대로 채팅에 붙여 주세요.
 
 * **`error: implicit declaration of function`** 류 경고가 에러로 — `Makefile.modern` 에서 `-Werror` 는 끈 상태이지만 만약 가족이 들어와 있다면 제거. 또는 `CFLAGS` 에 `-Wno-implicit-function-declaration -Wno-int-conversion -Wno-pointer-sign` 추가.
 
