@@ -50,6 +50,17 @@ void HariMain(void)
 	};
 	int key_shift = 0, key_leds = (binfo->leds >> 4) & 7, keycmd_wait = -1;
 	int j, x, y, mmx = -1, mmy = -1, mmx2 = 0;
+	/* ── 윈도우 리사이즈 모드 상태 ─────────────────────────────────
+	 * rsht != 0 이면 리사이즈 중. (rmx, rmy) 시작 마우스, (rw0, rh0) 시작
+	 * 사이즈, (redge & RZ_*) 가 잡은 위치 (오른쪽/아래/오른아래) 비트.    */
+	struct SHEET *rsht = 0;
+	int rmx = 0, rmy = 0, rw0 = 0, rh0 = 0, redge = 0, new_rw = 0, new_rh = 0;
+#define RZ_RIGHT  1
+#define RZ_BOTTOM 2
+#define RZ_HANDLE 14   /* 우하단 모서리 잡는 영역(px) */
+#define RZ_EDGE   4    /* 우/하단 엣지 폭(px) */
+#define RZ_MIN_W  64
+#define RZ_MIN_H  48
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
 	unsigned char *nihongo;
@@ -276,9 +287,25 @@ void HariMain(void)
 					}
 					new_mx = mx;
 					new_my = my;
-					if ((mdec.btn & 0x01) != 0) {
+
+					/* ── (a) 디버그 창 스크롤바가 이미 잡혀있다면 거기로 우회.
+					 *       press / drag / release 전부 dbg 가 처리.            */
+					if (dbg_get()->sb_grab) {
+						dbg_handle_mouse(dbg_get(), mx, my, mdec.btn);
+						/* 다른 모드 진입 안 함 — 다음 이벤트 대기 */
+					} else if ((mdec.btn & 0x01) != 0) {
 						/* 왼쪽 버튼을 누르고 있다 */
-						if (mmx < 0) {
+						if (rsht != 0) {
+							/* (b) 윈도우 리사이즈 모드 진행중 */
+							int dw = (redge & RZ_RIGHT)  ? (mx - rmx) : 0;
+							int dh = (redge & RZ_BOTTOM) ? (my - rmy) : 0;
+							new_rw = rw0 + dw;
+							new_rh = rh0 + dh;
+							if (new_rw < RZ_MIN_W) new_rw = RZ_MIN_W;
+							if (new_rh < RZ_MIN_H) new_rh = RZ_MIN_H;
+							if (rsht->vx0 + new_rw > binfo->scrnx) new_rw = binfo->scrnx - rsht->vx0;
+							if (rsht->vy0 + new_rh > binfo->scrny) new_rh = binfo->scrny - rsht->vy0;
+						} else if (mmx < 0) {
 							/* 통상 모드의 경우 */
 							/* 위 레이어부터 차례로 마우스가 가리키고 있는 레이어를 찾는다 */
 							for (j = shtctl->top - 1; j > 0; j--) {
@@ -292,6 +319,25 @@ void HariMain(void)
 											keywin_off(key_win);
 											key_win = sht;
 											keywin_on(key_win);
+										}
+										/* (c) 우하단 / 우엣지 / 하엣지 → 리사이즈 모드 */
+										if ((sht->flags & SHEET_FLAG_RESIZABLE) != 0) {
+											int hit_right  = (x >= sht->bxsize - RZ_EDGE);
+											int hit_bottom = (y >= sht->bysize - RZ_EDGE);
+											int hit_corner = (x >= sht->bxsize - RZ_HANDLE)
+														  && (y >= sht->bysize - RZ_HANDLE);
+											if (hit_corner || hit_right || hit_bottom) {
+												rsht  = sht;
+												rmx   = mx;
+												rmy   = my;
+												rw0   = sht->bxsize;
+												rh0   = sht->bysize;
+												new_rw = rw0;
+												new_rh = rh0;
+												redge = (hit_right || hit_corner ? RZ_RIGHT : 0)
+												      | (hit_bottom || hit_corner ? RZ_BOTTOM : 0);
+												break;	/* 리사이즈 모드 진입 */
+											}
 										}
 										if (3 <= x && x < sht->bxsize - 3 && 3 <= y && y < 21) {
 											mmx = mx;	/* 윈도우 이동 모드로 */
@@ -324,6 +370,10 @@ void HariMain(void)
 									}
 								}
 							}
+							/* (d) 어떤 위 윈도우에도 안 맞았으면 = sht_back 영역. dbg 가 처리할까? */
+							if (j == 0) {
+								dbg_handle_mouse(dbg_get(), mx, my, mdec.btn);
+							}
 						} else {
 							/* 윈도우 이동 모드의 경우 */
 							x = mx - mmx;	/* 마우스의 이동량을 계산 */
@@ -334,6 +384,17 @@ void HariMain(void)
 						}
 					} else {
 						/* 왼쪽 버튼을 누르지 않았다 */
+						if (rsht != 0) {
+							/* (e) 리사이즈 모드 종료 — 실제 리사이즈 수행 */
+							if (new_rw != rsht->bxsize || new_rh != rsht->bysize) {
+								/* 일단 콘솔 윈도우만 리사이즈 가능 (cursor 플래그) */
+								if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
+									console_resize(rsht, new_rw, new_rh);
+								}
+							}
+							rsht = 0;
+							redge = 0;
+						}
 						mmx = -1;	/* 통상 모드로 */
 						if (new_wx != 0x7fffffff) {
 							sheet_slide(sht, new_wx, new_wy);	/* 한 번 확정시킨다 */
@@ -408,6 +469,56 @@ struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal)
 	sht->task = open_constask(sht, memtotal);
 	sht->flags |= 0x20;	/* 커서 있음 */
 	return sht;
+}
+
+/* console 윈도우 리사이즈 — 새 buffer 할당, frame/textbox 다시 그리고
+ * sheet_resize 로 교체. 콘솔 task 에는 textbox 가 비워졌음을 별도 알리지
+ * 않음 (이미 출력된 라인은 사라짐 — 추후 textbox 내부 backing store 가
+ * 추가되면 그때 redraw 가능). 최소한 빈 콘솔로 정상 동작은 보장.        */
+void console_resize(struct SHEET *sht, int new_w, int new_h)
+{
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	struct CONSOLE *cons;
+	int old_w = sht->bxsize, old_h = sht->bysize;
+	unsigned char *old_buf = sht->buf;
+	unsigned int old_bytes = (unsigned int)(old_w * old_h);
+	unsigned int new_bytes;
+	unsigned char *new_buf;
+	int tx0 = 8, ty0 = 28;
+	int tw = new_w - 16;       /* 좌우 8px 마진 */
+	int th = new_h - 28 - 9;   /* 상단 28(타이틀바), 하단 9 마진 */
+
+	if (new_w < RZ_MIN_W) new_w = RZ_MIN_W;
+	if (new_h < RZ_MIN_H) new_h = RZ_MIN_H;
+	if (tw < 16)  tw = 16;
+	if (th < 16)  th = 16;
+
+	new_bytes = (unsigned int)(new_w * new_h);
+	new_buf = (unsigned char *) memman_alloc_4k(memman, new_bytes);
+	if (new_buf == 0) {
+		return;	/* 메모리 부족 시 무시 */
+	}
+
+	/* 새 buffer 에 frame + textbox 그리기 */
+	make_window8(new_buf, new_w, new_h, "console", 0);
+	/* sheet_resize 후에 make_textbox8 가 sht->buf 를 쓰므로,
+	 * 먼저 sheet_resize 를 호출해 sht->buf 를 new_buf 로 교체.            */
+	sheet_resize(sht, new_buf, new_w, new_h);
+	make_textbox8(sht, tx0, ty0, tw, th, COL8_000000);
+
+	/* CONSOLE 구조체의 cur_x/y 가 textbox 밖으로 나가지 않게 reset.
+	 * task->cons 는 console_task() 의 local 이라 외부에서 접근 불가하지만,
+	 * task 구조체 안 cons 포인터로 접근 가능.                              */
+	if (sht->task != 0 && sht->task->cons != 0) {
+		cons = sht->task->cons;
+		cons->cur_x = 8;
+		cons->cur_y = 28;
+		cons->width  = tw;
+		cons->height = th;
+	}
+
+	sheet_refresh(sht, 0, 0, new_w, new_h);
+	memman_free_4k(memman, (int) old_buf, old_bytes);
 }
 
 void close_constask(struct TASK *task)

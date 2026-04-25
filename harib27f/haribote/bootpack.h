@@ -156,6 +156,11 @@ int memman_free_4k(struct MEMMAN *man, unsigned int addr, unsigned int size);
 
 /* sheet.c */
 #define MAX_SHEETS		256
+/* sheet flags (sheet.c 도 같은 비트값 사용) */
+#define SHEET_FLAG_USE			0x01
+#define SHEET_FLAG_APP_WIN		0x10
+#define SHEET_FLAG_HAS_CURSOR	0x20
+#define SHEET_FLAG_RESIZABLE	0x40	/* default true (sheet_alloc 에서 set) */
 struct SHEET {
 	unsigned char *buf;
 	int bxsize, bysize, vx0, vy0, col_inv, height, flags;
@@ -175,6 +180,11 @@ void sheet_updown(struct SHEET *sht, int height);
 void sheet_refresh(struct SHEET *sht, int bx0, int by0, int bx1, int by1);
 void sheet_slide(struct SHEET *sht, int vx0, int vy0);
 void sheet_free(struct SHEET *sht);
+/* 시트 크기 변경. 새 buf 와 새 (xsize,ysize) 로 교체하고 스크린을 갱신.
+ * 화면 위치(vx0,vy0)는 유지된다. 호출자가 새 buf 의 그림(프레임 등)을
+ * 미리 준비해서 넘겨야 한다. 이전 buf 의 free 책임은 호출자에게 있음.   */
+void sheet_resize(struct SHEET *sht, unsigned char *new_buf,
+		int new_xsize, int new_ysize);
 
 /* timer.c */
 #define MAX_TIMER		500
@@ -279,12 +289,33 @@ struct CONSOLE {
 	int width, height;
 };
 
+/* 디버그 창 스크롤백 — ring buffer 로 과거 라인을 보관하고 스크롤바로 탐색 */
+#define DBG_MAX_LINES   512   /* 최대 보관 라인수 (오래된 것은 덮어씀) */
+#define DBG_LINE_CHARS  100   /* 라인당 최대 문자수 (그 이상은 잘림)   */
+#define DBG_SCROLLBAR_W 10    /* 스크롤바 폭 (px). 클라이언트 영역 우측. */
+
+struct DBGLINE {
+	unsigned char text[DBG_LINE_CHARS];
+	unsigned char color[DBG_LINE_CHARS];
+	short len;	/* 실제 문자수 (≤ DBG_LINE_CHARS) */
+};
+
 struct DBGWIN {
 	struct SHEET *sht;
 	int bc;				// -> bgcolor
 	int x0, y0;
 	int cx, cy;
 	int wd, ht;
+	/* ── 스크롤백 ─────────────────────────────────────────────────── */
+	struct DBGLINE lines[DBG_MAX_LINES];
+	int head;			/* lines[] 의 다음 쓰기 위치 (mod DBG_MAX_LINES) */
+	int count;			/* 보관된 유효 라인수 (≤ DBG_MAX_LINES)         */
+	int scroll_top;		/* 화면 최상단에 표시할 라인 번호 (0..count-1)   */
+	int auto_follow;	/* 1=새 라인이 들어오면 자동으로 끝으로 스크롤   */
+	/* ── 스크롤바 드래그 상태 ────────────────────────────────────── */
+	int sb_grab;		/* 1 = 사용자가 thumb 잡고 있음                  */
+	int sb_grab_y;		/* 잡았을 때 마우스 y                            */
+	int sb_grab_top;	/* 잡았을 때 scroll_top                          */
 };
 
 struct FILEHANDLE {
@@ -317,6 +348,15 @@ void dbg_init(struct SHEET *sht);
 void dbg_newline(struct DBGWIN *dbg);
 void dbg_putstr0(char *s, int c);
 void dbg_putstr1(char *s, int l, int c);
+/* 화면 redraw (현재 scroll_top 기준으로 보이는 라인들을 그림) */
+void dbg_redraw(struct DBGWIN *dbg);
+/* 절대 위치로 스크롤. clamp 됨. follow 모드는 끝으로 갔을 때 다시 ON. */
+void dbg_scroll_to(struct DBGWIN *dbg, int new_top);
+/* 마우스 이벤트 hook — bootpack.c 의 메인 마우스 루프에서 호출.
+ * 반환값 1 = 이 이벤트는 dbg 가 소비함 (다른 윈도우 처리 skip).         */
+int  dbg_handle_mouse(struct DBGWIN *dbg, int mx, int my, int btn);
+/* 외부에서 dbg 핸들 가져오기 (bootpack.c 가 사용). console.c 의 static . */
+struct DBGWIN *dbg_get(void);
 
 /* file.c */
 struct FILEINFO {
@@ -348,3 +388,6 @@ struct MNLV {
 void keywin_on(struct SHEET *key_win);
 struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal);
 struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal);
+/* console 윈도우를 새 크기로 리사이즈. 새 buffer 를 alloc 해서 sheet_resize.
+ * 기존 buffer 는 free 함. 호출 후 sht 의 buf/bxsize/bysize 가 갱신됨.    */
+void console_resize(struct SHEET *sht, int new_w, int new_h);

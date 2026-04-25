@@ -2,9 +2,11 @@
 
 #include "bootpack.h"
 
-#define SHEET_USE			0x01
-#define SHEET_HAS_CURSOR	0x20	// HAS CURSOR
-#define SHEET_APP_WIN		0x10	// MAKE BY APPLICATION
+/* 비트값은 bootpack.h 의 SHEET_FLAG_* 와 동일. 구버전 로컬 매크로도 유지.  */
+#define SHEET_USE			SHEET_FLAG_USE
+#define SHEET_HAS_CURSOR	SHEET_FLAG_HAS_CURSOR
+#define SHEET_APP_WIN		SHEET_FLAG_APP_WIN
+#define SHEET_RESIZABLE		SHEET_FLAG_RESIZABLE
 
 struct SHTCTL *shtctl_init(struct MEMMAN *memman, unsigned char *vram, int xsize, int ysize)
 {
@@ -38,7 +40,10 @@ struct SHEET *sheet_alloc(struct SHTCTL *ctl)
 	for (i = 0; i < MAX_SHEETS; i++) {
 		if (ctl->sheets0[i].flags == 0) {
 			sht = &ctl->sheets0[i];
-			sht->flags = SHEET_USE; /* 사용중 마크 */
+			/* 기본값: 사용중 + 크기조정 가능 (요청대로 default true).
+			 * 어플리케이션이 만든 윈도우는 api_openwin 쪽에서 RESIZABLE
+			 * 비트를 다시 끈다 (앱 buffer 가 고정 크기이기 때문).      */
+			sht->flags = SHEET_USE | SHEET_RESIZABLE;
 			sht->height = -1; /* 비표시중 */
 			sht->task = 0;	/* 자동으로 닫는 기능을 사용하지 않는다 */
 			return sht;
@@ -289,5 +294,27 @@ void sheet_free(struct SHEET *sht)
 		sheet_updown(sht, -1); /* 표시중이라면 우선 비표시로 한다 */
 	}
 	sht->flags = 0; /* 미사용 마크 */
+	return;
+}
+
+/* 시트의 buffer 와 크기를 교체. 위치(vx0,vy0) 는 유지.
+ * 호출자가 new_buf 안에 새 그림(프레임/배경)을 미리 그려서 넘겨야 한다.
+ * 이전 buf 의 free 책임은 호출자에게 있다 (sheet_resize 는 모름).        */
+void sheet_resize(struct SHEET *sht, unsigned char *new_buf,
+		int new_xsize, int new_ysize)
+{
+	struct SHTCTL *ctl = sht->ctl;
+	int old_xsize = sht->bxsize, old_ysize = sht->bysize;
+	int old_vx0  = sht->vx0,    old_vy0  = sht->vy0;
+	sht->buf    = new_buf;
+	sht->bxsize = new_xsize;
+	sht->bysize = new_ysize;
+	if (sht->height >= 0) {
+		/* 옛 영역과 새 영역 모두 다시 그려야 한다. */
+		int union_x1 = old_vx0 + (old_xsize > new_xsize ? old_xsize : new_xsize);
+		int union_y1 = old_vy0 + (old_ysize > new_ysize ? old_ysize : new_ysize);
+		sheet_refreshmap(ctl, old_vx0, old_vy0, union_x1, union_y1, 0);
+		sheet_refreshsub(ctl, old_vx0, old_vy0, union_x1, union_y1, 0, ctl->top);
+	}
 	return;
 }

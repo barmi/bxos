@@ -20,6 +20,10 @@ void console_task(struct SHEET *sheet, int memtotal)
 	cons.cur_x =  8;
 	cons.cur_y = 28;
 	cons.cur_c = -1;
+	/* 초기 텍스트 영역 크기 — 기본 콘솔 윈도우(256×165) 의 textbox 와 일치.
+	 * console_resize() 가 호출되면 이 값이 갱신되어 wrap/scroll 이 따라감.   */
+	cons.width  = 240;
+	cons.height = 128;
 	task->cons = &cons;
 	task->cmdline = cmdline;
 
@@ -123,6 +127,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 void cons_putchar(struct CONSOLE *cons, int chr, char move)
 {
 	char s[2];
+	int W = (cons->width  > 0) ? cons->width  : 240;
 	s[0] = chr;
 	s[1] = 0;
 	if (s[0] == 0x09) {	/* 탭 */
@@ -131,7 +136,7 @@ void cons_putchar(struct CONSOLE *cons, int chr, char move)
 				putfonts8_asc_sht(cons->sht, cons->cur_x, cons->cur_y, COL8_FFFFFF, COL8_000000, " ", 1);
 			}
 			cons->cur_x += 8;
-			if (cons->cur_x == 8 + 240) {
+			if (cons->cur_x >= 8 + W) {
 				cons_newline(cons);
 			}
 			if (((cons->cur_x - 8) & 0x1f) == 0) {
@@ -149,7 +154,7 @@ void cons_putchar(struct CONSOLE *cons, int chr, char move)
 		if (move != 0) {
 			/* move가 0일 때는 커서를 진행시키지 않는다 */
 			cons->cur_x += 8;
-			if (cons->cur_x == 8 + 240) {
+			if (cons->cur_x >= 8 + W) {
 				cons_newline(cons);
 			}
 		}
@@ -162,22 +167,24 @@ void cons_newline(struct CONSOLE *cons)
 	int x, y;
 	struct SHEET *sheet = cons->sht;
 	struct TASK *task = task_now();
-	if (cons->cur_y < 28 + 112) {
+	int W = (cons->width  > 0) ? cons->width  : 240;
+	int H = (cons->height > 0) ? cons->height : 128;
+	if (cons->cur_y < 28 + H - 16) {
 		cons->cur_y += 16; /* 다음 행에 */
 	} else {
 		/* 스크롤 */
 		if (sheet != 0) {
-			for (y = 28; y < 28 + 112; y++) {
-				for (x = 8; x < 8 + 240; x++) {
+			for (y = 28; y < 28 + H - 16; y++) {
+				for (x = 8; x < 8 + W; x++) {
 					sheet->buf[x + y * sheet->bxsize] = sheet->buf[x + (y + 16) * sheet->bxsize];
 				}
 			}
-			for (y = 28 + 112; y < 28 + 128; y++) {
-				for (x = 8; x < 8 + 240; x++) {
+			for (y = 28 + H - 16; y < 28 + H; y++) {
+				for (x = 8; x < 8 + W; x++) {
 					sheet->buf[x + y * sheet->bxsize] = COL8_000000;
 				}
 			}
-			sheet_refresh(sheet, 8, 28, 8 + 240, 28 + 128);
+			sheet_refresh(sheet, 8, 28, 8 + W, 28 + H);
 		}
 	}
 	cons->cur_x = 8;
@@ -584,7 +591,8 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		// api_openwin
 		sht = sheet_alloc(shtctl);
 		sht->task = task;
-		sht->flags |= 0x10;
+		sht->flags |= 0x10;	/* 어플리케이션이 만든 윈도우           */
+		sht->flags &= ~SHEET_FLAG_RESIZABLE; /* 앱 buffer 고정크기 → 리사이즈 금지 */
 		sheet_setbuf(sht, (char *) ebx + ds_base, esi, edi, eax);
 		make_window8((char *) ebx + ds_base, esi, edi, (char *) ecx + ds_base, 0);
 		sheet_slide(sht, ((shtctl->xsize - esi) / 2) & ~3, (shtctl->ysize - edi) / 2);
@@ -871,8 +879,268 @@ void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col)
 
 
 
+/* ────────────────────────────────────────────────────────────────────
+ *  디버그 윈도우 — ring buffer 기반 스크롤백 + 우측 스크롤바
+ *
+ *  레이아웃 (sht_back 위에 직접 그림):
+ *
+ *    (x0, y0) ┌──────────────────────────────┬──┐
+ *             │                              │░░│
+ *             │   text area                  │██│ ← scrollbar
+ *             │   (wd - SCROLLBAR_W) × ht    │░░│
+ *             │                              │░░│
+ *             └──────────────────────────────┴──┘
+ *
+ *  text area : 한 라인 16px, 한 글자 8px. visible_lines = ht / 16.
+ *  scrollbar : 우측 DBG_SCROLLBAR_W (10px). thumb 높이는 (visible/total).
+ * ──────────────────────────────────────────────────────────────────── */
+
+struct DBGWIN *dbg_get(void)
+{
+	return &dbg;
+}
+
+static int dbg_text_w(struct DBGWIN *d) { return d->wd - DBG_SCROLLBAR_W; }
+static int dbg_visible_lines(struct DBGWIN *d) { return d->ht / 16; }
+
+/* 현재 head 가 가리키는 (= 작성중) 라인을 ring 에서 얻는다.
+ * count==0 인 경우 새로 한 줄을 만든다.                              */
+static struct DBGLINE *dbg_cur_line(struct DBGWIN *d)
+{
+	int idx;
+	if (d->count == 0) {
+		idx = d->head;
+		d->lines[idx].len = 0;
+		d->count = 1;
+	} else {
+		/* 마지막에 작성한 라인 = head - 1 (mod) */
+		idx = (d->head + DBG_MAX_LINES - 1) % DBG_MAX_LINES;
+	}
+	return &d->lines[idx];
+}
+
+/* 새 라인을 ring 에 추가 (개행 시 호출). 자동 follow 모드면 끝으로 스크롤. */
+void dbg_newline(struct DBGWIN *d)
+{
+	int idx = d->head;
+	d->lines[idx].len = 0;
+	d->head = (d->head + 1) % DBG_MAX_LINES;
+	if (d->count < DBG_MAX_LINES) {
+		d->count++;
+	}
+	d->cx = 0;
+	if (d->auto_follow) {
+		int vis = dbg_visible_lines(d);
+		d->scroll_top = (d->count > vis) ? (d->count - vis) : 0;
+	}
+	dbg_redraw(d);
+}
+
+/* 한 글자 추가 — ring buffer 에 저장하고 즉시 redraw.
+ *   - 탭은 다음 8픽셀 경계까지 공백.
+ *   - 개행/복귀 처리.                                                  */
+void dbg_putchar(int chr, int fc)
+{
+	struct DBGLINE *ln;
+	int max_chars = dbg_text_w(&dbg) / 8;
+	if (max_chars > DBG_LINE_CHARS) max_chars = DBG_LINE_CHARS;
+
+	if (chr == 0x0a) {	/* '\n' */
+		dbg_newline(&dbg);
+		return;
+	}
+	if (chr == 0x0d) {	/* '\r' — ignore */
+		return;
+	}
+	if (chr == 0x09) {	/* tab → space-padding to next 4-char boundary */
+		do {
+			dbg_putchar(' ', fc);
+			ln = dbg_cur_line(&dbg);
+		} while ((ln->len & 0x03) != 0);
+		return;
+	}
+
+	ln = dbg_cur_line(&dbg);
+	if (ln->len >= max_chars) {
+		dbg_newline(&dbg);
+		ln = dbg_cur_line(&dbg);
+	}
+	ln->text[ln->len]  = (unsigned char) chr;
+	ln->color[ln->len] = (unsigned char) fc;
+	ln->len++;
+	if (dbg.auto_follow) {
+		int vis = dbg_visible_lines(&dbg);
+		dbg.scroll_top = (dbg.count > vis) ? (dbg.count - vis) : 0;
+	}
+	dbg_redraw(&dbg);
+}
+
+void dbg_putstr0(char *s, int c)
+{
+	for (; *s != 0; s++) {
+		dbg_putchar((unsigned char) *s, c);
+	}
+}
+
+void dbg_putstr1(char *s, int l, int c)
+{
+	int i;
+	for (i = 0; i < l; i++) {
+		dbg_putchar((unsigned char) s[i], c);
+	}
+}
+
+/* scroll_top 을 [0, max] 사이로 클램프하고 redraw. */
+void dbg_scroll_to(struct DBGWIN *d, int new_top)
+{
+	int vis = dbg_visible_lines(d);
+	int max_top = (d->count > vis) ? (d->count - vis) : 0;
+	if (new_top < 0)         new_top = 0;
+	if (new_top > max_top)   new_top = max_top;
+	d->scroll_top    = new_top;
+	d->auto_follow   = (new_top == max_top) ? 1 : 0;
+	dbg_redraw(d);
+}
+
+/* 한 라인의 ring 인덱스 → 표시순서(0=가장 오래됨, count-1=최신)
+ *   가장 오래된 라인의 ring 인덱스 = (head - count + N) mod N           */
+static struct DBGLINE *dbg_line_at(struct DBGWIN *d, int display_idx)
+{
+	int oldest = (d->head - d->count + DBG_MAX_LINES) % DBG_MAX_LINES;
+	int idx = (oldest + display_idx) % DBG_MAX_LINES;
+	return &d->lines[idx];
+}
+
+void dbg_redraw(struct DBGWIN *d)
+{
+	struct SHEET *sht = d->sht;
+	int x, y, line, vis, tw;
+	int scrollbar_x;
+	int track_h, thumb_h, thumb_y;
+	int max_top;
+
+	if (sht == 0) return;
+
+	tw = dbg_text_w(d);
+	vis = dbg_visible_lines(d);
+	scrollbar_x = d->x0 + tw;
+
+	/* 1) 텍스트 영역 배경 클리어 */
+	for (y = d->y0; y < d->y0 + d->ht; y++) {
+		for (x = d->x0; x < d->x0 + tw; x++) {
+			sht->buf[x + y * sht->bxsize] = d->bc;
+		}
+	}
+
+	/* 2) 보이는 라인 그리기 */
+	for (line = 0; line < vis; line++) {
+		int idx_disp = d->scroll_top + line;
+		struct DBGLINE *ln;
+		int yy = d->y0 + line * 16;
+		int j;
+		if (idx_disp >= d->count) break;
+		ln = dbg_line_at(d, idx_disp);
+		for (j = 0; j < ln->len; j++) {
+			char s[2]; s[0] = ln->text[j]; s[1] = 0;
+			putfonts8_asc_sht(sht, d->x0 + j * 8, yy,
+					ln->color[j], d->bc, s, 1);
+		}
+	}
+
+	/* 3) 스크롤바 트랙 (어두운 회색) */
+	for (y = d->y0; y < d->y0 + d->ht; y++) {
+		for (x = scrollbar_x; x < d->x0 + d->wd; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_848484;
+		}
+	}
+
+	/* 4) thumb (밝은 회색). 위치/크기 = 비율 기반 */
+	max_top = (d->count > vis) ? (d->count - vis) : 0;
+	if (d->count <= vis) {
+		/* 전부 보임 — 트랙 전체를 thumb 으로 */
+		thumb_h = d->ht;
+		thumb_y = d->y0;
+	} else {
+		track_h = d->ht;
+		thumb_h = (track_h * vis) / d->count;
+		if (thumb_h < 8) thumb_h = 8;
+		if (max_top == 0) {
+			thumb_y = d->y0;
+		} else {
+			thumb_y = d->y0 + ((track_h - thumb_h) * d->scroll_top) / max_top;
+		}
+	}
+	for (y = thumb_y; y < thumb_y + thumb_h && y < d->y0 + d->ht; y++) {
+		for (x = scrollbar_x + 1; x < d->x0 + d->wd - 1; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_FFFFFF;
+		}
+	}
+
+	sheet_refresh(sht, d->x0, d->y0, d->x0 + d->wd, d->y0 + d->ht);
+}
+
+/* bootpack.c 마우스 루프에서 호출.
+ *   반환 1 = dbg 가 이벤트를 소비했음 (다른 sheet 처리 skip)             */
+int dbg_handle_mouse(struct DBGWIN *d, int mx, int my, int btn)
+{
+	int sb_x0 = d->x0 + dbg_text_w(d);
+	int sb_x1 = d->x0 + d->wd;
+	int sb_y0 = d->y0;
+	int sb_y1 = d->y0 + d->ht;
+	int in_sb = (sb_x0 <= mx && mx < sb_x1 && sb_y0 <= my && my < sb_y1);
+
+	if (d->sb_grab) {
+		if ((btn & 0x01) == 0) {
+			/* release */
+			d->sb_grab = 0;
+		} else {
+			/* drag — 마우스 이동량을 scroll_top 변화량으로 환산 */
+			int vis = dbg_visible_lines(d);
+			int max_top = (d->count > vis) ? (d->count - vis) : 0;
+			int track_h = d->ht;
+			int thumb_h = (max_top > 0) ? ((track_h * vis) / d->count) : track_h;
+			int travel  = track_h - thumb_h;
+			int dy      = my - d->sb_grab_y;
+			int new_top = d->sb_grab_top;
+			if (travel > 0 && max_top > 0) {
+				new_top = d->sb_grab_top + (dy * max_top) / travel;
+			}
+			dbg_scroll_to(d, new_top);
+		}
+		return 1;
+	}
+
+	if (in_sb && (btn & 0x01) != 0) {
+		/* 트랙/thumb 클릭 — 어디든 일단 잡기 시작 */
+		d->sb_grab     = 1;
+		d->sb_grab_y   = my;
+		d->sb_grab_top = d->scroll_top;
+		/* thumb 바깥을 클릭했으면 그 위치로 즉시 점프 (page jump) */
+		{
+			int vis = dbg_visible_lines(d);
+			int max_top = (d->count > vis) ? (d->count - vis) : 0;
+			int track_h = d->ht;
+			int thumb_h = (max_top > 0) ? ((track_h * vis) / d->count) : track_h;
+			int rel = my - d->y0 - thumb_h / 2;
+			int travel = track_h - thumb_h;
+			int target;
+			if (travel <= 0 || max_top <= 0) {
+				target = 0;
+			} else {
+				target = (rel * max_top) / travel;
+			}
+			dbg_scroll_to(d, target);
+			d->sb_grab_top = d->scroll_top;
+		}
+		return 1;
+	}
+
+	return 0;
+}
+
 void dbg_init(struct SHEET *sht)
 {
+	int i;
 	dbg.sht = sht;
 	dbg.bc  = 16 + 1 + 3 * 6 + 4 * 36;
 	dbg.x0  = 300;
@@ -881,85 +1149,19 @@ void dbg_init(struct SHEET *sht)
 	dbg.cy  = 0;
 	dbg.wd  = 400;
 	dbg.ht  = 240;
+	dbg.head = 0;
+	dbg.count = 0;
+	dbg.scroll_top = 0;
+	dbg.auto_follow = 1;
+	dbg.sb_grab = 0;
+	dbg.sb_grab_y = 0;
+	dbg.sb_grab_top = 0;
+	for (i = 0; i < DBG_MAX_LINES; i++) {
+		dbg.lines[i].len = 0;
+	}
 	make_textbox8(dbg.sht, dbg.x0, dbg.y0, dbg.wd, dbg.ht, dbg.bc);
-	putfonts8_asc_sht(dbg.sht, dbg.x0, dbg.y0, COL8_FFFFFF, dbg.bc, "Debug Window", 12);
-	sheet_refresh(dbg.sht, dbg.x0 - 3, dbg.y0 - 3, dbg.x0 + dbg.wd + 3, dbg.y0 + dbg.ht + 3);
-	return;
-}
-
-void dbg_putchar(int chr, int fc)
-{
-	char s[2];
-	s[0] = chr;
-	s[1] = 0;
-	if (s[0] == 0x09) {	/* 탭 */
-		for (;;) {
-			if (dbg.sht != 0) {
-				putfonts8_asc_sht(dbg.sht, dbg.x0 + dbg.cx, dbg.y0 + dbg.cy, fc, dbg.bc, " ", 1);
-			}
-			dbg.cx += 8;
-			if (dbg.cx == dbg.wd) {
-				dbg_newline(&dbg);
-			}
-			if ((dbg.cx & 0x1f) == 0) {
-				break;	/* 32로 나누어 떨어지면 break */
-			}
-		}
-	} else if (s[0] == 0x0a) {	/* 개행 */
-		dbg_newline(&dbg);
-	} else if (s[0] == 0x0d) {	/* 복귀 */
-		/* 우선 아무것도 하지 않는다 */
-	} else {	/* 보통 문자 */
-		if (dbg.sht != 0) {
-			putfonts8_asc_sht(dbg.sht, dbg.x0 + dbg.cx, dbg.y0 + dbg.cy, fc, dbg.bc, s, 1);
-		}
-		dbg.cx += 8;
-		if (dbg.cx == dbg.wd) {
-			dbg_newline(&dbg);
-		}
-	}
-	return;
-}
-
-void dbg_newline(struct DBGWIN *dbg)
-{
-	int x, y;
-	struct SHEET *sht = dbg->sht;
-	dbg->cx = 0;
-	if (dbg->cy < dbg->ht - 16) {
-		dbg->cy += 16; /* ����s�� */
-	} else {
-		/* �X�N��?�� */
-		if (sht != 0) {
-			for (y = dbg->y0; y < dbg->y0 + dbg->ht - 16; y++) {
-				for (x = dbg->x0; x < dbg->x0 + dbg->wd; x++) {
-					sht->buf[x + y * sht->bxsize] = sht->buf[x + (y + 16) * sht->bxsize];
-				}
-			}
-			for (y = dbg->y0 + dbg->ht - 16; y < dbg->y0 + dbg->ht; y++) {
-				for (x = dbg->x0; x < dbg->x0 + dbg->wd; x++) {
-					sht->buf[x + y * sht->bxsize] = dbg->bc;//COL8_000000;//table_8_565[dbg->bc];
-				}
-			}
-			sheet_refresh(sht, dbg->x0, dbg->y0, dbg->x0 + dbg->wd, dbg->y0 + dbg->ht);
-		}
-	}
-	return;
-}
-
-void dbg_putstr0(char *s, int c)
-{
-	for (; *s != 0; s++) {
-		dbg_putchar(*s, c);
-	}
-	return;
-}
-
-void dbg_putstr1(char *s, int l, int c)
-{
-	int i;
-	for (i = 0; i < l; i++) {
-		dbg_putchar(s[i], c);
-	}
+	dbg_redraw(&dbg);
+	sheet_refresh(dbg.sht, dbg.x0 - 3, dbg.y0 - 3,
+			dbg.x0 + dbg.wd + 3, dbg.y0 + dbg.ht + 3);
 	return;
 }
