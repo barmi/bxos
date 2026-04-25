@@ -286,6 +286,8 @@ void change_mtitle8(struct SHEET *sht, int level, int mn_flg, char act);
 #define CONS_HISTORY_MAX	16
 #define CONS_KEY_UP			0x80
 #define CONS_KEY_DOWN		0x81
+#define CONS_KEY_LEFT		0x82
+#define CONS_KEY_RIGHT		0x83
 #define HE2_FLAG_SUBSYSTEM_MASK	0x00000003
 #define HE2_SUBSYSTEM_CONSOLE	0x00000000
 #define HE2_SUBSYSTEM_WINDOW	0x00000001

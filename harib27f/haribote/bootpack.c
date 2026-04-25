@@ -199,6 +199,12 @@ void HariMain(void)
 						if (i == 256 + 0x50) {	/* ↓ */
 							fifo32_put(&key_win->task->fifo, CONS_KEY_DOWN + 256);
 						}
+						if (i == 256 + 0x4b) {	/* ← */
+							fifo32_put(&key_win->task->fifo, CONS_KEY_LEFT + 256);
+						}
+						if (i == 256 + 0x4d) {	/* → */
+							fifo32_put(&key_win->task->fifo, CONS_KEY_RIGHT + 256);
+						}
 					}
 				} else {
 					if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
