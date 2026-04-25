@@ -293,7 +293,8 @@ restart:
             if (!collides(type, rot, px, py + 1)) {
                 py++;
             } else {
-                /* lock */
+                /* lock — 잠긴 조각을 먼저 그려둔다 (프레임 시작에서 지웠으므로) */
+                draw_piece(win, type, rot, px, py, piece_color[type]);
                 lock_piece(type, rot, px, py);
                 n = clear_lines();
                 if (n > 0) {
