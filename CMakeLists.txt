@@ -1,8 +1,9 @@
 # CMakeLists.txt — BxOS (Wine 없는 modern 빌드의 CMake 버전)
 #
 # 사용:
-#   cmake -S . -B build/cmake \
-#         -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-i686-elf.cmake
+#   cmake -S . -B build/cmake
+#   # (기본적으로 cmake/toolchain-i686-elf.cmake 가 사용됩니다)
+#
 #   cmake --build build/cmake               # 전체 (haribote.img)
 #   cmake --build build/cmake --target kernel
 #   cmake --build build/cmake --target run  # qemu 부팅
@@ -14,6 +15,12 @@
 # build-modern.sh / Makefile.modern 도 그대로 둔다 (둘 다 사용 가능).
 
 cmake_minimum_required(VERSION 3.20)
+
+# ─── 기본 툴체인 설정 ──────────────────────────────────────────────────
+# CLion 등 IDE에서 기본 툴체인을 i686-elf 로 강제하기 위해 설정합니다.
+if(NOT CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_LIST_DIR}/cmake/toolchain-i686-elf.cmake" CACHE FILEPATH "Default toolchain file" FORCE)
+endif()
 
 project(bxos
     LANGUAGES C
@@ -67,11 +74,13 @@ set(BXOS_KERNEL_INCLUDE_FLAGS "-I${BXOS_KSRC} -idirafter ${BXOS_ZINC}")
 
 # 헬퍼: 커널 *.c → *.o
 function(_bxos_compile_c src obj)
+    separate_arguments(_cflags NATIVE_COMMAND "${CMAKE_C_FLAGS}")
+    separate_arguments(_incflags NATIVE_COMMAND "${BXOS_KERNEL_INCLUDE_FLAGS}")
     add_custom_command(
         OUTPUT  "${obj}"
-        COMMAND ${CMAKE_C_COMPILER} ${CMAKE_C_FLAGS}
+        COMMAND ${CMAKE_C_COMPILER} ${_cflags}
                 -O2
-                ${BXOS_KERNEL_INCLUDE_FLAGS}
+                ${_incflags}
                 -c -o "${obj}" "${src}"
         DEPENDS "${src}"
         COMMENT "[cc] ${src}"
@@ -311,3 +320,14 @@ message(STATUS "  LD      = ${BXOS_LD}")
 message(STATUS "  NASM    = ${BXOS_NASM}")
 message(STATUS "  PYTHON  = ${BXOS_PYTHON}")
 message(STATUS "  Apps    = ${BXOS_APPS_PREBUILT}")
+
+if(CMAKE_C_COMPILER MATCHES "/usr/bin/cc" OR CMAKE_C_COMPILER MATCHES "/usr/bin/gcc")
+    if(APPLE)
+        message(WARNING
+            "현재 컴파일러가 시스템 기본값(${CMAKE_C_COMPILER})으로 설정되었습니다.\n"
+            "이 상태로는 i386(32bit) 빌드가 실패할 수 있습니다. (특히 Apple Silicon)\n"
+            "CLion 설정에서 'Clear Cache and Reload'를 수행하거나, "
+            "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-i686-elf.cmake 옵션을 확인해 주세요."
+        )
+    endif()
+endif()
