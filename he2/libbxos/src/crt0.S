@@ -15,6 +15,8 @@
     .set  _bxos_stack_size, 16384
     .weak _bxos_heap_size
     .set  _bxos_heap_size, 1048576       /* 1MB */
+    .weak _bxos_app_flags
+    .set  _bxos_app_flags, 0             /* console subsystem */
 
     /* ─── HE2 헤더 (32B) ───────────────────────────────────────── */
     .section .he2_header, "a", @progbits
@@ -29,7 +31,7 @@ _bxos_he2_header:
     .long   _he2_bss_size           /* bss_size                    */
     .long   _bxos_stack_size        /* stack_size                  */
     .long   _bxos_heap_size         /* heap_size                   */
-    .long   0                       /* flags                       */
+    .long   _bxos_app_flags         /* flags                       */
 
     /* ─── 진입점 _start ────────────────────────────────────────── */
     .section .text._start, "ax", @progbits

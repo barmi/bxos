@@ -44,7 +44,14 @@ BxOS의 새로운 실행 파일 포맷 (`.he2`).
 | 0x10   | 4    | `bss_size`    | 0으로 채울 BSS 바이트 수 (image 뒤에 배치)    |
 | 0x14   | 4    | `stack_size`  | 요청 스택 크기                                |
 | 0x18   | 4    | `heap_size`   | 요청 힙 크기 (api_initmalloc 영역으로 사용)   |
-| 0x1C   | 4    | `flags`       | reserved, 0                                   |
+| 0x1C   | 4    | `flags`       | subsystem flags                               |
+
+`flags & 0x03` 은 실행 subsystem 이다.
+
+| Value | Meaning   |
+|-------|-----------|
+| 0     | Console   |
+| 1     | Window    |
 
 ## 메모리 레이아웃 (로드 후)
 

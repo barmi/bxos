@@ -152,6 +152,7 @@ struct TASK *task_alloc(void)
 			task->tss.gs = 0;
 			task->tss.iomap = 0x40000000;
 			task->tss.ss0 = 0;
+			task->app_type = TASK_APP_SYSTEM;
 			if (i >= taskctl->alloc) {
 				taskctl->alloc = i + 1;
 			}
@@ -273,7 +274,7 @@ void taskmgr_task(unsigned int memtotal)
 	make_header8(sht, 168, 27,  30, 18, COL8_C6C6C6);
 	make_header8(sht, 200, 27,  88, 18, COL8_C6C6C6);
 	memset(msg, 0, sizeof(msg));
-	strcpy(msg, "ID  NAME            LV  TIME");
+	strcpy(msg, "ID  TY NAME         LV  TIME");
 	putfonts8_asc(sht->buf, sht->bxsize, x + 1, y + 1, COL8_FFFFFF, /*1,*/ (unsigned char*)msg);
 	putfonts8_asc(sht->buf, sht->bxsize, x + 0, y + 0, COL8_000000, /*1,*/ (unsigned char*)msg);
 
@@ -342,7 +343,9 @@ void task_display(struct SHEET *sht, int offset, int cpu, int time, unsigned int
 			continue;
 		}
 		memset(msg, 0, sizeof(msg));
-		sprintf(msg, "%3d %-15s   %1d %7d.%02d", i,
+		sprintf(msg, "%3d %-3s %-12s %1d %7d.%02d", i,
+			taskctl->tasks0[i].app_type == TASK_APP_WINDOW ? "WIN" :
+			taskctl->tasks0[i].app_type == TASK_APP_CONSOLE ? "CON" : "SYS",
 			taskctl->tasks0[i].name, taskctl->tasks0[i].level,
 			taskctl->tasks0[i].time / 100, taskctl->tasks0[i].time % 100);
 		putfonts8_asc(sht->buf, sht->bxsize, x, y + 16 * j++, COL8_FFFFFF, /*1,*/ msg);

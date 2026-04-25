@@ -266,15 +266,25 @@ bxos_libbxos()
 # 마이그레이션 대상 앱들 — 일단 출력/창/입력 기본만.
 set(BXOS_HE2_APPS_BASIC
     a hello3 hello4 hello5
-    winhelo winhelo2 winhelo3
-    star1 stars stars2 lines walk
-    color color2 sosu sosu2 sosu3
-    type beepdown noodle
+    sosu sosu2 sosu3
+    type beepdown
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
     if(EXISTS "${_src}")
         he2_add_app(${_a} DIR "${BXOS_HARIB}/${_a}")
+    endif()
+endforeach()
+
+set(BXOS_HE2_APPS_WINDOW
+    winhelo winhelo2 winhelo3
+    star1 stars stars2 lines walk
+    color color2 noodle
+)
+foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
+    set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
+    if(EXISTS "${_src}")
+        he2_add_app(${_a} DIR "${BXOS_HARIB}/${_a}" SUBSYSTEM WINDOW)
     endif()
 endforeach()
 

@@ -235,10 +235,13 @@ struct TASK {
 	struct FILEHANDLE *fhandle;
 	int *fat;
 	char *cmdline;
-	unsigned char langmode, langbyte1;
+	unsigned char langmode, langbyte1, app_type;
 	char name[16];
 	unsigned int time;
 };
+#define TASK_APP_SYSTEM		0
+#define TASK_APP_CONSOLE	1
+#define TASK_APP_WINDOW		2
 struct TASKLEVEL {
 	int running; /* 동작하고 있는 태스크 수  */
 	int now; /* 현재 동작하고 있는 태스크의 번호 */
@@ -283,6 +286,9 @@ void change_mtitle8(struct SHEET *sht, int level, int mn_flg, char act);
 #define CONS_HISTORY_MAX	16
 #define CONS_KEY_UP			0x80
 #define CONS_KEY_DOWN		0x81
+#define HE2_FLAG_SUBSYSTEM_MASK	0x00000003
+#define HE2_SUBSYSTEM_CONSOLE	0x00000000
+#define HE2_SUBSYSTEM_WINDOW	0x00000001
 
 struct CONSOLE {
 	struct SHEET *sht;
@@ -349,7 +355,7 @@ void cmd_cls(struct CONSOLE *cons);
 void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);
 void cmd_exit(struct CONSOLE *cons, int *fat);
-void cmd_start(struct CONSOLE *cons, char *cmdline, int memtotal);
+void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal);
 void cmd_ncst(struct CONSOLE *cons, char *cmdline, int memtotal);
 void cmd_langmode(struct CONSOLE *cons, char *cmdline);
 int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline);

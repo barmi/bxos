@@ -48,6 +48,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--in", dest="elf", required=True, help="input ELF (linked HE2 image)")
     p.add_argument("--out", dest="out", help="output .he2 file (omit with --info-only)")
     p.add_argument("--objcopy", default=None, help="explicit objcopy binary")
+    p.add_argument("--flags", default=None, help="override HE2 flags field")
     p.add_argument("--info-only", action="store_true", help="don't write output, just print header")
     args = p.parse_args(argv[1:])
 
@@ -70,7 +71,7 @@ def main(argv: list[str]) -> int:
         print(f"error: objcopy failed:\n{res.stderr}", file=sys.stderr)
         return res.returncode
 
-    data = out_path.read_bytes()
+    data = bytearray(out_path.read_bytes())
     if len(data) < HE2_HEADER_SIZE:
         print(f"error: output too small ({len(data)}B < {HE2_HEADER_SIZE}B)", file=sys.stderr)
         return 1
@@ -94,9 +95,16 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 1
 
+    if args.flags is not None:
+        flags = int(args.flags, 0)
+        struct.pack_into("<I", data, 0x1C, flags)
+        out_path.write_bytes(data)
+
+    subsystem = "window" if (flags & 0x3) == 1 else "console"
     print(f"[he2pack] {out_path.name}: {len(data)}B  "
           f"entry=0x{entry:X}  image=0x{image:X}  bss=0x{bss:X}  "
-          f"stack=0x{stack:X}  heap=0x{heap:X}  flags=0x{flags:X}",
+          f"stack=0x{stack:X}  heap=0x{heap:X}  flags=0x{flags:X}  "
+          f"subsystem={subsystem}",
           file=sys.stderr)
 
     if args.info_only:

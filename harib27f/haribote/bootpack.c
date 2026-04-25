@@ -482,6 +482,7 @@ struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal)
 	task->tss.fs = 1 * 8;
 	task->tss.gs = 1 * 8;
 	task->time = 0;
+	task->app_type = TASK_APP_CONSOLE;
 	strcpy(task->name, "console");
 	*((int *) (task->tss.esp + 4)) = (int) sht;
 	*((int *) (task->tss.esp + 8)) = memtotal;
@@ -656,6 +657,7 @@ void open_taskmgr(unsigned int memtotal)
 	taskmgr->tss.fs = 1 * 8;
 	taskmgr->tss.gs = 1 * 8;
 	taskmgr->time = 0;
+	taskmgr->app_type = TASK_APP_SYSTEM;
 	strcpy(taskmgr->name, "taskmgr");
 	*((int *) (taskmgr->tss.esp + 4)) = memtotal;
 	task_run(taskmgr, 2, 2); /* level=2, priority=2 */

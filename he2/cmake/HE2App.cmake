@@ -2,7 +2,7 @@
 #
 # 제공 매크로:
 #   bxos_libbxos()                                    # libbxos.a 빌드 타겟 등록
-#   he2_add_app(NAME [SOURCES ...] [STACK N] [HEAP N])
+#   he2_add_app(NAME [SOURCES ...] [STACK N] [HEAP N] [SUBSYSTEM CONSOLE|WINDOW])
 #       # .he2 실행 파일 생성. 결과: ${BXOS_HE2_BIN_DIR}/<NAME>.he2
 #
 # 주의:
@@ -120,13 +120,14 @@ endfunction()
 #   he2_add_app(name
 #       [SOURCES src1.c src2.c ...]    # 생략하면 ${name}.c 한 개로 가정
 #       [STACK   N]                    # 기본 16384
-#       [HEAP    N])                   # 기본 1048576
+#       [HEAP    N]                    # 기본 1048576
+#       [SUBSYSTEM CONSOLE|WINDOW])    # 기본 CONSOLE
 #
 #   결과:   ${BXOS_HE2_BIN_DIR}/<name>.he2
 #   전체 ALL 빌드에 등록되며, get target name = "he2_app_<name>".
 #
 function(he2_add_app NAME)
-    set(_oneval STACK HEAP DIR)
+    set(_oneval STACK HEAP DIR SUBSYSTEM)
     set(_multival SOURCES)
     cmake_parse_arguments(HEA "" "${_oneval}" "${_multival}" ${ARGN})
 
@@ -152,6 +153,17 @@ function(he2_add_app NAME)
     endif()
     if(NOT HEA_HEAP)
         set(HEA_HEAP 1048576)
+    endif()
+    if(NOT HEA_SUBSYSTEM)
+        set(HEA_SUBSYSTEM CONSOLE)
+    endif()
+    string(TOUPPER "${HEA_SUBSYSTEM}" HEA_SUBSYSTEM)
+    if(HEA_SUBSYSTEM STREQUAL "CONSOLE")
+        set(HEA_FLAGS 0)
+    elseif(HEA_SUBSYSTEM STREQUAL "WINDOW")
+        set(HEA_FLAGS 1)
+    else()
+        message(FATAL_ERROR "he2_add_app(${NAME}): SUBSYSTEM must be CONSOLE or WINDOW")
     endif()
 
     if(NOT BXOS_HE2_LIB)
@@ -185,11 +197,12 @@ function(he2_add_app NAME)
                 -T "${BXOS_HE2_LDS}"
                 --defsym=_bxos_stack_size=${HEA_STACK}
                 --defsym=_bxos_heap_size=${HEA_HEAP}
+                --defsym=_bxos_app_flags=${HEA_FLAGS}
                 -o "${_elf}"
                 ${_objs}
                 "${BXOS_HE2_LIB}"
         DEPENDS ${_objs} "${BXOS_HE2_LIB}" "${BXOS_HE2_LDS}"
-        COMMENT "[he2/${NAME}] LD ${NAME}.elf  stack=${HEA_STACK} heap=${HEA_HEAP}"
+        COMMENT "[he2/${NAME}] LD ${NAME}.elf  stack=${HEA_STACK} heap=${HEA_HEAP} subsystem=${HEA_SUBSYSTEM}"
         VERBATIM
     )
 
@@ -198,6 +211,7 @@ function(he2_add_app NAME)
         OUTPUT "${_he2}"
         COMMAND ${Python3_EXECUTABLE} "${BXOS_HE2_PACK}"
                 --in "${_elf}" --out "${_he2}"
+                --flags "${HEA_FLAGS}"
                 --objcopy "${BXOS_OBJCOPY}"
         DEPENDS "${_elf}" "${BXOS_HE2_PACK}"
         COMMENT "[he2/${NAME}] PACK ${NAME}.he2"

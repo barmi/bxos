@@ -13,6 +13,11 @@ static void cons_input_clear(struct CONSOLE *cons, char *cmdline, int *cmd_len);
 static void cons_input_set(struct CONSOLE *cons, char *cmdline, int *cmd_len, char *src);
 static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 		int *hist_count, char *cmdline);
+static struct FILEINFO *app_find(char *cmdline, char *app_name);
+static void app_name_from_finfo(char *dst, struct FILEINFO *finfo);
+static int app_subsystem(char *cmdline, int *fat);
+static void task_set_app(struct TASK *task, char *name, int app_type);
+static void task_reset_console(struct TASK *task);
 
 void console_task(struct SHEET *sheet, int memtotal)
 {
@@ -36,6 +41,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 	cons.width  = 240;
 	cons.height = 128;
 	task->cons = &cons;
+	task->app_type = TASK_APP_CONSOLE;
 	cmdline[0] = 0;
 	task->cmdline = cmdline;
 
@@ -368,7 +374,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 	} else if (strcmp(cmdline, "exit") == 0) {
 		cmd_exit(cons, fat);
 	} else if (strncmp(cmdline, "start ", 6) == 0) {
-		cmd_start(cons, cmdline, memtotal);
+		cmd_start(cons, cmdline, fat, memtotal);
 	} else if (strncmp(cmdline, "ncst ", 5) == 0) {
 		cmd_ncst(cons, cmdline, memtotal);
 	} else if (strncmp(cmdline, "langmode ", 9) == 0) {
@@ -448,14 +454,16 @@ void cmd_task(void)
 {
 	int i;
 	char msg[40];
-	dbg_putstr0("ID  NAME            LV  TIME      \n", COL8_FFFFFF);
-	dbg_putstr0("--- --------------- --- ----------\n", COL8_FFFFFF);
+	dbg_putstr0("ID  TY  NAME         LV  TIME      \n", COL8_FFFFFF);
+	dbg_putstr0("--- --- ------------ --- ----------\n", COL8_FFFFFF);
 	for (i = 0; i < taskctl->alloc; i++) {
 		if (taskctl->tasks0[i].flags == 0) {
 			continue;
 		}
 		memset(msg, 0, sizeof(msg));
-		sprintf(msg, "%3d %-15s   %1d %7d.%02d\n", i,
+		sprintf(msg, "%3d %-3s %-12s   %1d %7d.%02d\n", i,
+			taskctl->tasks0[i].app_type == TASK_APP_WINDOW ? "WIN" :
+			taskctl->tasks0[i].app_type == TASK_APP_CONSOLE ? "CON" : "SYS",
 			taskctl->tasks0[i].name, taskctl->tasks0[i].level,
 			taskctl->tasks0[i].time / 100, taskctl->tasks0[i].time % 100);
 		dbg_putstr0(msg, COL8_FFFFFF);
@@ -485,14 +493,22 @@ void cmd_exit(struct CONSOLE *cons, int *fat)
 	}
 }
 
-void cmd_start(struct CONSOLE *cons, char *cmdline, int memtotal)
+void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal)
 {
 	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
-	struct SHEET *sht = open_console(shtctl, memtotal);
-	struct FIFO32 *fifo = &sht->task->fifo;
-	int i;
-	sheet_slide(sht, 32, 4);
-	sheet_updown(sht, shtctl->top);
+	struct SHEET *sht = 0;
+	struct TASK *task;
+	struct FIFO32 *fifo;
+	int i, subsystem = app_subsystem(cmdline + 6, fat);
+	if (subsystem == HE2_SUBSYSTEM_WINDOW) {
+		task = open_constask(0, memtotal);
+	} else {
+		sht = open_console(shtctl, memtotal);
+		task = sht->task;
+		sheet_slide(sht, 32, 4);
+		sheet_updown(sht, shtctl->top);
+	}
+	fifo = &task->fifo;
 	/* 커맨드 라인에 입력된 문자열을, 한 글자씩 새로운 콘솔에 입력 */
 	for (i = 6; cmdline[i] != 0; i++) {
 		fifo32_put(fifo, cmdline[i] + 256);
@@ -545,8 +561,109 @@ struct he2_hdr_kern {
 	unsigned int	flags;
 };
 
+static struct FILEINFO *app_find(char *cmdline, char *app_name)
+{
+	struct FILEINFO *finfo;
+	char name[18];
+	int i, has_dot = 0;
+
+	for (i = 0; i < 13; i++) {
+		if (cmdline[i] <= ' ') {
+			break;
+		}
+		if (cmdline[i] == '.') {
+			has_dot = 1;
+		}
+		name[i] = cmdline[i];
+	}
+	name[i] = 0;
+	if (i == 0) {
+		return 0;
+	}
+
+	finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+	if (finfo == 0 && has_dot == 0) {
+		name[i    ] = '.';
+		name[i + 1] = 'H';
+		name[i + 2] = 'E';
+		name[i + 3] = '2';
+		name[i + 4] = 0;
+		finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+		if (finfo == 0) {
+			name[i + 1] = 'H';
+			name[i + 2] = 'R';
+			name[i + 3] = 'B';
+			finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+		}
+	}
+	if (finfo != 0 && app_name != 0) {
+		app_name_from_finfo(app_name, finfo);
+	}
+	return finfo;
+}
+
+static void app_name_from_finfo(char *dst, struct FILEINFO *finfo)
+{
+	int i, j = 0, ext_nonblank = 0;
+	for (i = 0; i < 8 && finfo->name[i] != ' '; i++) {
+		dst[j++] = finfo->name[i];
+	}
+	for (i = 0; i < 3; i++) {
+		if (finfo->ext[i] != ' ') {
+			ext_nonblank = 1;
+		}
+	}
+	if (ext_nonblank != 0 && j < 14) {
+		dst[j++] = '.';
+		for (i = 0; i < 3 && finfo->ext[i] != ' ' && j < 15; i++) {
+			dst[j++] = finfo->ext[i];
+		}
+	}
+	dst[j] = 0;
+}
+
+static int app_subsystem(char *cmdline, int *fat)
+{
+	struct FILEINFO *finfo;
+	char *p;
+	int appsiz, subsystem = HE2_SUBSYSTEM_CONSOLE;
+	struct he2_hdr_kern *h;
+
+	finfo = app_find(cmdline, 0);
+	if (finfo == 0) {
+		return HE2_SUBSYSTEM_CONSOLE;
+	}
+	appsiz = finfo->size;
+	p = file_loadfile2(finfo->clustno, &appsiz, fat);
+	if (p == 0) {
+		return HE2_SUBSYSTEM_CONSOLE;
+	}
+	if (appsiz >= 32 && p[0] == 'H' && p[1] == 'E' && p[2] == '2' && p[3] == 0) {
+		h = (struct he2_hdr_kern *) p;
+		subsystem = h->flags & HE2_FLAG_SUBSYSTEM_MASK;
+	}
+	memman_free_4k((struct MEMMAN *) MEMMAN_ADDR, (int) p, appsiz);
+	return subsystem;
+}
+
+static void task_set_app(struct TASK *task, char *name, int app_type)
+{
+	int i;
+	for (i = 0; i < 15 && name[i] != 0; i++) {
+		task->name[i] = name[i];
+	}
+	task->name[i] = 0;
+	task->app_type = app_type;
+}
+
+static void task_reset_console(struct TASK *task)
+{
+	strcpy(task->name, "console");
+	task->app_type = TASK_APP_CONSOLE;
+}
+
 static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
-		struct MEMMAN *memman, char *p, int appsiz)
+		struct MEMMAN *memman, char *p, int appsiz, char *app_name)
 {
 	struct he2_hdr_kern *h = (struct he2_hdr_kern *) p;
 	unsigned int total_sz, image_sz, bss_sz, heap_sz, stack_sz;
@@ -585,6 +702,9 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 		cons_putstr0(cons, ".he2 out of memory.\n");
 		return 0;
 	}
+	task_set_app(task, app_name,
+			((h->flags & HE2_FLAG_SUBSYSTEM_MASK) == HE2_SUBSYSTEM_WINDOW) ?
+			TASK_APP_WINDOW : TASK_APP_CONSOLE);
 	task->ds_base = (int) q;
 
 	/* 코드와 데이터 양쪽 모두 같은 영역(q)을 가리키게 한다.        */
@@ -604,7 +724,7 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 	start_app(h->entry_off, 0 * 8 + 4, total_sz, 1 * 8 + 4,
 			&(task->tss.esp0));
 
-	strcpy(task->name, "console");
+	task_reset_console(task);
 	shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
 	for (i = 0; i < MAX_SHEETS; i++) {
 		sht = &(shtctl->sheets0[i]);
@@ -629,61 +749,48 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 	struct FILEINFO *finfo;
-	char name[18], *p, *q;
+	char app_name[16], *p, *q;
 	struct TASK *task = task_now();
 	int i, segsiz, datsiz, esp, dathrb, appsiz;
 	struct SHTCTL *shtctl;
 	struct SHEET *sht;
 
-	/* 커맨드 라인으로부터 파일명을 생성 */
-	for (i = 0; i < 13; i++) {
-		if (cmdline[i] <= ' ') {
-			break;
-		}
-		name[i] = cmdline[i];
-	}
-	name[i] = 0; /* 우선 파일명의 뒤를 0으로 한다 */
-
 	/* 파일을 찾는다 */
-	finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
-	if (finfo == 0 && name[i - 1] != '.') {
-		/* 새 포맷(.HE2) 우선, 없으면 기존 .HRB 도 시도 */
-		name[i    ] = '.';
-		name[i + 1] = 'H';
-		name[i + 2] = 'E';
-		name[i + 3] = '2';
-		name[i + 4] = 0;
-		finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
-		if (finfo == 0) {
-			name[i + 1] = 'H';
-			name[i + 2] = 'R';
-			name[i + 3] = 'B';
-			finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
-		}
-	}
+	finfo = app_find(cmdline, app_name);
 
 	if (finfo != 0) {
 		/* 파일이 발견되었을 경우 */
 		appsiz = finfo->size;
 		p = file_loadfile2(finfo->clustno, &appsiz, fat);
+		if (p == 0) {
+			cons_putstr0(cons, "out of memory.\n\n");
+			return 1;
+		}
 
 		/* HE2 인지 먼저 검사 (magic = "HE2\0") */
 		if (appsiz >= 32 && p[0] == 'H' && p[1] == 'E' && p[2] == '2' && p[3] == 0) {
-			load_and_run_he2(cons, task, memman, p, appsiz);
+			load_and_run_he2(cons, task, memman, p, appsiz, app_name);
 		} else if (appsiz >= 36 && strncmp(p + 4, "Hari", 4) == 0 && *p == 0x00) {
 			segsiz = *((int *) (p + 0x0000));
 			esp    = *((int *) (p + 0x000c));
 			datsiz = *((int *) (p + 0x0010));
 			dathrb = *((int *) (p + 0x0014));
 			q = (char *) memman_alloc_4k(memman, segsiz);
+			if (q == 0) {
+				cons_putstr0(cons, "out of memory.\n");
+				memman_free_4k(memman, (int) p, appsiz);
+				cons_newline(cons);
+				return 1;
+			}
 			task->ds_base = (int) q;
 			set_segmdesc(task->ldt + 0, appsiz - 1, (int) p, AR_CODE32_ER + 0x60);
 			set_segmdesc(task->ldt + 1, segsiz - 1, (int) q, AR_DATA32_RW + 0x60);
 			for (i = 0; i < datsiz; i++) {
 				q[esp + i] = p[dathrb + i];
 			}
+			task_set_app(task, app_name, TASK_APP_CONSOLE);
 			start_app(0x1b, 0 * 8 + 4, esp, 1 * 8 + 4, &(task->tss.esp0));
-			strcpy(task->name, "console");
+			task_reset_console(task);
 			shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
 			for (i = 0; i < MAX_SHEETS; i++) {
 				sht = &(shtctl->sheets0[i]);
@@ -742,6 +849,7 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		return &(task->tss.esp0);
 	} else if (edx == 5) {
 		// api_openwin
+		task->app_type = TASK_APP_WINDOW;
 		sht = sheet_alloc(shtctl);
 		sht->task = task;
 		sht->flags |= 0x10;	/* 어플리케이션이 만든 윈도우           */
