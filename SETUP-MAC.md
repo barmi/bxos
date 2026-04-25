@@ -135,6 +135,8 @@ chmod +x build-mac.sh tools/wine-wrappers/_run.sh tools/wine-wrappers/install-sy
 
 원본 `z_tools/*.exe` 를 한 개도 부르지 않고 빌드합니다. 앱 `.hrb` 파일들은 OSASKCMP 압축이라 변환이 비현실적이라 기존 빌드본을 그대로 디스크 이미지에 복사합니다(원본 트리에 이미 빌드되어 있음). 커널 + 부트로더 + asmhead 는 처음부터 다시 빌드.
 
+현대 GCC로 커널을 빌드할 때는 옛 코드의 `reg = &eax + 1` 방식이 안정적으로 동작하지 않습니다. 현재 modern 경로는 `asm_hrb_api` 가 저장된 PUSHAD 프레임 포인터를 `hrb_api()` 에 명시적으로 넘겨 앱 API 반환값(`api_openwin`, `api_malloc` 등)이 앱으로 정확히 돌아가도록 맞춰 두었습니다.
+
 ### 3.1 사전 설치
 
 ```bash

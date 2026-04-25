@@ -76,12 +76,15 @@ Apple Silicon Mac(`i686-elf-gcc`, NASM, Python 3.13)에서 검증한 것:
 * `mkfat12.py` — `build/modern/haribote.img` 생성(39 files).
 * `makefont.py` — 4096B 폰트 바이너리 생성, 알려진 글리프 비트맵 일치.
 * QEMU `screendump` — 1024x768 데스크톱, 콘솔 창, 디버그 창, 마우스 커서 표시 확인.
+* 앱 API 반환값 — `asm_hrb_api` 가 저장된 PUSHAD 프레임 포인터를 `hrb_api()` 에 명시적으로 넘겨 `api_openwin()`/`api_malloc()` 등의 반환값이 앱 EAX로 돌아가는 것 확인.
+* 앱 화면 갱신 — `color`, `lines`, `winhelo3`, `bball` 실행 시 창 내부가 초기 표시되는 것 확인.
 
 가능성이 있는 트러블 포인트:
 
-1. **앱 실행 전체 검증** — 데스크톱 표시까지는 확인했지만, 모든 `.hrb` 앱의 동작은 별도 확인이 필요합니다.
+1. **앱 실행 전체 검증** — 대표 앱 몇 개는 확인했지만, 모든 `.hrb` 앱의 세부 동작은 별도 확인이 필요합니다.
 2. **bootpack 의 메모리 레이아웃** — 화면이 깨지면 `.data` 섹션 VMA가 0x310000인지, HRB 헤더의 `data_size`/`data_file` 이 0이 아닌지 먼저 확인합니다.
-3. **modern_libc 범위** — 커널이 현재 쓰는 `sprintf`/문자열 함수만 구현했습니다. 새 코드가 더 많은 libc 함수를 쓰면 `modern_libc.c` 에 추가해야 합니다.
+3. **앱 API 반환값** — 앱 창은 뜨지만 `boxfilwin`/`putstrwin`/`linewin` 같은 후속 API가 반영되지 않으면, `asm_hrb_api` 가 저장 레지스터 프레임을 `hrb_api()` 에 넘기고 `reg[7]` 로 앱 EAX를 갱신하는지 확인합니다.
+4. **modern_libc 범위** — 커널이 현재 쓰는 `sprintf`/문자열 함수만 구현했습니다. 새 코드가 더 많은 libc 함수를 쓰면 `modern_libc.c` 에 추가해야 합니다.
 
 ## 트러블슈팅 시나리오
 

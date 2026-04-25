@@ -446,7 +446,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 	return 0;
 }
 
-int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax)
+int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax)
 {
 	struct TASK *task = task_now();
 	int ds_base = task->ds_base;
@@ -454,8 +454,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
 	struct SHEET *sht;
 	struct FIFO32 *sys_fifo = (struct FIFO32 *) *((int *) 0x0fec);
-	int *reg = &eax + 1;	/* eax의 다음 번지 */
-		/* 보존을 위한 PUSHAD를 강제로 수정 */
+		/* 보존을 위한 PUSHAD 프레임을 수정 */
 		/* reg[0] : EDI,   reg[1] : ESI,   reg[2] : EBP,   reg[3] : ESP */
 		/* reg[4] : EBX,   reg[5] : EDX,   reg[6] : ECX,   reg[7] : EAX */
 	int i;
@@ -521,7 +520,7 @@ int *hrb_api(int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int 
 		}
 	} else if (edx == 12) {
 		// api_refreshwin
-		sht = (struct SHEET *) ebx;
+		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		sheet_refresh(sht, eax, ecx, esi, edi);
 	} else if (edx == 13) {
 		// api_linewin
@@ -858,4 +857,3 @@ void dbg_putstr1(char *s, int l, int c)
 	}
 	return;
 }
-
