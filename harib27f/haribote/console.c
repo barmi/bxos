@@ -130,8 +130,8 @@ void console_task(struct SHEET *sheet, int memtotal)
 
 /*
  * cons_putchar / cons_newline 의 wrap/scroll 경계는 "안전한 sane 범위" 안의
- * cons->width / cons->height 값이 있을 때만 동적으로 따라가고, 그렇지 않으면
- * 원래의 240×128 hardcoded 값을 유지한다.
+ * cons->width / cons->height 값을 글자 셀(8×16) 단위로 내려 맞춰 사용한다.
+ * 그렇지 않으면 원래의 240×128 hardcoded 값을 유지한다.
  *
  * 이렇게 한 이유: console_task() 진입 직후 ~ width/height 초기화 사이의
  * 짧은 시점이나, 다른 경로(taskmgr 등)에서 task->cons 가 partial-init 상태로
@@ -141,18 +141,30 @@ void console_task(struct SHEET *sheet, int memtotal)
 static int cons_text_w(struct CONSOLE *cons)
 {
 	int w = cons->width;
-	return (w >= 16 && w <= 4096) ? w : 240;
+	if (w < 16 || w > 4096) {
+		return 240;
+	}
+	w &= ~7;	/* glyph width = 8px */
+	return (w >= 16) ? w : 16;
 }
 static int cons_text_h(struct CONSOLE *cons)
 {
 	int h = cons->height;
-	return (h >= 16 && h <= 4096) ? h : 128;
+	if (h < 16 || h > 4096) {
+		return 128;
+	}
+	h &= ~15;	/* line height = 16px */
+	return (h >= 16) ? h : 16;
 }
 
 void cons_putchar(struct CONSOLE *cons, int chr, char move)
 {
 	char s[2];
 	int W = cons_text_w(cons);
+	int H = cons_text_h(cons);
+	if (cons->cur_y > 28 + H - 16) {
+		cons->cur_y = 28 + H - 16;
+	}
 	s[0] = chr;
 	s[1] = 0;
 	if (s[0] == 0x09) {	/* 탭 */
