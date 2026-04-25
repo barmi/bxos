@@ -13,6 +13,7 @@ void close_console(struct SHEET *sht);
 void close_constask(struct TASK *task);
 void close_taskmgr(void);
 void init_menu(struct MNLV *mnlv, struct MENU **menu);
+void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *title);
 
 void HariMain(void)
 {
@@ -146,7 +147,9 @@ void HariMain(void)
 	fifo32_put(&keycmd, key_leds);
 
 	// skshin 
-	dbg_init(sht_back);
+	dbg_init(shtctl);
+	sheet_slide(dbg_get()->sht, 300, 480);
+	sheet_updown(dbg_get()->sht, shtctl->top);
 
 	for (;;) {
 		if (fifo32_status(&keycmd) > 0 && keycmd_wait < 0) {
@@ -200,7 +203,7 @@ void HariMain(void)
 						s[0] += 0x20;	/* 대문자를 소문자로 변환 */
 					}
 				}
-				if (s[0] != 0 && key_win != 0) { /* 통상 문자, 백 스페이스, Enter */
+				if (s[0] != 0 && key_win != 0 && key_win->task != 0) { /* 통상 문자, 백 스페이스, Enter */
 					fifo32_put(&key_win->task->fifo, s[0] + 256);
 				}
 				if (i == 256 + 0x0f && key_win != 0) {	/* Tab */
@@ -239,7 +242,7 @@ void HariMain(void)
 					fifo32_put(&keycmd, KEYCMD_LED);
 					fifo32_put(&keycmd, key_leds);
 				}
-				if (i == 256 + 0x3b && key_shift != 0 && key_win != 0) {	/* Shift+F1 */
+				if (i == 256 + 0x3b && key_shift != 0 && key_win != 0 && key_win->task != 0) {	/* Shift+F1 */
 					task = key_win->task;
 					if (task != 0 && task->tss.ss0 != 0) {
 						cons_putstr0(task->cons, "\nBreak(key) :\n");
@@ -293,10 +296,13 @@ void HariMain(void)
 					new_mx = mx;
 					new_my = my;
 
-					/* ── (a) 디버그 창 스크롤바가 이미 잡혀있다면 거기로 우회.
-					 *       press / drag / release 전부 dbg 가 처리.            */
-					if (dbg_get()->sb_grab) {
-						dbg_handle_mouse(dbg_get(), mx, my, mdec.btn);
+					/* ── (a) 스크롤바가 이미 잡혀있다면 해당 텍스트 창으로 우회. */
+					if (dbg_get()->sw.sb_grab) {
+						scrollwin_handle_mouse(&dbg_get()->sw,
+								mx - dbg_get()->sht->vx0, my - dbg_get()->sht->vy0, mdec.btn);
+					} else if (key_win != 0 && key_win->scroll != 0 && key_win->scroll->sb_grab) {
+						scrollwin_handle_mouse(key_win->scroll,
+								mx - key_win->vx0, my - key_win->vy0, mdec.btn);
 						/* 다른 모드 진입 안 함 — 다음 이벤트 대기 */
 					} else if ((mdec.btn & 0x01) != 0) {
 						/* 왼쪽 버튼을 누르고 있다 */
@@ -324,6 +330,10 @@ void HariMain(void)
 											keywin_off(key_win);
 											key_win = sht;
 											keywin_on(key_win);
+										}
+										if (sht->scroll != 0 &&
+												scrollwin_handle_mouse(sht->scroll, x, y, mdec.btn) != 0) {
+											break;
 										}
 										/* (c) 우하단 / 우엣지 / 하엣지 → 리사이즈 모드 */
 										if ((sht->flags & SHEET_FLAG_RESIZABLE) != 0) {
@@ -360,7 +370,7 @@ void HariMain(void)
 												task->tss.eip = (int) asm_end_app;
 												io_sti();
 												task_run(task, -1, 0);
-											} else {	/* 콘솔 */
+											} else if (sht->task != 0) {	/* 콘솔 */
 												task = sht->task;
 												sheet_updown(sht, -1); /* 우선 비표시로 해 둔다 */
 												keywin_off(key_win);
@@ -369,15 +379,17 @@ void HariMain(void)
 												io_cli();
 												fifo32_put(&task->fifo, 4);
 												io_sti();
+											} else {	/* 태스크 없는 도구 창 */
+												sheet_updown(sht, -1);
+												if (sht == key_win) {
+													key_win = shtctl->sheets[shtctl->top - 1];
+													keywin_on(key_win);
+												}
 											}
 										}
 										break;
 									}
 								}
-							}
-							/* (d) 어떤 위 윈도우에도 안 맞았으면 = sht_back 영역. dbg 가 처리할까? */
-							if (j == 0) {
-								dbg_handle_mouse(dbg_get(), mx, my, mdec.btn);
 							}
 						} else {
 							/* 윈도우 이동 모드의 경우 */
@@ -395,6 +407,8 @@ void HariMain(void)
 								/* 일단 콘솔 윈도우만 리사이즈 가능 (cursor 플래그) */
 								if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
 									console_resize(rsht, new_rw, new_rh);
+								} else if ((rsht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
+									scrollwin_window_resize(rsht, new_rw, new_rh, "debug");
 								}
 							}
 							rsht = 0;
@@ -468,9 +482,15 @@ struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal)
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 	struct SHEET *sht = sheet_alloc(shtctl);
 	unsigned char *buf = (unsigned char *) memman_alloc_4k(memman, 256 * 165); // 256 / 8 = 32, 165 / 16 = 10 .. 5
+	struct SCROLLWIN *sw = (struct SCROLLWIN *) memman_alloc_4k(memman, sizeof(struct SCROLLWIN));
 	sheet_setbuf(sht, buf, 256, 165, -1); /* 투명색없음 */
 	make_window8(buf, 256, 165, "console", 0);
 	make_textbox8(sht, 8, 28, 240, 128, COL8_000000);
+	sht->scroll = sw;
+	sht->flags |= SHEET_FLAG_SCROLLWIN;
+	scrollwin_init(sw, sht, 8, 28, 240, 128, COL8_000000);
+	make_textbox8(sht, 8, 28, 240, 128, COL8_000000);
+	scrollwin_redraw(sw);
 	sht->task = open_constask(sht, memtotal);
 	sht->flags |= 0x20;	/* 커서 있음 */
 	return sht;
@@ -511,18 +531,64 @@ void console_resize(struct SHEET *sht, int new_w, int new_h)
 	 * 먼저 sheet_resize 를 호출해 sht->buf 를 new_buf 로 교체.            */
 	sheet_resize(sht, new_buf, new_w, new_h);
 	make_textbox8(sht, tx0, ty0, tw, th, COL8_000000);
+	if (sht->scroll != 0) {
+		sht->scroll->sht = sht;
+		sht->scroll->x0 = tx0;
+		sht->scroll->y0 = ty0;
+		sht->scroll->wd = tw & ~7;
+		sht->scroll->ht = th & ~15;
+		scrollwin_scroll_to(sht->scroll, sht->scroll->scroll_top);
+	}
 
 	/* CONSOLE 구조체의 cur_x/y 가 textbox 밖으로 나가지 않게 reset.
 	 * task->cons 는 console_task() 의 local 이라 외부에서 접근 불가하지만,
 	 * task 구조체 안 cons 포인터로 접근 가능.                              */
 	if (sht->task != 0 && sht->task->cons != 0) {
 		cons = sht->task->cons;
-		cons->cur_x = 8;
-		cons->cur_y = 28;
+		cons->cur_x = (sht->scroll != 0) ? scrollwin_cursor_x(sht->scroll) : 8;
+		cons->cur_y = (sht->scroll != 0) ? scrollwin_cursor_y(sht->scroll) : 28;
 		cons->width  = tw;
 		cons->height = th;
 	}
 
+	sheet_refresh(sht, 0, 0, new_w, new_h);
+	memman_free_4k(memman, (int) old_buf, old_bytes);
+}
+
+void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *title)
+{
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	int old_w = sht->bxsize, old_h = sht->bysize;
+	unsigned char *old_buf = sht->buf;
+	unsigned int old_bytes = (unsigned int)(old_w * old_h);
+	unsigned int new_bytes;
+	unsigned char *new_buf;
+	int tx0 = 8, ty0 = 28;
+	int tw, th;
+
+	if (new_w < RZ_MIN_W) new_w = RZ_MIN_W;
+	if (new_h < RZ_MIN_H) new_h = RZ_MIN_H;
+	tw = new_w - 16;
+	th = new_h - 28 - 9;
+	if (tw < 16 + SCROLLBAR_W) tw = 16 + SCROLLBAR_W;
+	if (th < 16) th = 16;
+
+	new_bytes = (unsigned int)(new_w * new_h);
+	new_buf = (unsigned char *) memman_alloc_4k(memman, new_bytes);
+	if (new_buf == 0) {
+		return;
+	}
+	make_window8(new_buf, new_w, new_h, title, 0);
+	sheet_resize(sht, new_buf, new_w, new_h);
+	make_textbox8(sht, tx0, ty0, tw, th, sht->scroll->bc);
+	if (sht->scroll != 0) {
+		sht->scroll->sht = sht;
+		sht->scroll->x0 = tx0;
+		sht->scroll->y0 = ty0;
+		sht->scroll->wd = tw & ~7;
+		sht->scroll->ht = th & ~15;
+		scrollwin_scroll_to(sht->scroll, sht->scroll->scroll_top);
+	}
 	sheet_refresh(sht, 0, 0, new_w, new_h);
 	memman_free_4k(memman, (int) old_buf, old_bytes);
 }
@@ -541,7 +607,11 @@ void close_console(struct SHEET *sht)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 	struct TASK *task = sht->task;
-	memman_free_4k(memman, (int) sht->buf, 256 * 165);
+	if (sht->scroll != 0) {
+		memman_free_4k(memman, (int) sht->scroll, sizeof(struct SCROLLWIN));
+		sht->scroll = 0;
+	}
+	memman_free_4k(memman, (int) sht->buf, sht->bxsize * sht->bysize);
 	sheet_free(sht);
 	close_constask(task);
 	return;

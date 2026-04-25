@@ -46,6 +46,7 @@ struct SHEET *sheet_alloc(struct SHTCTL *ctl)
 			sht->flags = SHEET_USE | SHEET_RESIZABLE;
 			sht->height = -1; /* 비표시중 */
 			sht->task = 0;	/* 자동으로 닫는 기능을 사용하지 않는다 */
+			sht->scroll = 0;
 			return sht;
 		}
 	}

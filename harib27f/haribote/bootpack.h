@@ -156,16 +156,19 @@ int memman_free_4k(struct MEMMAN *man, unsigned int addr, unsigned int size);
 
 /* sheet.c */
 #define MAX_SHEETS		256
+struct SCROLLWIN;
 /* sheet flags (sheet.c 도 같은 비트값 사용) */
 #define SHEET_FLAG_USE			0x01
 #define SHEET_FLAG_APP_WIN		0x10
 #define SHEET_FLAG_HAS_CURSOR	0x20
 #define SHEET_FLAG_RESIZABLE	0x40	/* default true (sheet_alloc 에서 set) */
+#define SHEET_FLAG_SCROLLWIN	0x80
 struct SHEET {
 	unsigned char *buf;
 	int bxsize, bysize, vx0, vy0, col_inv, height, flags;
 	struct SHTCTL *ctl;
 	struct TASK *task;
+	struct SCROLLWIN *scroll;
 };
 struct SHTCTL {
 	unsigned char *vram, *map;
@@ -278,6 +281,7 @@ void change_mtitle8(struct SHEET *sht, int level, int mn_flg, char act);
 /* console.c */
 struct CONSOLE {
 	struct SHEET *sht;
+	struct SCROLLWIN *scroll;
 	int cur_x, cur_y;		// cursor position
 	int cur_c;				// cursor color
 	struct TIMER *timer;
@@ -289,33 +293,37 @@ struct CONSOLE {
 	int width, height;
 };
 
-/* 디버그 창 스크롤백 — ring buffer 로 과거 라인을 보관하고 스크롤바로 탐색 */
-#define DBG_MAX_LINES   512   /* 최대 보관 라인수 (오래된 것은 덮어씀) */
-#define DBG_LINE_CHARS  100   /* 라인당 최대 문자수 (그 이상은 잘림)   */
-#define DBG_SCROLLBAR_W 10    /* 스크롤바 폭 (px). 클라이언트 영역 우측. */
+/* 공통 스크롤 텍스트 영역 — console/debug 모두 사용 */
+#define SCROLL_MAX_LINES   512
+#define SCROLL_LINE_CHARS  100
+#define SCROLLBAR_W        10
 
-struct DBGLINE {
-	unsigned char text[DBG_LINE_CHARS];
-	unsigned char color[DBG_LINE_CHARS];
+struct SCROLLLINE {
+	unsigned char text[SCROLL_LINE_CHARS];
+	unsigned char color[SCROLL_LINE_CHARS];
 	short len;	/* 실제 문자수 (≤ DBG_LINE_CHARS) */
 };
 
+struct SCROLLWIN {
+	struct SHEET *sht;
+	int bc;
+	int x0, y0;
+	int wd, ht;
+	int cx;
+	struct SCROLLLINE lines[SCROLL_MAX_LINES];
+	int head;
+	int count;
+	int scroll_top;
+	int auto_follow;
+	int sb_grab;
+	int sb_grab_y;
+	int sb_grab_top;
+};
+
+/* 디버그 창 */
 struct DBGWIN {
 	struct SHEET *sht;
-	int bc;				// -> bgcolor
-	int x0, y0;
-	int cx, cy;
-	int wd, ht;
-	/* ── 스크롤백 ─────────────────────────────────────────────────── */
-	struct DBGLINE lines[DBG_MAX_LINES];
-	int head;			/* lines[] 의 다음 쓰기 위치 (mod DBG_MAX_LINES) */
-	int count;			/* 보관된 유효 라인수 (≤ DBG_MAX_LINES)         */
-	int scroll_top;		/* 화면 최상단에 표시할 라인 번호 (0..count-1)   */
-	int auto_follow;	/* 1=새 라인이 들어오면 자동으로 끝으로 스크롤   */
-	/* ── 스크롤바 드래그 상태 ────────────────────────────────────── */
-	int sb_grab;		/* 1 = 사용자가 thumb 잡고 있음                  */
-	int sb_grab_y;		/* 잡았을 때 마우스 y                            */
-	int sb_grab_top;	/* 잡았을 때 scroll_top                          */
+	struct SCROLLWIN sw;
 };
 
 struct FILEHANDLE {
@@ -344,7 +352,18 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 int *inthandler0d(int *esp);
 int *inthandler0c(int *esp);
 void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col);
-void dbg_init(struct SHEET *sht);
+void scrollwin_init(struct SCROLLWIN *sw, struct SHEET *sht,
+		int x0, int y0, int wd, int ht, int bc);
+void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc);
+void scrollwin_puts(struct SCROLLWIN *sw, char *s, int c);
+void scrollwin_redraw(struct SCROLLWIN *sw);
+void scrollwin_scroll_to(struct SCROLLWIN *sw, int new_top);
+int  scrollwin_handle_mouse(struct SCROLLWIN *sw, int mx, int my, int btn);
+int  scrollwin_cursor_x(struct SCROLLWIN *sw);
+int  scrollwin_cursor_y(struct SCROLLWIN *sw);
+void scrollwin_backspace(struct SCROLLWIN *sw);
+int  scrollwin_text_cols(struct SCROLLWIN *sw);
+void dbg_init(struct SHTCTL *shtctl);
 void dbg_newline(struct DBGWIN *dbg);
 void dbg_putstr0(char *s, int c);
 void dbg_putstr1(char *s, int l, int c);

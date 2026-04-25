@@ -20,6 +20,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 	unsigned char *nihongo = (char *) *((int *) 0x0fe8);
 
 	cons.sht = sheet;
+	cons.scroll = (sheet != 0) ? sheet->scroll : 0;
 	cons.cur_x =  8;
 	cons.cur_y = 28;
 	cons.cur_c = -1;
@@ -90,9 +91,15 @@ void console_task(struct SHEET *sheet, int memtotal)
 				if (i == 8 + 256) {
 					/* 백 스페이스 */
 					if (cons.cur_x > 16) {
-						/* 스페이스로 지우고 나서 커서를 1개 back */
-						cons_putchar(&cons, ' ', 0);
-						cons.cur_x -= 8;
+						if (cons.scroll != 0) {
+							scrollwin_backspace(cons.scroll);
+							cons.cur_x = scrollwin_cursor_x(cons.scroll);
+							cons.cur_y = scrollwin_cursor_y(cons.scroll);
+						} else {
+							/* 스페이스로 지우고 나서 커서를 1개 back */
+							cons_putchar(&cons, ' ', 0);
+							cons.cur_x -= 8;
+						}
 					}
 				} else if (i == 10 + 256) {
 					/* Enter */
@@ -141,6 +148,9 @@ void console_task(struct SHEET *sheet, int memtotal)
 static int cons_text_w(struct CONSOLE *cons)
 {
 	int w = cons->width;
+	if (cons->scroll != 0) {
+		return scrollwin_text_cols(cons->scroll) * 8;
+	}
 	if (w < 16 || w > 4096) {
 		return 240;
 	}
@@ -150,6 +160,9 @@ static int cons_text_w(struct CONSOLE *cons)
 static int cons_text_h(struct CONSOLE *cons)
 {
 	int h = cons->height;
+	if (cons->scroll != 0) {
+		return cons->scroll->ht;
+	}
 	if (h < 16 || h > 4096) {
 		return 128;
 	}
@@ -162,6 +175,14 @@ void cons_putchar(struct CONSOLE *cons, int chr, char move)
 	char s[2];
 	int W = cons_text_w(cons);
 	int H = cons_text_h(cons);
+	if (cons->scroll != 0) {
+		if (move != 0 || chr == 0x0a || chr == 0x09) {
+			scrollwin_putc(cons->scroll, chr, COL8_FFFFFF);
+		}
+		cons->cur_x = scrollwin_cursor_x(cons->scroll);
+		cons->cur_y = scrollwin_cursor_y(cons->scroll);
+		return;
+	}
 	if (cons->cur_y > 28 + H - 16) {
 		cons->cur_y = 28 + H - 16;
 	}
@@ -206,6 +227,12 @@ void cons_newline(struct CONSOLE *cons)
 	struct TASK *task = task_now();
 	int W = cons_text_w(cons);
 	int H = cons_text_h(cons);
+	if (cons->scroll != 0) {
+		scrollwin_putc(cons->scroll, '\n', COL8_FFFFFF);
+		cons->cur_x = scrollwin_cursor_x(cons->scroll);
+		cons->cur_y = scrollwin_cursor_y(cons->scroll);
+		return;
+	}
 	if (cons->cur_y < 28 + H - 16) {
 		cons->cur_y += 16; /* 다음 행에 */
 	} else {
@@ -292,6 +319,13 @@ void cmd_cls(struct CONSOLE *cons)
 	struct SHEET *sheet = cons->sht;
 	int W = cons_text_w(cons);
 	int H = cons_text_h(cons);
+	if (cons->scroll != 0) {
+		scrollwin_init(cons->scroll, sheet, cons->scroll->x0, cons->scroll->y0,
+				cons->scroll->wd, cons->scroll->ht, COL8_000000);
+		cons->cur_x = scrollwin_cursor_x(cons->scroll);
+		cons->cur_y = scrollwin_cursor_y(cons->scroll);
+		return;
+	}
 	for (y = 28; y < 28 + H; y++) {
 		for (x = 8; x < 8 + W; x++) {
 			sheet->buf[x + y * sheet->bxsize] = COL8_000000;
@@ -919,287 +953,299 @@ void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col)
 
 
 /* ────────────────────────────────────────────────────────────────────
- *  디버그 윈도우 — ring buffer 기반 스크롤백 + 우측 스크롤바
- *
- *  레이아웃 (sht_back 위에 직접 그림):
- *
- *    (x0, y0) ┌──────────────────────────────┬──┐
- *             │                              │░░│
- *             │   text area                  │██│ ← scrollbar
- *             │   (wd - SCROLLBAR_W) × ht    │░░│
- *             │                              │░░│
- *             └──────────────────────────────┴──┘
- *
- *  text area : 한 라인 16px, 한 글자 8px. visible_lines = ht / 16.
- *  scrollbar : 우측 DBG_SCROLLBAR_W (10px). thumb 높이는 (visible/total).
+ *  공통 스크롤 텍스트 영역 — console/debug 양쪽에서 사용한다.
  * ──────────────────────────────────────────────────────────────────── */
+
+static int scrollwin_text_w(struct SCROLLWIN *sw) { return sw->wd - SCROLLBAR_W; }
+static int scrollwin_visible_lines(struct SCROLLWIN *sw) { return sw->ht / 16; }
+
+int scrollwin_text_cols(struct SCROLLWIN *sw)
+{
+	int cols = scrollwin_text_w(sw) / 8;
+	if (cols > SCROLL_LINE_CHARS) cols = SCROLL_LINE_CHARS;
+	return cols;
+}
+
+static struct SCROLLLINE *scrollwin_cur_line(struct SCROLLWIN *sw)
+{
+	int idx = (sw->head + SCROLL_MAX_LINES - 1) % SCROLL_MAX_LINES;
+	return &sw->lines[idx];
+}
+
+static struct SCROLLLINE *scrollwin_line_at(struct SCROLLWIN *sw, int display_idx)
+{
+	int oldest = (sw->head - sw->count + SCROLL_MAX_LINES) % SCROLL_MAX_LINES;
+	int idx = (oldest + display_idx) % SCROLL_MAX_LINES;
+	return &sw->lines[idx];
+}
+
+void scrollwin_scroll_to(struct SCROLLWIN *sw, int new_top)
+{
+	int vis = scrollwin_visible_lines(sw);
+	int max_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	if (new_top < 0)       new_top = 0;
+	if (new_top > max_top) new_top = max_top;
+	sw->scroll_top  = new_top;
+	sw->auto_follow = (new_top == max_top) ? 1 : 0;
+	scrollwin_redraw(sw);
+}
+
+static void scrollwin_newline(struct SCROLLWIN *sw)
+{
+	int idx = sw->head;
+	sw->lines[idx].len = 0;
+	sw->head = (sw->head + 1) % SCROLL_MAX_LINES;
+	if (sw->count < SCROLL_MAX_LINES) {
+		sw->count++;
+	}
+	sw->cx = 0;
+	if (sw->auto_follow) {
+		int vis = scrollwin_visible_lines(sw);
+		sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	}
+	scrollwin_redraw(sw);
+}
+
+void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
+{
+	struct SCROLLLINE *ln;
+	int max_chars = scrollwin_text_cols(sw);
+	if (chr == 0x0a) {
+		scrollwin_newline(sw);
+		return;
+	}
+	if (chr == 0x0d) {
+		return;
+	}
+	if (chr == 0x09) {
+		do {
+			scrollwin_putc(sw, ' ', fc);
+			ln = scrollwin_cur_line(sw);
+		} while ((ln->len & 0x03) != 0);
+		return;
+	}
+	ln = scrollwin_cur_line(sw);
+	if (ln->len >= max_chars) {
+		scrollwin_newline(sw);
+		ln = scrollwin_cur_line(sw);
+	}
+	ln->text[ln->len] = (unsigned char) chr;
+	ln->color[ln->len] = (unsigned char) fc;
+	ln->len++;
+	sw->cx = ln->len;
+	if (sw->auto_follow) {
+		int vis = scrollwin_visible_lines(sw);
+		sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	}
+	scrollwin_redraw(sw);
+}
+
+void scrollwin_puts(struct SCROLLWIN *sw, char *s, int c)
+{
+	for (; *s != 0; s++) {
+		scrollwin_putc(sw, (unsigned char) *s, c);
+	}
+}
+
+void scrollwin_backspace(struct SCROLLWIN *sw)
+{
+	struct SCROLLLINE *ln = scrollwin_cur_line(sw);
+	if (ln->len > 0) {
+		ln->len--;
+		sw->cx = ln->len;
+		if (sw->auto_follow) {
+			int vis = scrollwin_visible_lines(sw);
+			sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
+		}
+		scrollwin_redraw(sw);
+	}
+}
+
+int scrollwin_cursor_x(struct SCROLLWIN *sw)
+{
+	return sw->x0 + scrollwin_cur_line(sw)->len * 8;
+}
+
+int scrollwin_cursor_y(struct SCROLLWIN *sw)
+{
+	int cur_idx = sw->count - 1;
+	int line = cur_idx - sw->scroll_top;
+	if (line < 0) line = 0;
+	if (line >= scrollwin_visible_lines(sw)) line = scrollwin_visible_lines(sw) - 1;
+	return sw->y0 + line * 16;
+}
+
+void scrollwin_redraw(struct SCROLLWIN *sw)
+{
+	extern char hankaku[4096];
+	struct SHEET *sht = sw->sht;
+	int x, y, line, vis, tw;
+	int scrollbar_x, track_h, thumb_h, thumb_y, max_top;
+	if (sht == 0) return;
+	tw = scrollwin_text_w(sw);
+	vis = scrollwin_visible_lines(sw);
+	scrollbar_x = sw->x0 + tw;
+	for (y = sw->y0; y < sw->y0 + sw->ht; y++) {
+		for (x = sw->x0; x < sw->x0 + tw; x++) {
+			sht->buf[x + y * sht->bxsize] = sw->bc;
+		}
+	}
+	for (line = 0; line < vis; line++) {
+		int idx_disp = sw->scroll_top + line;
+		struct SCROLLLINE *ln;
+		int yy = sw->y0 + line * 16;
+		int j;
+		if (idx_disp >= sw->count) break;
+		ln = scrollwin_line_at(sw, idx_disp);
+		for (j = 0; j < ln->len; j++) {
+			putfont8(sht->buf, sht->bxsize, sw->x0 + j * 8, yy,
+					ln->color[j], hankaku + ln->text[j] * 16);
+		}
+	}
+	for (y = sw->y0; y < sw->y0 + sw->ht; y++) {
+		for (x = scrollbar_x; x < sw->x0 + sw->wd; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_848484;
+		}
+	}
+	max_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	if (sw->count <= vis) {
+		thumb_h = sw->ht;
+		thumb_y = sw->y0;
+	} else {
+		track_h = sw->ht;
+		thumb_h = (track_h * vis) / sw->count;
+		if (thumb_h < 8) thumb_h = 8;
+		thumb_y = sw->y0 + ((track_h - thumb_h) * sw->scroll_top) / max_top;
+	}
+	for (y = thumb_y; y < thumb_y + thumb_h && y < sw->y0 + sw->ht; y++) {
+		for (x = scrollbar_x + 1; x < sw->x0 + sw->wd - 1; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_FFFFFF;
+		}
+	}
+	sheet_refresh(sht, sw->x0, sw->y0, sw->x0 + sw->wd, sw->y0 + sw->ht);
+}
+
+int scrollwin_handle_mouse(struct SCROLLWIN *sw, int mx, int my, int btn)
+{
+	int sb_x0 = sw->x0 + scrollwin_text_w(sw);
+	int sb_x1 = sw->x0 + sw->wd;
+	int sb_y0 = sw->y0;
+	int sb_y1 = sw->y0 + sw->ht;
+	int in_sb = (sb_x0 <= mx && mx < sb_x1 && sb_y0 <= my && my < sb_y1);
+	if (sw->sb_grab) {
+		if ((btn & 0x01) == 0) {
+			sw->sb_grab = 0;
+		} else {
+			int vis = scrollwin_visible_lines(sw);
+			int max_top = (sw->count > vis) ? (sw->count - vis) : 0;
+			int track_h = sw->ht;
+			int thumb_h = (max_top > 0) ? ((track_h * vis) / sw->count) : track_h;
+			int travel = track_h - thumb_h;
+			int dy = my - sw->sb_grab_y;
+			int new_top = sw->sb_grab_top;
+			if (travel > 0 && max_top > 0) {
+				new_top = sw->sb_grab_top + (dy * max_top) / travel;
+			}
+			scrollwin_scroll_to(sw, new_top);
+		}
+		return 1;
+	}
+	if (in_sb && (btn & 0x01) != 0) {
+		int vis = scrollwin_visible_lines(sw);
+		int max_top = (sw->count > vis) ? (sw->count - vis) : 0;
+		int track_h = sw->ht;
+		int thumb_h = (max_top > 0) ? ((track_h * vis) / sw->count) : track_h;
+		int rel = my - sw->y0 - thumb_h / 2;
+		int travel = track_h - thumb_h;
+		int target = (travel <= 0 || max_top <= 0) ? 0 : (rel * max_top) / travel;
+		sw->sb_grab = 1;
+		sw->sb_grab_y = my;
+		sw->sb_grab_top = sw->scroll_top;
+		scrollwin_scroll_to(sw, target);
+		sw->sb_grab_top = sw->scroll_top;
+		return 1;
+	}
+	return 0;
+}
+
+void scrollwin_init(struct SCROLLWIN *sw, struct SHEET *sht,
+		int x0, int y0, int wd, int ht, int bc)
+{
+	int i;
+	sw->sht = sht;
+	sw->bc = bc;
+	sw->x0 = x0;
+	sw->y0 = y0;
+	sw->wd = wd & ~7;
+	sw->ht = ht & ~15;
+	if (sw->wd < 16 + SCROLLBAR_W) sw->wd = 16 + SCROLLBAR_W;
+	if (sw->ht < 16) sw->ht = 16;
+	sw->cx = 0;
+	for (i = 0; i < SCROLL_MAX_LINES; i++) {
+		sw->lines[i].len = 0;
+	}
+	sw->head = 1;
+	sw->count = 1;
+	sw->scroll_top = 0;
+	sw->auto_follow = 1;
+	sw->sb_grab = 0;
+	sw->sb_grab_y = 0;
+	sw->sb_grab_top = 0;
+	scrollwin_redraw(sw);
+}
 
 struct DBGWIN *dbg_get(void)
 {
 	return &dbg;
 }
 
-static int dbg_text_w(struct DBGWIN *d) { return d->wd - DBG_SCROLLBAR_W; }
-static int dbg_visible_lines(struct DBGWIN *d) { return d->ht / 16; }
-
-/* head/count 인변형:
- *   - head = "다음 라인을 만들 자리" (mod N)
- *   - count = 보관된 라인 수 (현재 작성중 라인 포함)
- *   - 현재 작성중 라인 = lines[(head - 1 + N) % N]
- *
- * dbg_init 에서 빈 라인 1개를 미리 할당해두므로 (head=1, count=1),
- * 이 함수는 그냥 head-1 인덱스를 돌려주면 된다.                        */
-static struct DBGLINE *dbg_cur_line(struct DBGWIN *d)
-{
-	int idx = (d->head + DBG_MAX_LINES - 1) % DBG_MAX_LINES;
-	return &d->lines[idx];
-}
-
-/* 새 라인을 ring 에 추가 (개행 시 호출). 자동 follow 모드면 끝으로 스크롤. */
 void dbg_newline(struct DBGWIN *d)
 {
-	int idx = d->head;
-	d->lines[idx].len = 0;
-	d->head = (d->head + 1) % DBG_MAX_LINES;
-	if (d->count < DBG_MAX_LINES) {
-		d->count++;
-	}
-	d->cx = 0;
-	if (d->auto_follow) {
-		int vis = dbg_visible_lines(d);
-		d->scroll_top = (d->count > vis) ? (d->count - vis) : 0;
-	}
-	dbg_redraw(d);
-}
-
-/* 한 글자 추가 — ring buffer 에 저장하고 즉시 redraw.
- *   - 탭은 다음 8픽셀 경계까지 공백.
- *   - 개행/복귀 처리.                                                  */
-void dbg_putchar(int chr, int fc)
-{
-	struct DBGLINE *ln;
-	int max_chars = dbg_text_w(&dbg) / 8;
-	if (max_chars > DBG_LINE_CHARS) max_chars = DBG_LINE_CHARS;
-
-	if (chr == 0x0a) {	/* '\n' */
-		dbg_newline(&dbg);
-		return;
-	}
-	if (chr == 0x0d) {	/* '\r' — ignore */
-		return;
-	}
-	if (chr == 0x09) {	/* tab → space-padding to next 4-char boundary */
-		do {
-			dbg_putchar(' ', fc);
-			ln = dbg_cur_line(&dbg);
-		} while ((ln->len & 0x03) != 0);
-		return;
-	}
-
-	ln = dbg_cur_line(&dbg);
-	if (ln->len >= max_chars) {
-		dbg_newline(&dbg);
-		ln = dbg_cur_line(&dbg);
-	}
-	ln->text[ln->len]  = (unsigned char) chr;
-	ln->color[ln->len] = (unsigned char) fc;
-	ln->len++;
-	if (dbg.auto_follow) {
-		int vis = dbg_visible_lines(&dbg);
-		dbg.scroll_top = (dbg.count > vis) ? (dbg.count - vis) : 0;
-	}
-	dbg_redraw(&dbg);
+	scrollwin_putc(&d->sw, '\n', COL8_FFFFFF);
 }
 
 void dbg_putstr0(char *s, int c)
 {
-	for (; *s != 0; s++) {
-		dbg_putchar((unsigned char) *s, c);
-	}
+	scrollwin_puts(&dbg.sw, s, c);
 }
 
 void dbg_putstr1(char *s, int l, int c)
 {
 	int i;
 	for (i = 0; i < l; i++) {
-		dbg_putchar((unsigned char) s[i], c);
+		scrollwin_putc(&dbg.sw, (unsigned char) s[i], c);
 	}
-}
-
-/* scroll_top 을 [0, max] 사이로 클램프하고 redraw. */
-void dbg_scroll_to(struct DBGWIN *d, int new_top)
-{
-	int vis = dbg_visible_lines(d);
-	int max_top = (d->count > vis) ? (d->count - vis) : 0;
-	if (new_top < 0)         new_top = 0;
-	if (new_top > max_top)   new_top = max_top;
-	d->scroll_top    = new_top;
-	d->auto_follow   = (new_top == max_top) ? 1 : 0;
-	dbg_redraw(d);
-}
-
-/* 한 라인의 ring 인덱스 → 표시순서(0=가장 오래됨, count-1=최신)
- *   가장 오래된 라인의 ring 인덱스 = (head - count + N) mod N           */
-static struct DBGLINE *dbg_line_at(struct DBGWIN *d, int display_idx)
-{
-	int oldest = (d->head - d->count + DBG_MAX_LINES) % DBG_MAX_LINES;
-	int idx = (oldest + display_idx) % DBG_MAX_LINES;
-	return &d->lines[idx];
 }
 
 void dbg_redraw(struct DBGWIN *d)
 {
-	extern char hankaku[4096];
-	struct SHEET *sht = d->sht;
-	int x, y, line, vis, tw;
-	int scrollbar_x;
-	int track_h, thumb_h, thumb_y;
-	int max_top;
-
-	if (sht == 0) return;
-
-	tw = dbg_text_w(d);
-	vis = dbg_visible_lines(d);
-	scrollbar_x = d->x0 + tw;
-
-	/* 1) 텍스트 영역 배경 클리어 */
-	for (y = d->y0; y < d->y0 + d->ht; y++) {
-		for (x = d->x0; x < d->x0 + tw; x++) {
-			sht->buf[x + y * sht->bxsize] = d->bc;
-		}
-	}
-
-	/* 2) 보이는 라인 그리기 */
-	for (line = 0; line < vis; line++) {
-		int idx_disp = d->scroll_top + line;
-		struct DBGLINE *ln;
-		int yy = d->y0 + line * 16;
-		int j;
-		if (idx_disp >= d->count) break;
-		ln = dbg_line_at(d, idx_disp);
-		for (j = 0; j < ln->len; j++) {
-			putfont8(sht->buf, sht->bxsize, d->x0 + j * 8, yy,
-					ln->color[j], hankaku + ln->text[j] * 16);
-		}
-	}
-
-	/* 3) 스크롤바 트랙 (어두운 회색) */
-	for (y = d->y0; y < d->y0 + d->ht; y++) {
-		for (x = scrollbar_x; x < d->x0 + d->wd; x++) {
-			sht->buf[x + y * sht->bxsize] = COL8_848484;
-		}
-	}
-
-	/* 4) thumb (밝은 회색). 위치/크기 = 비율 기반 */
-	max_top = (d->count > vis) ? (d->count - vis) : 0;
-	if (d->count <= vis) {
-		/* 전부 보임 — 트랙 전체를 thumb 으로 */
-		thumb_h = d->ht;
-		thumb_y = d->y0;
-	} else {
-		track_h = d->ht;
-		thumb_h = (track_h * vis) / d->count;
-		if (thumb_h < 8) thumb_h = 8;
-		if (max_top == 0) {
-			thumb_y = d->y0;
-		} else {
-			thumb_y = d->y0 + ((track_h - thumb_h) * d->scroll_top) / max_top;
-		}
-	}
-	for (y = thumb_y; y < thumb_y + thumb_h && y < d->y0 + d->ht; y++) {
-		for (x = scrollbar_x + 1; x < d->x0 + d->wd - 1; x++) {
-			sht->buf[x + y * sht->bxsize] = COL8_FFFFFF;
-		}
-	}
-
-	sheet_refresh(sht, d->x0, d->y0, d->x0 + d->wd, d->y0 + d->ht);
+	scrollwin_redraw(&d->sw);
 }
 
-/* bootpack.c 마우스 루프에서 호출.
- *   반환 1 = dbg 가 이벤트를 소비했음 (다른 sheet 처리 skip)             */
+void dbg_scroll_to(struct DBGWIN *d, int new_top)
+{
+	scrollwin_scroll_to(&d->sw, new_top);
+}
+
 int dbg_handle_mouse(struct DBGWIN *d, int mx, int my, int btn)
 {
-	int sb_x0 = d->x0 + dbg_text_w(d);
-	int sb_x1 = d->x0 + d->wd;
-	int sb_y0 = d->y0;
-	int sb_y1 = d->y0 + d->ht;
-	int in_sb = (sb_x0 <= mx && mx < sb_x1 && sb_y0 <= my && my < sb_y1);
-
-	if (d->sb_grab) {
-		if ((btn & 0x01) == 0) {
-			/* release */
-			d->sb_grab = 0;
-		} else {
-			/* drag — 마우스 이동량을 scroll_top 변화량으로 환산 */
-			int vis = dbg_visible_lines(d);
-			int max_top = (d->count > vis) ? (d->count - vis) : 0;
-			int track_h = d->ht;
-			int thumb_h = (max_top > 0) ? ((track_h * vis) / d->count) : track_h;
-			int travel  = track_h - thumb_h;
-			int dy      = my - d->sb_grab_y;
-			int new_top = d->sb_grab_top;
-			if (travel > 0 && max_top > 0) {
-				new_top = d->sb_grab_top + (dy * max_top) / travel;
-			}
-			dbg_scroll_to(d, new_top);
-		}
-		return 1;
-	}
-
-	if (in_sb && (btn & 0x01) != 0) {
-		/* 트랙/thumb 클릭 — 어디든 일단 잡기 시작 */
-		d->sb_grab     = 1;
-		d->sb_grab_y   = my;
-		d->sb_grab_top = d->scroll_top;
-		/* thumb 바깥을 클릭했으면 그 위치로 즉시 점프 (page jump) */
-		{
-			int vis = dbg_visible_lines(d);
-			int max_top = (d->count > vis) ? (d->count - vis) : 0;
-			int track_h = d->ht;
-			int thumb_h = (max_top > 0) ? ((track_h * vis) / d->count) : track_h;
-			int rel = my - d->y0 - thumb_h / 2;
-			int travel = track_h - thumb_h;
-			int target;
-			if (travel <= 0 || max_top <= 0) {
-				target = 0;
-			} else {
-				target = (rel * max_top) / travel;
-			}
-			dbg_scroll_to(d, target);
-			d->sb_grab_top = d->scroll_top;
-		}
-		return 1;
-	}
-
-	return 0;
+	return scrollwin_handle_mouse(&d->sw, mx, my, btn);
 }
 
-void dbg_init(struct SHEET *sht)
+void dbg_init(struct SHTCTL *shtctl)
 {
-	int i;
-	dbg.sht = sht;
-	dbg.bc  = 16 + 1 + 3 * 6 + 4 * 36;
-	dbg.x0  = 300;
-	dbg.y0  = 480;
-	dbg.cx  = 0;
-	dbg.cy  = 0;
-	dbg.wd  = 400;
-	dbg.ht  = 240;
-	for (i = 0; i < DBG_MAX_LINES; i++) {
-		dbg.lines[i].len = 0;
-	}
-	/* 시작 시 빈 "현재 작성중 라인" 1개를 미리 잡아둔다 → head=1, count=1.
-	 * 그래야 dbg_cur_line() 이 항상 lines[head-1] 를 반환하면 된다.       */
-	dbg.head        = 1;
-	dbg.count       = 1;
-	dbg.scroll_top  = 0;
-	dbg.auto_follow = 1;
-	dbg.sb_grab     = 0;
-	dbg.sb_grab_y   = 0;
-	dbg.sb_grab_top = 0;
-	make_textbox8(dbg.sht, dbg.x0, dbg.y0, dbg.wd, dbg.ht, dbg.bc);
-	dbg_redraw(&dbg);
-	sheet_refresh(dbg.sht, dbg.x0 - 3, dbg.y0 - 3,
-			dbg.x0 + dbg.wd + 3, dbg.y0 + dbg.ht + 3);
-	return;
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	unsigned char *buf;
+	dbg.sht = sheet_alloc(shtctl);
+	buf = (unsigned char *) memman_alloc_4k(memman, 416 * 272);
+	sheet_setbuf(dbg.sht, buf, 416, 272, -1);
+	make_window8(buf, 416, 272, "debug", 0);
+	dbg.sht->task = 0;
+	dbg.sht->scroll = &dbg.sw;
+	dbg.sht->flags |= SHEET_FLAG_SCROLLWIN;
+	scrollwin_init(&dbg.sw, dbg.sht, 8, 28, 400, 240,
+			16 + 1 + 3 * 6 + 4 * 36);
+	make_textbox8(dbg.sht, 8, 28, 400, 240,
+			16 + 1 + 3 * 6 + 4 * 36);
+	scrollwin_redraw(&dbg.sw);
 }
