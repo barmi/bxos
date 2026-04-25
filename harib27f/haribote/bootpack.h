@@ -279,6 +279,11 @@ void change_wtitle8(struct SHEET *sht, char act);
 void change_mtitle8(struct SHEET *sht, int level, int mn_flg, char act);
 
 /* console.c */
+#define CONS_CMDLINE_MAX	30
+#define CONS_HISTORY_MAX	16
+#define CONS_KEY_UP			0x80
+#define CONS_KEY_DOWN		0x81
+
 struct CONSOLE {
 	struct SHEET *sht;
 	struct SCROLLWIN *scroll;

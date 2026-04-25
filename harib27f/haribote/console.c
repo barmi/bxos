@@ -8,6 +8,11 @@ struct DBGWIN dbg;
 
 static int cons_text_w(struct CONSOLE *cons);
 static int cons_text_h(struct CONSOLE *cons);
+static void cons_input_backspace(struct CONSOLE *cons, char *cmdline, int *cmd_len);
+static void cons_input_clear(struct CONSOLE *cons, char *cmdline, int *cmd_len);
+static void cons_input_set(struct CONSOLE *cons, char *cmdline, int *cmd_len, char *src);
+static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
+		int *hist_count, char *cmdline);
 
 void console_task(struct SHEET *sheet, int memtotal)
 {
@@ -16,7 +21,9 @@ void console_task(struct SHEET *sheet, int memtotal)
 	int i, *fat = (int *) memman_alloc_4k(memman, 4 * 2880);
 	struct CONSOLE cons;
 	struct FILEHANDLE fhandle[8];
-	char cmdline[30];
+	char cmdline[CONS_CMDLINE_MAX];
+	char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX];
+	int cmd_len = 0, hist_count = 0, hist_pos = 0;
 	unsigned char *nihongo = (char *) *((int *) 0x0fe8);
 
 	cons.sht = sheet;
@@ -29,6 +36,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 	cons.width  = 240;
 	cons.height = 128;
 	task->cons = &cons;
+	cmdline[0] = 0;
 	task->cmdline = cmdline;
 
 	if (cons.sht != 0) {
@@ -90,22 +98,14 @@ void console_task(struct SHEET *sheet, int memtotal)
 			if (256 <= i && i <= 511) { /* 키보드 데이터(태스크 A경유) */
 				if (i == 8 + 256) {
 					/* 백 스페이스 */
-					if (cons.cur_x > 16) {
-						if (cons.scroll != 0) {
-							scrollwin_backspace(cons.scroll);
-							cons.cur_x = scrollwin_cursor_x(cons.scroll);
-							cons.cur_y = scrollwin_cursor_y(cons.scroll);
-						} else {
-							/* 스페이스로 지우고 나서 커서를 1개 back */
-							cons_putchar(&cons, ' ', 0);
-							cons.cur_x -= 8;
-						}
-					}
+					cons_input_backspace(&cons, cmdline, &cmd_len);
 				} else if (i == 10 + 256) {
 					/* Enter */
 					/* 스페이스로 지우고 나서 개행한다 */
 					cons_putchar(&cons, ' ', 0);
-					cmdline[cons.cur_x / 8 - 2] = 0;
+					cmdline[cmd_len] = 0;
+					cons_history_add(history, &hist_count, cmdline);
+					hist_pos = hist_count;
 					cons_newline(&cons);
 					cons_runcmd(cmdline, &cons, fat, memtotal);	/* 커맨드 실행 */
 					if (cons.sht == 0) {
@@ -113,12 +113,32 @@ void console_task(struct SHEET *sheet, int memtotal)
 					}
 					/* prompt 표시 */
 					cons_putchar(&cons, '>', 1);
+					cmd_len = 0;
+					cmdline[0] = 0;
+				} else if (i == CONS_KEY_UP + 256) {
+					if (hist_count > 0) {
+						if (hist_pos > 0) {
+							hist_pos--;
+						}
+						cons_input_set(&cons, cmdline, &cmd_len, history[hist_pos]);
+					}
+				} else if (i == CONS_KEY_DOWN + 256) {
+					if (hist_count > 0) {
+						if (hist_pos < hist_count - 1) {
+							hist_pos++;
+							cons_input_set(&cons, cmdline, &cmd_len, history[hist_pos]);
+						} else {
+							hist_pos = hist_count;
+							cons_input_clear(&cons, cmdline, &cmd_len);
+						}
+					}
 				} else {
 					/* 일반 문자 */
 					if (cons.cur_x < 8 + cons_text_w(&cons) - 8 &&
-							cons.cur_x / 8 - 2 < (int) sizeof(cmdline) - 1) {
+							cmd_len < CONS_CMDLINE_MAX - 1) {
 						/* 한 글자 표시하고 나서, 커서를 1개 진행한다 */
-						cmdline[cons.cur_x / 8 - 2] = i - 256;
+						cmdline[cmd_len++] = i - 256;
+						cmdline[cmd_len] = 0;
 						cons_putchar(&cons, i - 256, 1);
 					}
 				}
@@ -168,6 +188,66 @@ static int cons_text_h(struct CONSOLE *cons)
 	}
 	h &= ~15;	/* line height = 16px */
 	return (h >= 16) ? h : 16;
+}
+
+static void cons_input_backspace(struct CONSOLE *cons, char *cmdline, int *cmd_len)
+{
+	if (*cmd_len <= 0) {
+		return;
+	}
+	if (cons->scroll != 0) {
+		scrollwin_backspace(cons->scroll);
+		cons->cur_x = scrollwin_cursor_x(cons->scroll);
+		cons->cur_y = scrollwin_cursor_y(cons->scroll);
+	} else {
+		cons_putchar(cons, ' ', 0);
+		cons->cur_x -= 8;
+	}
+	(*cmd_len)--;
+	cmdline[*cmd_len] = 0;
+}
+
+static void cons_input_clear(struct CONSOLE *cons, char *cmdline, int *cmd_len)
+{
+	while (*cmd_len > 0) {
+		cons_input_backspace(cons, cmdline, cmd_len);
+	}
+}
+
+static void cons_input_set(struct CONSOLE *cons, char *cmdline, int *cmd_len, char *src)
+{
+	int max_chars = cons_text_w(cons) / 8 - 2;
+	if (max_chars > CONS_CMDLINE_MAX - 1) {
+		max_chars = CONS_CMDLINE_MAX - 1;
+	}
+	cons_input_clear(cons, cmdline, cmd_len);
+	while (*src != 0 && *cmd_len < max_chars) {
+		cmdline[*cmd_len] = *src++;
+		cons_putchar(cons, cmdline[*cmd_len], 1);
+		(*cmd_len)++;
+	}
+	cmdline[*cmd_len] = 0;
+}
+
+static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
+		int *hist_count, char *cmdline)
+{
+	int i;
+	if (cmdline[0] == 0) {
+		return;
+	}
+	if (*hist_count > 0 &&
+			strcmp(history[*hist_count - 1], cmdline) == 0) {
+		return;
+	}
+	if (*hist_count == CONS_HISTORY_MAX) {
+		for (i = 1; i < CONS_HISTORY_MAX; i++) {
+			strcpy(history[i - 1], history[i]);
+		}
+		(*hist_count)--;
+	}
+	strcpy(history[*hist_count], cmdline);
+	(*hist_count)++;
 }
 
 void cons_putchar(struct CONSOLE *cons, int chr, char move)

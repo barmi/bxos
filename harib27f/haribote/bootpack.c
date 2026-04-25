@@ -49,7 +49,7 @@ void HariMain(void)
 		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
 	};
-	int key_shift = 0, key_leds = (binfo->leds >> 4) & 7, keycmd_wait = -1;
+	int key_shift = 0, key_leds = (binfo->leds >> 4) & 7, keycmd_wait = -1, key_e0 = 0;
 	int j, x, y, mmx = -1, mmy = -1, mmx2 = 0;
 	/* ── 윈도우 리사이즈 모드 상태 ─────────────────────────────────
 	 * rsht != 0 이면 리사이즈 중. (rmx, rmy) 시작 마우스, (rw0, rh0) 시작
@@ -188,93 +188,107 @@ void HariMain(void)
 				/*
 					keyboard code : http://ubuntuforums.org/archive/index.php/t-1059755.html
 				*/
-				if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
-					if (key_shift == 0) {
-						s[0] = keytable0[i - 256];
-					} else {
-						s[0] = keytable1[i - 256];
+				if (i == 256 + 0xe0) {
+					key_e0 = 1;
+				} else if (key_e0 != 0) {
+					key_e0 = 0;
+					if (key_win != 0 && key_win->task != 0) {
+						if (i == 256 + 0x48) {	/* ↑ */
+							fifo32_put(&key_win->task->fifo, CONS_KEY_UP + 256);
+						}
+						if (i == 256 + 0x50) {	/* ↓ */
+							fifo32_put(&key_win->task->fifo, CONS_KEY_DOWN + 256);
+						}
 					}
 				} else {
-					s[0] = 0;
-				}
-				if ('A' <= s[0] && s[0] <= 'Z') {	/* 입력 문자가 알파벳 */
-					if (((key_leds & 4) == 0 && key_shift == 0) ||
-							((key_leds & 4) != 0 && key_shift != 0)) {
-						s[0] += 0x20;	/* 대문자를 소문자로 변환 */
+					if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
+						if (key_shift == 0) {
+							s[0] = keytable0[i - 256];
+						} else {
+							s[0] = keytable1[i - 256];
+						}
+					} else {
+						s[0] = 0;
 					}
-				}
-				if (s[0] != 0 && key_win != 0 && key_win->task != 0) { /* 통상 문자, 백 스페이스, Enter */
-					fifo32_put(&key_win->task->fifo, s[0] + 256);
-				}
-				if (i == 256 + 0x0f && key_win != 0) {	/* Tab */
-					keywin_off(key_win);
-					j = key_win->height - 1;
-					if (j == 0) {
-						j = shtctl->top - 1;
+					if ('A' <= s[0] && s[0] <= 'Z') {	/* 입력 문자가 알파벳 */
+						if (((key_leds & 4) == 0 && key_shift == 0) ||
+								((key_leds & 4) != 0 && key_shift != 0)) {
+							s[0] += 0x20;	/* 대문자를 소문자로 변환 */
+						}
 					}
-					key_win = shtctl->sheets[j];
-					keywin_on(key_win);
-				}
-				if (i == 256 + 0x2a) {	/* 왼쪽 쉬프트 ON */
-					key_shift |= 1;
-				}
-				if (i == 256 + 0x36) {	/* 오른쪽 쉬프트 ON */
-					key_shift |= 2;
-				}
-				if (i == 256 + 0xaa) {	/* 왼쪽 쉬프트 OFF */
-					key_shift &= ~1;
-				}
-				if (i == 256 + 0xb6) {	/* 오른쪽 쉬프트 OFF */
-					key_shift &= ~2;
-				}
-				if (i == 256 + 0x3a) {	/* CapsLock */
-					key_leds ^= 4;
-					fifo32_put(&keycmd, KEYCMD_LED);
-					fifo32_put(&keycmd, key_leds);
-				}
-				if (i == 256 + 0x45) {	/* NumLock */
-					key_leds ^= 2;
-					fifo32_put(&keycmd, KEYCMD_LED);
-					fifo32_put(&keycmd, key_leds);
-				}
-				if (i == 256 + 0x46) {	/* ScrollLock */
-					key_leds ^= 1;
-					fifo32_put(&keycmd, KEYCMD_LED);
-					fifo32_put(&keycmd, key_leds);
-				}
-				if (i == 256 + 0x3b && key_shift != 0 && key_win != 0 && key_win->task != 0) {	/* Shift+F1 */
-					task = key_win->task;
-					if (task != 0 && task->tss.ss0 != 0) {
-						cons_putstr0(task->cons, "\nBreak(key) :\n");
-						io_cli();	/* 강제 종료 처리중에 태스크가 바뀌면 곤란하기 때문에 */
-						task->tss.eax = (int) &(task->tss.esp0);
-						task->tss.eip = (int) asm_end_app;
-						io_sti();
-						task_run(task, -1, 0);	/* 종료 처리를 확실히 시키기 위해서, sleeve하고 있으면 깨운다 */
+					if (s[0] != 0 && key_win != 0 && key_win->task != 0) { /* 통상 문자, 백 스페이스, Enter */
+						fifo32_put(&key_win->task->fifo, s[0] + 256);
 					}
-				}
-				if (i == 256 + 0x3c && key_shift != 0) {	/* Shift+F2 */
-					/* 새롭게 만든 콘솔을 입력 선택 상태로 한다(그 편이 친절하겠지요? ) */
-					if (key_win != 0) {
+					if (i == 256 + 0x0f && key_win != 0) {	/* Tab */
 						keywin_off(key_win);
+						j = key_win->height - 1;
+						if (j == 0) {
+							j = shtctl->top - 1;
+						}
+						key_win = shtctl->sheets[j];
+						keywin_on(key_win);
 					}
-					key_win = open_console(shtctl, memtotal);
-					sheet_slide(key_win, 32, 4);
-					sheet_updown(key_win, shtctl->top);
-					keywin_on(key_win);
-				}
-				if (i == 256 + 0x57) {	/* F11 */
-					sheet_updown(shtctl->sheets[1], shtctl->top - 1);
-				}
-				if (i == 256 + 0x58) {	/* F12 */
-					/* create debug console */
-				}
-				if (i == 256 + 0xfa) {	/* 키보드가 데이터를 무사하게 받았다 */
-					keycmd_wait = -1;
-				}
-				if (i == 256 + 0xfe) {	/* 키보드가 데이터를 무사하게 받을 수 없었다 */
-					wait_KBC_sendready();
-					io_out8(PORT_KEYDAT, keycmd_wait);
+					if (i == 256 + 0x2a) {	/* 왼쪽 쉬프트 ON */
+						key_shift |= 1;
+					}
+					if (i == 256 + 0x36) {	/* 오른쪽 쉬프트 ON */
+						key_shift |= 2;
+					}
+					if (i == 256 + 0xaa) {	/* 왼쪽 쉬프트 OFF */
+						key_shift &= ~1;
+					}
+					if (i == 256 + 0xb6) {	/* 오른쪽 쉬프트 OFF */
+						key_shift &= ~2;
+					}
+					if (i == 256 + 0x3a) {	/* CapsLock */
+						key_leds ^= 4;
+						fifo32_put(&keycmd, KEYCMD_LED);
+						fifo32_put(&keycmd, key_leds);
+					}
+					if (i == 256 + 0x45) {	/* NumLock */
+						key_leds ^= 2;
+						fifo32_put(&keycmd, KEYCMD_LED);
+						fifo32_put(&keycmd, key_leds);
+					}
+					if (i == 256 + 0x46) {	/* ScrollLock */
+						key_leds ^= 1;
+						fifo32_put(&keycmd, KEYCMD_LED);
+						fifo32_put(&keycmd, key_leds);
+					}
+					if (i == 256 + 0x3b && key_shift != 0 && key_win != 0 && key_win->task != 0) {	/* Shift+F1 */
+						task = key_win->task;
+						if (task != 0 && task->tss.ss0 != 0) {
+							cons_putstr0(task->cons, "\nBreak(key) :\n");
+							io_cli();	/* 강제 종료 처리중에 태스크가 바뀌면 곤란하기 때문에 */
+							task->tss.eax = (int) &(task->tss.esp0);
+							task->tss.eip = (int) asm_end_app;
+							io_sti();
+							task_run(task, -1, 0);	/* 종료 처리를 확실히 시키기 위해서, sleeve하고 있으면 깨운다 */
+						}
+					}
+					if (i == 256 + 0x3c && key_shift != 0) {	/* Shift+F2 */
+						/* 새롭게 만든 콘솔을 입력 선택 상태로 한다(그 편이 친절하겠지요? ) */
+						if (key_win != 0) {
+							keywin_off(key_win);
+						}
+						key_win = open_console(shtctl, memtotal);
+						sheet_slide(key_win, 32, 4);
+						sheet_updown(key_win, shtctl->top);
+						keywin_on(key_win);
+					}
+					if (i == 256 + 0x57) {	/* F11 */
+						sheet_updown(shtctl->sheets[1], shtctl->top - 1);
+					}
+					if (i == 256 + 0x58) {	/* F12 */
+						/* create debug console */
+					}
+					if (i == 256 + 0xfa) {	/* 키보드가 데이터를 무사하게 받았다 */
+						keycmd_wait = -1;
+					}
+					if (i == 256 + 0xfe) {	/* 키보드가 데이터를 무사하게 받을 수 없었다 */
+						wait_KBC_sendready();
+						io_out8(PORT_KEYDAT, keycmd_wait);
+					}
 				}
 			} else if (512 <= i && i <= 767) { /* 마우스 데이터 */
 				if (mouse_decode(&mdec, i - 512) != 0) {
