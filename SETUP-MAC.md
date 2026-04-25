@@ -187,7 +187,11 @@ file harib27f/haribote.img build/modern/haribote.img
 cmp -n 512 harib27f/haribote.img build/modern/haribote.img && echo "boot OK"
 ```
 
-### 3.5 알려진 이슈 / 수정 이력
+### 3.5 콘솔 명령어 / 앱 실행
+
+부팅 후 콘솔에서 사용할 수 있는 내장 명령어와 포함 앱 목록은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md)를 참고하세요.
+
+### 3.6 알려진 이슈 / 수정 이력
 
 #### (a) `instruction expected, found '...'` (한글 주석 줄)
 
@@ -204,6 +208,10 @@ GNU make 는 `CC=cc`, `LD=ld` 같은 내장 기본값을 갖고 있어서 단순
 #### (b-3) `stdio.h` / `sprintf` / `strcmp` 관련 오류
 
 원본 빌드는 `z_tools/haribote` 헤더와 `golibc.lib` 를 obj2bim 규칙에서 함께 링크합니다. 현대 빌드는 해당 라이브러리를 직접 링크하지 않고, `z_tools/haribote` 헤더를 보조 include 경로로 두며 커널에서 실제 쓰는 `sprintf`/문자열 함수는 `tools/modern/modern_libc.c` 로 제공합니다.
+
+#### (b-4) 앱 실행 시 `Bad command or file name.`
+
+`A.HRB` 같은 파일이 이미지 안에 있어도 앱 검색이 실패한다면 `file_search()` 쪽을 의심합니다. FAT 8.3 이름은 `name[8] + ext[3]` 구조인데 원본 코드는 `name[0..10]`처럼 확장자까지 연속 배열처럼 읽습니다. 현대 GCC는 이것을 배열 범위 밖 접근으로 최적화할 수 있으므로, 구조체 전체를 바이트 포인터로 보고 11바이트를 비교하도록 수정했습니다.
 
 #### (c) `undefined reference to '_io_hlt'` 또는 `'io_hlt'`
 
