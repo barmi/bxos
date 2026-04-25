@@ -39,11 +39,11 @@ brew install x86_64-elf-gcc x86_64-elf-binutils
 | 파일 | 역할 |
 |---|---|
 | `nas2nasm.py` | nask `*.nas` 를 NASM 호환으로 패치 (`[FORMAT]` / `[INSTRSET]` / `[FILE]` 처리) |
-| `hrbify.py` | flat binary → 32B HRB 헤더 + 0x1B JMP 패치 → `.hrb` |
+| `hrbify.py` | flat binary → 32B HRB 헤더 + 데이터 복사 정보 + 0x1B JMP 패치 → `.hrb` |
 | `mkfat12.py` | 1.44MB FAT12 플로피 이미지 from-scratch 생성 (edimg 대체) |
 | `makefont.py` | hankaku.txt → 4096B 폰트 바이너리 (makefont.exe 대체) |
 | `modern_libc.c` | 커널에서 필요한 `sprintf`/문자열 함수의 freestanding 구현 |
-| `linker-bootpack.lds` | 커널 링커 스크립트 (0x0부터 .text 배치) |
+| `linker-bootpack.lds` | 커널 링커 스크립트 (`.text` 는 낮은 offset, 데이터는 VMA 0x310000) |
 | `startup_kernel.s` | 커널 진입점 (32B 헤더 자리 + HariStartup → HariMain) |
 | `Makefile.modern` | 위 모두 연결한 GNU make 빌드 정의 |
 
@@ -59,7 +59,7 @@ startup_kernel.s ─ nasm -f elf32 ─►  startup_kernel.o    (.text.startup, 3
 
   *.o … ─ ld -T linker-bootpack.lds ─►  bootpack.elf
         ─ objcopy -O binary ─►  bootpack.bin
-        ─ hrbify.py ─►  bootpack.hrb          (32B HRB 헤더, 0x1B = JMP HariStartup)
+        ─ hrbify.py ─►  bootpack.hrb          (32B HRB 헤더, data copy, 0x1B = JMP)
 
 asmhead.bin + bootpack.hrb  ─ cat ─►  haribote.sys
 ipl09.bin + haribote.sys + 기존 앱/데이터 파일들 ─ mkfat12.py ─►  haribote.img
@@ -72,18 +72,15 @@ Apple Silicon Mac(`i686-elf-gcc`, NASM, Python 3.13)에서 검증한 것:
 * `nas2nasm.py` — `ipl09.nas` 의 `RESB 0x7dfe-$` 를 NASM 이 받는 `TIMES 0x1fe-($-$$) db 0` 로 변환.
 * NASM — `ipl09.bin`, `asmhead.bin`, `naskfunc.o` 생성.
 * `i686-elf-gcc`/`i686-elf-ld` — 커널 C 오브젝트와 `bootpack.elf` 링크.
-* `hrbify.py` — 32B HRB 헤더 + `HariStartup` 점프 패치 생성.
+* `linker-bootpack.lds`/`hrbify.py` — `.rodata/.data/.bss` 를 0x310000 데이터 영역에 링크하고 HRB 헤더의 `data_size`/`data_file` 로 복사 정보 생성.
 * `mkfat12.py` — `build/modern/haribote.img` 생성(39 files).
 * `makefont.py` — 4096B 폰트 바이너리 생성, 알려진 글리프 비트맵 일치.
-
-아직 검증하지 않은 것:
-
-* QEMU 부팅 후 실제 동작.
+* QEMU `screendump` — 1024x768 데스크톱, 콘솔 창, 디버그 창, 마우스 커서 표시 확인.
 
 가능성이 있는 트러블 포인트:
 
-1. **QEMU 부팅 후 런타임 동작** — 이미지 생성까지는 통과했지만, 화면 표시/앱 실행은 별도 확인이 필요합니다.
-2. **bootpack 의 메모리 레이아웃** — 원본 obj2bim 은 stack/malloc/mmarea 를 정밀하게 배치하지만, 현대 빌드는 linker script + HRB 헤더 생성으로 재현합니다. 부팅 후 비정상 동작 시 이 부분을 먼저 의심합니다.
+1. **앱 실행 전체 검증** — 데스크톱 표시까지는 확인했지만, 모든 `.hrb` 앱의 동작은 별도 확인이 필요합니다.
+2. **bootpack 의 메모리 레이아웃** — 화면이 깨지면 `.data` 섹션 VMA가 0x310000인지, HRB 헤더의 `data_size`/`data_file` 이 0이 아닌지 먼저 확인합니다.
 3. **modern_libc 범위** — 커널이 현재 쓰는 `sprintf`/문자열 함수만 구현했습니다. 새 코드가 더 많은 libc 함수를 쓰면 `modern_libc.c` 에 추가해야 합니다.
 
 ## 트러블슈팅 시나리오

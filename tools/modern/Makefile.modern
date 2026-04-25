@@ -53,6 +53,9 @@ endif
 ifneq ($(filter default undefined,$(origin OBJCOPY)),)
   OBJCOPY  := i686-elf-objcopy
 endif
+ifneq ($(filter default undefined,$(origin NM)),)
+  NM        := i686-elf-nm
+endif
 
 # 폴백: i686-elf-* 가 없으면 x86_64-elf-* + -m32, 그것도 없으면 시스템 gcc + -m32
 ifeq ($(shell command -v $(CC) 2>/dev/null),)
@@ -60,11 +63,13 @@ ifeq ($(shell command -v $(CC) 2>/dev/null),)
     CC      := x86_64-elf-gcc
     LD      := x86_64-elf-ld
     OBJCOPY := x86_64-elf-objcopy
+    NM      := x86_64-elf-nm
     EXTRA_CFLAGS := -m32
   else
     CC      := gcc
     LD      := ld
     OBJCOPY := objcopy
+    NM      := nm
     EXTRA_CFLAGS := -m32
   endif
 endif
@@ -118,6 +123,7 @@ info:
 	@echo "BUILD      = $(BUILD)"
 	@echo "CC         = $(CC)  (CFLAGS=$(CFLAGS))"
 	@echo "LD         = $(LD)"
+	@echo "NM         = $(NM)"
 	@echo "NASM       = $(NASM)"
 	@echo "Kernel C   = $(words $(KERNEL_C_SRCS)) files"
 	@echo "App HRBs   = $(words $(APP_HRBS)) files"
@@ -183,11 +189,17 @@ $(BUILD)/bootpack.elf: $(KERNEL_OBJS)
 $(BUILD)/bootpack.bin: $(BUILD)/bootpack.elf
 	$(OBJCOPY) -O binary $< $@
 
-# 원본 obj2bim 인자: stack:3136k → stack-top = 3136k.
-# malloc 은 bim2hrb 의 마지막 인자 0 → --malloc 0.
-$(BUILD)/bootpack.hrb: $(BUILD)/bootpack.bin
+# 원본 obj2bim/bim2hrb 처럼 초기화 데이터 이미지를 0x310000 에 복사하도록
+# HRB 헤더의 data_size/data_file 을 채운다.
+$(BUILD)/bootpack.hrb: $(BUILD)/bootpack.bin $(BUILD)/bootpack.elf
+	data_start=0x$$($(NM) $(BUILD)/bootpack.elf | awk '$$3=="__hrb_data_start"{print $$1}'); \
+	data_end=0x$$($(NM) $(BUILD)/bootpack.elf | awk '$$3=="__hrb_data_end"{print $$1}'); \
+	data_lma=0x$$($(NM) $(BUILD)/bootpack.elf | awk '$$3=="__hrb_data_lma"{print $$1}'); \
+	data_size=$$((data_end - data_start)); \
+	stack_top=$$(((data_start + data_size + 0xfff) & ~0xfff)); \
 	$(HRBIFY) --in $< --out $@ \
-	    --stack-top 3136k --esp-init 3136k --malloc 0
+	    --stack-top $$stack_top --esp-init $$data_start --malloc 0 \
+	    --data-size $$data_size --data-file $$data_lma
 
 # ─── haribote.sys = asmhead.bin + bootpack.hrb ───────────────────────
 $(BUILD)/haribote.sys: $(BUILD)/asmhead.bin $(BUILD)/bootpack.hrb

@@ -224,9 +224,9 @@ make -f tools/modern/Makefile.modern build/modern/naskfunc.o
 
 * **`error: implicit declaration of function`** 류 경고가 에러로 — `Makefile.modern` 에서 `-Werror` 는 끈 상태이지만 만약 가족이 들어와 있다면 제거. 또는 `CFLAGS` 에 `-Wno-implicit-function-declaration -Wno-int-conversion -Wno-pointer-sign` 추가.
 
-* **`bootpack.elf` 가 0 바이트 / 링크 에러** — `linker-bootpack.lds` 의 ENTRY 지정이 안 맞거나 startup 의 `.text.startup` 섹션이 안 들어왔을 수 있음. `objdump -h build/modern/bootpack.elf` 로 섹션 배치 확인. 첫 32바이트가 0, 그 다음 `_HariStartup` 의 push/mov/pop/jmp 가 있어야 정상.
+* **`bootpack.elf` 가 0 바이트 / 링크 에러** — `linker-bootpack.lds` 의 ENTRY 지정이 안 맞거나 startup 의 `.text.startup` 섹션이 안 들어왔을 수 있음. `objdump -h build/modern/bootpack.elf` 로 섹션 배치 확인. `.text` 는 VMA 0부터, `.data` 는 VMA `0x00310000` 부근부터 시작해야 정상.
 
-* **부팅은 되는데 화면이 깨짐 / 멈춤** — 메모리 레이아웃 문제. `hrbify.py` 의 `--stack-top 3136k --esp-init 3136k` 가 원본 `obj2bim ... stack:3136k` 와 일치해야 함. 조정해 보고 동작 변화 관찰.
+* **부팅은 되는데 화면이 깨짐 / 멈춤** — 데이터 세그먼트 복사 문제일 가능성이 큼. `xxd -g1 -l 32 build/modern/bootpack.hrb` 에서 `data_size`(0x10)와 `data_file`(0x14)이 0이 아니어야 하고, `esp_init`(0x0c)은 보통 `00 00 31 00`(`0x310000`)이어야 함.
 
 자세한 트러블슈팅과 빌드 흐름 그림은 [`tools/modern/README.md`](tools/modern/README.md) 참고.
 
