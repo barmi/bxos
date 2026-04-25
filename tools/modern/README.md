@@ -6,6 +6,10 @@
 
 ## 진입점
 
+두 가지 빌드 시스템이 병행 제공됩니다. 결과는 동일합니다.
+
+### A) Make (기존)
+
 ```bash
 # 워크스페이스 루트에서
 ./build-modern.sh           # 전체 (build/modern/haribote.img 생성)
@@ -13,6 +17,23 @@
 ./build-modern.sh info      # 도구/경로 점검
 ./build-modern.sh clean
 ```
+
+### B) CMake (신규)
+
+```bash
+# 워크스페이스 루트에서
+cmake -S . -B build/cmake \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-i686-elf.cmake
+cmake --build build/cmake               # 전체 (build/cmake/haribote.img)
+cmake --build build/cmake --target kernel
+cmake --build build/cmake --target info
+cmake --build build/cmake --target run  # qemu 부팅
+```
+
+CMake 버전은 동일한 산출물을 `build/cmake/` 에 만듭니다. 앱 빌드 hook
+(`bxos_build_apilib`, `bxos_add_haribote_app`) 도 `cmake/HariboteApp.cmake`
+에 골격이 들어 있어, 향후 OSASKCMP 압축이 해결되면 단계적으로 활성화할 수
+있습니다.
 
 빌드 산출물은 모두 `build/modern/` 아래에 들어갑니다. 원본 트리는 안 건드립니다.
 단계별 확인이 필요하면 `./build-modern.sh ipl09.bin`, `./build-modern.sh bootpack.elf`
