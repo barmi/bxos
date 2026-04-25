@@ -1,6 +1,6 @@
-/* uŒð‹¿‹È‘æ5”Ô ƒn’Z’² "‰^–½" op. 67v‚æ‚è Ludwig van Beethoven */
+/* ã€Œäº¤éŸ¿æ›²ç¬¬5ç•ª ãƒçŸ­èª¿ "é‹å‘½" op. 67ã€ã‚ˆã‚Š Ludwig van Beethoven */
 
-$E"SJIS"; $K"Œð‹¿‹È‘æ5”Ôƒn’Z’² %"‰^–½%" op.67";
+$E"SJIS"; $K"äº¤éŸ¿æ›²ç¬¬5ç•ªãƒçŸ­èª¿ %"é‹å‘½%" op.67";
 
 T155Q7L8O4
 RGGGE-2.RFFFD4&D1
