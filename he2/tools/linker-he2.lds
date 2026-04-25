@@ -39,7 +39,6 @@ SECTIONS
         *(.data .data.*)
     }
 
-    . = ALIGN(16);
     _he2_image_end = .;          /* 파일 image 의 끝                 */
 
     .bss (NOLOAD) : ALIGN(16) {

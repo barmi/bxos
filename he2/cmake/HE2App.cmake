@@ -36,19 +36,27 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 # 32-bit user-mode app 컴파일에 필요한 최소 플래그.
 # 일부 i686-elf-gcc 는 -m32 가 기본이지만 명시적으로 잡아준다.
+# -nostdinc 를 제거하여 gcc 내장 freestanding 헤더(stdint.h 등)를 사용한다.
+# -idirafter 를 통해 legacy stdio.h 등을 검색한다.
+if(NOT DEFINED BXOS_ZINC)
+    set(BXOS_ZINC "${CMAKE_SOURCE_DIR}/z_tools/haribote")
+endif()
+
 set(BXOS_HE2_CFLAGS
     -m32 -O2 -ffreestanding -fno-pic -fno-pie -fno-pic
     -fno-stack-protector -fno-asynchronous-unwind-tables
-    -fno-builtin -nostdinc -nostdlib -fno-common
+    -fno-builtin -nostdlib -fno-common
     -Wall -Wno-implicit-function-declaration
     -Wno-int-conversion -Wno-pointer-sign
     -Wno-incompatible-pointer-types
     -I${BXOS_HE2_INCLUDE}
+    -idirafter ${BXOS_ZINC}
 )
 
-# 어셈블리 (.S) 도 같은 -m32 + -nostdinc 로 처리.
+# 어셈블리 (.S) 도 같은 -m32 로 처리.
 set(BXOS_HE2_ASMFLAGS
-    -m32 -nostdinc -I${BXOS_HE2_INCLUDE}
+    -m32 -I${BXOS_HE2_INCLUDE}
+    -idirafter ${BXOS_ZINC}
 )
 
 # ─── libbxos.a 빌드 ────────────────────────────────────────────────────
@@ -80,6 +88,18 @@ function(bxos_libbxos)
         endif()
         list(APPEND _objs "${_obj}")
     endforeach()
+
+    # modern_libc.c 추가 (sprintf 등 문자열 함수 지원)
+    set(_src_libc "${CMAKE_SOURCE_DIR}/tools/modern/modern_libc.c")
+    set(_obj_libc "${BXOS_HE2_BUILD}/libbxos_modern_libc.o")
+    add_custom_command(
+        OUTPUT "${_obj_libc}"
+        COMMAND ${BXOS_CC} ${BXOS_HE2_CFLAGS} -c -o "${_obj_libc}" "${_src_libc}"
+        DEPENDS "${_src_libc}"
+        COMMENT "[he2/libbxos] CC modern_libc.c"
+        VERBATIM
+    )
+    list(APPEND _objs "${_obj_libc}")
 
     set(_lib "${BXOS_HE2_BUILD}/libbxos.a")
     add_custom_command(
