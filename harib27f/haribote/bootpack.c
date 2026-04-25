@@ -316,6 +316,13 @@ void HariMain(void)
 							if (new_rh < RZ_MIN_H) new_rh = RZ_MIN_H;
 							if (rsht->vx0 + new_rw > binfo->scrnx) new_rw = binfo->scrnx - rsht->vx0;
 							if (rsht->vy0 + new_rh > binfo->scrny) new_rh = binfo->scrny - rsht->vy0;
+							if (new_rw != rsht->bxsize || new_rh != rsht->bysize) {
+								if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
+									console_resize(rsht, new_rw, new_rh);
+								} else if ((rsht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
+									scrollwin_window_resize(rsht, new_rw, new_rh, "debug");
+								}
+							}
 						} else if (mmx < 0) {
 							/* 통상 모드의 경우 */
 							/* 위 레이어부터 차례로 마우스가 가리키고 있는 레이어를 찾는다 */
@@ -402,15 +409,7 @@ void HariMain(void)
 					} else {
 						/* 왼쪽 버튼을 누르지 않았다 */
 						if (rsht != 0) {
-							/* (e) 리사이즈 모드 종료 — 실제 리사이즈 수행 */
-							if (new_rw != rsht->bxsize || new_rh != rsht->bysize) {
-								/* 일단 콘솔 윈도우만 리사이즈 가능 (cursor 플래그) */
-								if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
-									console_resize(rsht, new_rw, new_rh);
-								} else if ((rsht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
-									scrollwin_window_resize(rsht, new_rw, new_rh, "debug");
-								}
-							}
+							/* 리사이즈는 드래그 중 실시간 적용했고, 여기서는 모드만 종료한다. */
 							rsht = 0;
 							redge = 0;
 						}
@@ -526,7 +525,7 @@ void console_resize(struct SHEET *sht, int new_w, int new_h)
 	}
 
 	/* 새 buffer 에 frame + textbox 그리기 */
-	make_window8(new_buf, new_w, new_h, "console", 0);
+	make_window8(new_buf, new_w, new_h, "console", 1);
 	/* sheet_resize 후에 make_textbox8 가 sht->buf 를 쓰므로,
 	 * 먼저 sheet_resize 를 호출해 sht->buf 를 new_buf 로 교체.            */
 	sheet_resize(sht, new_buf, new_w, new_h);
@@ -578,7 +577,7 @@ void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *titl
 	if (new_buf == 0) {
 		return;
 	}
-	make_window8(new_buf, new_w, new_h, title, 0);
+	make_window8(new_buf, new_w, new_h, title, 1);
 	sheet_resize(sht, new_buf, new_w, new_h);
 	make_textbox8(sht, tx0, ty0, tw, th, sht->scroll->bc);
 	if (sht->scroll != 0) {
