@@ -1,7 +1,7 @@
 ; haribote-ipl
 ; TAB=4
 
-CYLS	EQU		9				; 어디까지 읽어들일까
+CYLS	EQU		20				; 어디까지 읽어들일까 (CMake HE2 앱 영역까지)
 
 		ORG		0x7c00			; 이 프로그램이 어디에 읽히는 것인가
 

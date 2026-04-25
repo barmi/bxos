@@ -6,6 +6,9 @@
 
 struct DBGWIN dbg;
 
+static int cons_text_w(struct CONSOLE *cons);
+static int cons_text_h(struct CONSOLE *cons);
+
 void console_task(struct SHEET *sheet, int memtotal)
 {
 	struct TASK *task = task_now();
@@ -105,7 +108,8 @@ void console_task(struct SHEET *sheet, int memtotal)
 					cons_putchar(&cons, '>', 1);
 				} else {
 					/* 일반 문자 */
-					if (cons.cur_x < 240) {
+					if (cons.cur_x < 8 + cons_text_w(&cons) - 8 &&
+							cons.cur_x / 8 - 2 < (int) sizeof(cmdline) - 1) {
 						/* 한 글자 표시하고 나서, 커서를 1개 진행한다 */
 						cmdline[cons.cur_x / 8 - 2] = i - 256;
 						cons_putchar(&cons, i - 256, 1);
@@ -124,10 +128,31 @@ void console_task(struct SHEET *sheet, int memtotal)
 	}
 }
 
+/*
+ * cons_putchar / cons_newline 의 wrap/scroll 경계는 "안전한 sane 범위" 안의
+ * cons->width / cons->height 값이 있을 때만 동적으로 따라가고, 그렇지 않으면
+ * 원래의 240×128 hardcoded 값을 유지한다.
+ *
+ * 이렇게 한 이유: console_task() 진입 직후 ~ width/height 초기화 사이의
+ * 짧은 시점이나, 다른 경로(taskmgr 등)에서 task->cons 가 partial-init 상태로
+ * 참조될 때 garbage 가 들어 있으면 wrap 이 영원히 안 일어나서 텍스트가
+ * textbox 경계를 침범하는 증상이 있었다. 16..4096 범위로 클램핑한다.
+ */
+static int cons_text_w(struct CONSOLE *cons)
+{
+	int w = cons->width;
+	return (w >= 16 && w <= 4096) ? w : 240;
+}
+static int cons_text_h(struct CONSOLE *cons)
+{
+	int h = cons->height;
+	return (h >= 16 && h <= 4096) ? h : 128;
+}
+
 void cons_putchar(struct CONSOLE *cons, int chr, char move)
 {
 	char s[2];
-	int W = (cons->width  > 0) ? cons->width  : 240;
+	int W = cons_text_w(cons);
 	s[0] = chr;
 	s[1] = 0;
 	if (s[0] == 0x09) {	/* 탭 */
@@ -167,8 +192,8 @@ void cons_newline(struct CONSOLE *cons)
 	int x, y;
 	struct SHEET *sheet = cons->sht;
 	struct TASK *task = task_now();
-	int W = (cons->width  > 0) ? cons->width  : 240;
-	int H = (cons->height > 0) ? cons->height : 128;
+	int W = cons_text_w(cons);
+	int H = cons_text_h(cons);
 	if (cons->cur_y < 28 + H - 16) {
 		cons->cur_y += 16; /* 다음 행에 */
 	} else {
@@ -253,12 +278,14 @@ void cmd_cls(struct CONSOLE *cons)
 {
 	int x, y;
 	struct SHEET *sheet = cons->sht;
-	for (y = 28; y < 28 + 128; y++) {
-		for (x = 8; x < 8 + 240; x++) {
+	int W = cons_text_w(cons);
+	int H = cons_text_h(cons);
+	for (y = 28; y < 28 + H; y++) {
+		for (x = 8; x < 8 + W; x++) {
 			sheet->buf[x + y * sheet->bxsize] = COL8_000000;
 		}
 	}
-	sheet_refresh(sheet, 8, 28, 8 + 240, 28 + 128);
+	sheet_refresh(sheet, 8, 28, 8 + W, 28 + H);
 	cons->cur_y = 28;
 	return;
 }
@@ -903,19 +930,16 @@ struct DBGWIN *dbg_get(void)
 static int dbg_text_w(struct DBGWIN *d) { return d->wd - DBG_SCROLLBAR_W; }
 static int dbg_visible_lines(struct DBGWIN *d) { return d->ht / 16; }
 
-/* 현재 head 가 가리키는 (= 작성중) 라인을 ring 에서 얻는다.
- * count==0 인 경우 새로 한 줄을 만든다.                              */
+/* head/count 인변형:
+ *   - head = "다음 라인을 만들 자리" (mod N)
+ *   - count = 보관된 라인 수 (현재 작성중 라인 포함)
+ *   - 현재 작성중 라인 = lines[(head - 1 + N) % N]
+ *
+ * dbg_init 에서 빈 라인 1개를 미리 할당해두므로 (head=1, count=1),
+ * 이 함수는 그냥 head-1 인덱스를 돌려주면 된다.                        */
 static struct DBGLINE *dbg_cur_line(struct DBGWIN *d)
 {
-	int idx;
-	if (d->count == 0) {
-		idx = d->head;
-		d->lines[idx].len = 0;
-		d->count = 1;
-	} else {
-		/* 마지막에 작성한 라인 = head - 1 (mod) */
-		idx = (d->head + DBG_MAX_LINES - 1) % DBG_MAX_LINES;
-	}
+	int idx = (d->head + DBG_MAX_LINES - 1) % DBG_MAX_LINES;
 	return &d->lines[idx];
 }
 
@@ -1013,6 +1037,7 @@ static struct DBGLINE *dbg_line_at(struct DBGWIN *d, int display_idx)
 
 void dbg_redraw(struct DBGWIN *d)
 {
+	extern char hankaku[4096];
 	struct SHEET *sht = d->sht;
 	int x, y, line, vis, tw;
 	int scrollbar_x;
@@ -1041,9 +1066,8 @@ void dbg_redraw(struct DBGWIN *d)
 		if (idx_disp >= d->count) break;
 		ln = dbg_line_at(d, idx_disp);
 		for (j = 0; j < ln->len; j++) {
-			char s[2]; s[0] = ln->text[j]; s[1] = 0;
-			putfonts8_asc_sht(sht, d->x0 + j * 8, yy,
-					ln->color[j], d->bc, s, 1);
+			putfont8(sht->buf, sht->bxsize, d->x0 + j * 8, yy,
+					ln->color[j], hankaku + ln->text[j] * 16);
 		}
 	}
 
@@ -1149,16 +1173,18 @@ void dbg_init(struct SHEET *sht)
 	dbg.cy  = 0;
 	dbg.wd  = 400;
 	dbg.ht  = 240;
-	dbg.head = 0;
-	dbg.count = 0;
-	dbg.scroll_top = 0;
-	dbg.auto_follow = 1;
-	dbg.sb_grab = 0;
-	dbg.sb_grab_y = 0;
-	dbg.sb_grab_top = 0;
 	for (i = 0; i < DBG_MAX_LINES; i++) {
 		dbg.lines[i].len = 0;
 	}
+	/* 시작 시 빈 "현재 작성중 라인" 1개를 미리 잡아둔다 → head=1, count=1.
+	 * 그래야 dbg_cur_line() 이 항상 lines[head-1] 를 반환하면 된다.       */
+	dbg.head        = 1;
+	dbg.count       = 1;
+	dbg.scroll_top  = 0;
+	dbg.auto_follow = 1;
+	dbg.sb_grab     = 0;
+	dbg.sb_grab_y   = 0;
+	dbg.sb_grab_top = 0;
 	make_textbox8(dbg.sht, dbg.x0, dbg.y0, dbg.wd, dbg.ht, dbg.bc);
 	dbg_redraw(&dbg);
 	sheet_refresh(dbg.sht, dbg.x0 - 3, dbg.y0 - 3,

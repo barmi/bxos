@@ -98,6 +98,31 @@ void HariMain(void)
 	sheet_setbuf(sht_back, buf_back, binfo->scrnx, binfo->scrny, -1); /* 투명색없음 */
 	init_screen8(buf_back, binfo->scrnx, binfo->scrny);
 
+	/* nihongo.fnt의 read
+	 * console_task() 는 시작 직후 0x0fe8 폰트 포인터를 읽는다.
+	 * 콘솔 태스크를 띄우기 전에 반드시 초기화해 둔다. */
+	fat = (int *) memman_alloc_4k(memman, 4 * 2880);
+	file_readfat(fat, (unsigned char *) (ADR_DISKIMG + 0x000200));
+
+	finfo = file_search("nihongo.fnt", (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+	if (finfo != 0) {
+		i = finfo->size;
+		nihongo = file_loadfile2(finfo->clustno, &i, fat);
+		for (i = 0; i < 16 * 256; i++) {
+			nihongo[i] = hankaku[i];
+		}
+	} else {
+		nihongo = (unsigned char *) memman_alloc_4k(memman, 16 * 256 + 32 * 94 * 47);
+		for (i = 0; i < 16 * 256; i++) {
+			nihongo[i] = hankaku[i]; /* 폰트가 없었기 때문에 반각 부분을 카피 */
+		}
+		for (i = 16 * 256; i < 16 * 256 + 32 * 94 * 47; i++) {
+			nihongo[i] = 0xff; /* 폰트가 없었기 때문에 전각 부분을 0xff로 다 채운다 */
+		}
+	}
+	*((int *) 0x0fe8) = (int) nihongo;
+	memman_free_4k(memman, (int) fat, 4 * 2880);
+
 	/* sht_cons */
 	key_win = open_console(shtctl, memtotal);
 
@@ -119,26 +144,6 @@ void HariMain(void)
 	/* 처음에 키보드 상태와 어긋나지 않게, 설정해 두기로 한다 */
 	fifo32_put(&keycmd, KEYCMD_LED);
 	fifo32_put(&keycmd, key_leds);
-
-	/* nihongo.fnt의 read */
-	fat = (int *) memman_alloc_4k(memman, 4 * 2880);
-	file_readfat(fat, (unsigned char *) (ADR_DISKIMG + 0x000200));
-
-	finfo = file_search("nihongo.fnt", (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
-	if (finfo != 0) {
-		i = finfo->size;
-		nihongo = file_loadfile2(finfo->clustno, &i, fat);
-	} else {
-		nihongo = (unsigned char *) memman_alloc_4k(memman, 16 * 256 + 32 * 94 * 47);
-		for (i = 0; i < 16 * 256; i++) {
-			nihongo[i] = hankaku[i]; /* 폰트가 없었기 때문에 반각 부분을 카피 */
-		}
-		for (i = 16 * 256; i < 16 * 256 + 32 * 94 * 47; i++) {
-			nihongo[i] = 0xff; /* 폰트가 없었기 때문에 전각 부분을 0xff로 다 채운다 */
-		}
-	}
-	*((int *) 0x0fe8) = (int) nihongo;
-	memman_free_4k(memman, (int) fat, 4 * 2880);
 
 	// skshin 
 	dbg_init(sht_back);
@@ -485,11 +490,12 @@ void console_resize(struct SHEET *sht, int new_w, int new_h)
 	unsigned int new_bytes;
 	unsigned char *new_buf;
 	int tx0 = 8, ty0 = 28;
-	int tw = new_w - 16;       /* 좌우 8px 마진 */
-	int th = new_h - 28 - 9;   /* 상단 28(타이틀바), 하단 9 마진 */
+	int tw, th;
 
 	if (new_w < RZ_MIN_W) new_w = RZ_MIN_W;
 	if (new_h < RZ_MIN_H) new_h = RZ_MIN_H;
+	tw = new_w - 16;       /* 좌우 8px 마진 */
+	th = new_h - 28 - 9;   /* 상단 28(타이틀바), 하단 9 마진 */
 	if (tw < 16)  tw = 16;
 	if (th < 16)  th = 16;
 
@@ -583,4 +589,3 @@ void close_taskmgr(void)
 	taskmgr = 0;
 	return;
 }
-
