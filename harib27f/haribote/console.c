@@ -371,6 +371,8 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_dir(cons, cmdline);
 	} else if (strcmp(cmdline, "task") == 0) {
 		cmd_task();
+	} else if (strcmp(cmdline, "disk") == 0 && cons->sht != 0) {
+		cmd_disk(cons);
 	} else if (strcmp(cmdline, "exit") == 0) {
 		cmd_exit(cons, fat);
 	} else if (strncmp(cmdline, "start ", 6) == 0) {
@@ -468,6 +470,48 @@ void cmd_task(void)
 			taskctl->tasks0[i].time / 100, taskctl->tasks0[i].time % 100);
 		dbg_putstr0(msg, COL8_FFFFFF);
 	}
+	return;
+}
+
+void cmd_disk(struct CONSOLE *cons)
+{
+	/* work1 Phase 2: ATA 드라이브 정보 출력. 부팅 시 캐시한 결과를 표시한다. */
+	char s[80];
+	int d;
+	for (d = 0; d < 2; d++) {
+		struct ATA_INFO *info = &ata_drive_info[d];
+		if (!info->present) {
+			sprintf(s, "ata%d: (not present)\n", d);
+			cons_putstr0(cons, s);
+			continue;
+		}
+		sprintf(s, "ata%d: %s\n", d, info->model);
+		cons_putstr0(cons, s);
+		sprintf(s, "      sectors=%d  size=%dMB\n",
+				info->total_sectors,
+				info->total_sectors / 2 / 1024);
+		cons_putstr0(cons, s);
+
+		/* 부트섹터(LBA 0) 한 섹터 read 검증. BPB 의 OEM 문자열과
+		 * boot sig 0xAA55 만 확인한다 (저장은 안 함). */
+		{
+			unsigned char buf[512];
+			int r = ata_read_sectors(d, 0, 1, buf);
+			if (r != 1) {
+				sprintf(s, "      read LBA0: FAIL (%d)\n", r);
+				cons_putstr0(cons, s);
+			} else {
+				char oem[9];
+				int i;
+				for (i = 0; i < 8; i++) oem[i] = buf[3 + i];
+				oem[8] = 0;
+				sprintf(s, "      LBA0 oem='%s' sig=%02x%02x\n",
+						oem, buf[511], buf[510]);
+				cons_putstr0(cons, s);
+			}
+		}
+	}
+	cons_newline(cons);
 	return;
 }
 

@@ -18,6 +18,8 @@ void io_sti(void);
 void io_stihlt(void);
 int io_in8(int port);
 void io_out8(int port, int data);
+int io_in16(int port);
+void io_out16(int port, int data);
 int io_load_eflags(void);
 void io_store_eflags(int eflags);
 void load_gdtr(int limit, int addr);
@@ -356,6 +358,7 @@ void cmd_mem(struct CONSOLE *cons, int memtotal);
 void cmd_cls(struct CONSOLE *cons);
 void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);
+void cmd_disk(struct CONSOLE *cons);
 void cmd_exit(struct CONSOLE *cons, int *fat);
 void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal);
 void cmd_ncst(struct CONSOLE *cons, char *cmdline, int memtotal);
@@ -423,3 +426,15 @@ struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal);
 /* console 윈도우를 새 크기로 리사이즈. 새 buffer 를 alloc 해서 sheet_resize.
  * 기존 buffer 는 free 함. 호출 후 sht 의 buf/bxsize/bysize 가 갱신됨.    */
 void console_resize(struct SHEET *sht, int new_w, int new_h);
+
+/* ata.c — Primary IDE / ATA PIO 드라이버 (work1 Phase 2). */
+struct ATA_INFO {
+	int present;                  /* 0 = 디바이스 없음/오류, 1 = OK */
+	unsigned int total_sectors;   /* LBA28 sectors (max 0x0FFFFFFF) */
+	char model[41];               /* IDENTIFY 응답의 모델 문자열 (공백 트림) */
+};
+extern struct ATA_INFO ata_drive_info[2];   /* [0]=master, [1]=slave */
+void ata_init(void);
+int ata_identify(int drive, struct ATA_INFO *out);
+int ata_read_sectors(int drive, unsigned int lba, int count, void *buf);
+int ata_write_sectors(int drive, unsigned int lba, int count, const void *buf);

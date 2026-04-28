@@ -56,15 +56,20 @@
 - ☑ QEMU monitor `info block` 으로 `floppy0` + `ide0-hd0` 둘 다 인식 확인.
 - ☑ 게스트는 아직 HDD 인식 못함 — 부팅 화면까지 도달하면 끝. 앱 실행은 Phase 3 이후.
 
-### Phase 2 — ATA PIO 블록 드라이버 (2~3일)
-**목표**: 디스크 섹터 단위 읽기/쓰기를 커널이 할 수 있게 한다. FS는 다음 페이즈에서.
-
-- ☐ `harib27f/haribote/ata.c` 신설:
-  - `ata_identify(drive)` — IDENTIFY로 디스크 존재/용량 확인.
-  - `ata_read_sectors(drive, lba, count, buf)` / `ata_write_sectors(...)` — 28-bit LBA PIO.
-  - 인터럽트 없이 polling 부터 시작 (단순화).
-- ☐ [bootpack.c](harib27f/haribote/bootpack.c) `HariMain` 초기화 단계에서 IDENTIFY 호출 결과를 디버그 창에 찍어 동작 검증.
-- ☐ 콘솔 명령 `disk` 추가 (임시): IDENTIFY 결과 출력. 디버그용.
+### Phase 2 — ATA PIO 블록 드라이버 (완료 — 2026-04-28)
+- ☑ [harib27f/haribote/ata.c](../harib27f/haribote/ata.c) 신설:
+  - `ata_identify(drive, *out)` — IDENTIFY (0xEC), 모델명/섹터수 파싱
+  - `ata_read_sectors(drive, lba, count, buf)` — 28-bit LBA PIO read (0x20)
+  - `ata_write_sectors(drive, lba, count, buf)` — write (0x30) + cache flush (0xE7)
+  - `ata_init()` — master/slave 모두 IDENTIFY 시도하고 결과를 `ata_drive_info[]` 에 캐시
+  - 폴링 + 타임아웃, 인터럽트 미사용
+- ☑ [bootpack.h](../harib27f/haribote/bootpack.h) — `struct ATA_INFO`, 함수 선언, `io_in16/out16` 선언 추가
+- ☑ [bootpack.c](../harib27f/haribote/bootpack.c) `HariMain` 초기화에 `ata_init()` 호출 (PIC 초기화 직후)
+- ☑ 콘솔 명령 `disk` 추가 ([console.c](../harib27f/haribote/console.c) `cmd_disk`):
+  - 캐시된 IDENTIFY 결과(모델명/섹터수/크기) 표시
+  - LBA 0 한 섹터 read 검증 → OEM ID + boot signature 표시
+- ☑ CMake/Makefile.modern 의 `KERNEL_C_NAMES` 에 `ata` 등록
+- ☑ QEMU 부팅 후 `disk` 명령 실행 → `QEMU HARDDISK / sectors=65536 / size=32MB / LBA0 oem='HARIBOTE' sig=aa55` 정상 출력 확인
 
 ### Phase 3 — FAT16 읽기 경로 통합 (2일)
 **목표**: 기존 메모리 이미지(`ADR_DISKIMG`) 의존을 떼고, **모든 파일 읽기를 ATA를 통한 FAT16 드라이버로** 일원화한다.

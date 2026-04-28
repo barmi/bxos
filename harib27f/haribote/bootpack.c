@@ -80,6 +80,10 @@ void HariMain(void)
 	io_out8(PIC1_IMR, 0xef); /* 마우스를 허가(11101111) */
 	fifo32_init(&keycmd, 32, keycmd_buf, 0);
 
+	/* ATA 디스크 검사 (work1 Phase 2). 결과는 ata_drive_info[] 에 캐시되며
+	 * 콘솔 명령 `disk` 로 확인 가능. */
+	ata_init();
+
 	memtotal = memtest(0x00400000, 0xbfffffff);
 	memman_init(memman);
 	memman_free(memman, 0x00001000, 0x0009e000); /* 0x00001000 - 0x0009efff */
