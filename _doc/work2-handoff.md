@@ -41,11 +41,18 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
   - legacy [apilib.h](../harib27f/apilib.h), [apilib/api031.nas](../harib27f/apilib/api031.nas), apilib Makefile 갱신.
   - [harib27f/pwd/pwd.c](../harib27f/pwd/pwd.c) 추가, [CMakeLists.txt](../CMakeLists.txt)에 `pwd.he2` 추가.
   - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img`, `bxos_fat.py ls build/cmake/data.img:/`에서 `PWD.HE2` 확인, `git diff --check` 통과.
+- **Phase 6 (호스트 도구) 코드 작업 완료**:
+  - [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py)에 다단계 `image:/a/b/c` path resolution 추가.
+  - `mkdir <image:/path>` / `rmdir <image:/path>` 서브명령 추가.
+  - `ls`/`cp`/`rm`이 서브디렉터리 path를 처리하도록 갱신. `cp`는 host↔image 양방향 및 같은 이미지 내 파일 복사를 지원.
+  - FAT16 subdir cluster 할당, `.`/`..` 초기화, 디렉터리 FAT chain 확장, 빈 디렉터리 검사 구현.
+  - 검증: `python3 -m py_compile tools/modern/bxos_fat.py`, 새 이미지 생성 및 이미지 복사본에서 `mkdir /sub`, `mkdir /sub/inner`, `cp HOST:tetris.he2 image:/sub/tetris.he2`, 재추출 `cmp`, `rm`, `rmdir`, `fsck_msdos -n`, 비어있지 않은 디렉터리 `rmdir` 거부 확인, `git diff --check` 통과.
 - 남은 확인: QEMU 콘솔에서 root 한 단계 명령(`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 대화형 회귀 확인.
 - 남은 확인: QEMU 콘솔에서 `resolve /`, `resolve tetris.he2`, `resolve nofile`, 추후 mkdir 이후 `resolve /sub/../x` 같은 대화형 확인.
 - 남은 확인: QEMU 콘솔에서 `mkdir /sub`, `mkdir /sub/inner`, `rmdir /sub` 거부, `rmdir /sub/inner`, `rmdir /sub` 흐름 확인. 호스트 `mount -t msdos`/`ls -laR` 확인도 남음.
 - 남은 확인: QEMU 콘솔에서 `cd /sub`, `pwd`, `touch a.txt`, `dir /sub`, `cp /sub/a.txt b.txt`, `start pwd` cwd 상속 등 Phase 4 시나리오 확인.
 - 남은 확인: QEMU 콘솔에서 `cd /sub`, `pwd.he2`, `echo.he2 hi > a.txt`, `fdel.he2 ../top.txt` 등 Phase 5 syscall 시나리오 확인.
+- 남은 확인: QEMU 콘솔에서 호스트가 만든 `/sub/tetris.he2` 확인 후 게스트에서 삭제/`rmdir`, 그리고 게스트가 만든 디렉터리/파일을 호스트 `bxos_fat.py ls`로 확인.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -74,10 +81,10 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 | 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>`. **코드 완료, QEMU/호스트 마운트 확인 남음** |
 | 4. cwd + 기존 명령 path 화 | 2d | `cd`/`pwd`, `dir`·`cp`·`mv`·`rm`·`touch`·`echo`·`mkfile` 의 path 인자. **코드 완료, QEMU 확인 남음** |
 | 5. 사용자 API + HE2 앱 | 1.5d | path 받는 fopen/fopen_w/fdelete, 신규 `api_getcwd` (edx=31), `pwd.he2`. **코드 완료, QEMU 확인 남음** |
-| 6. 호스트 도구 | 1.5d | `bxos_fat.py` path 다단계 + `mkdir`/`rmdir` |
+| 6. 호스트 도구 | 1.5d | `bxos_fat.py` path 다단계 + `mkdir`/`rmdir`. **코드 완료, QEMU 게스트↔호스트 교차 확인 남음** |
 | 7. 문서 / 마무리 | 0.5d | storage.md / BXOS-COMMANDS.md / README / SETUP-MAC 갱신 |
 
-총 **9~11 작업일**. Phase 6 은 Phase 3 끝나면 병행 가능.
+총 **9~11 작업일**. Phase 6 코드 작업까지 완료됐고, Phase 7 문서 갱신과 QEMU 대화형 확인이 남아 있다.
 
 ## 5. 코드 길잡이
 
@@ -126,8 +133,8 @@ work2.md §5 가 정본. 강조:
 
 ## 9. 시작 명령
 
-Phase 6 로 들어가면 됨. 다음 PR 단위 제안:
+Phase 7 로 들어가면 됨. 다음 PR 단위 제안:
 
-> "`tools/modern/bxos_fat.py` 에 다단계 path resolution, `mkdir`/`rmdir`, subdir-aware `ls`/`cp`/`rm` 을 추가한다."
+> "work2 사용자 문서에 `mkdir`/`rmdir`/`cd`/`pwd`, path-aware 명령, `pwd.he2`, `bxos_fat.py mkdir/rmdir` 예시를 반영한다."
 
-QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 6 (호스트 도구) 로 진입한다.
+QEMU 대화형 콘솔 회귀 확인과 Phase 6 게스트↔호스트 교차 확인도 아직 남아 있다.

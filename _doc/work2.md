@@ -110,16 +110,16 @@
   - ☐ `fdel.he2 ../top.txt` (상대경로) 동작. (QEMU 대화형 확인 필요)
 
 ### Phase 6 — 호스트 도구 (1.5일)
-- ☐ [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py):
-  - 모든 path 인자가 `image:/a/b/c` 다단계 받게 — `_resolve_path` 구현.
+- ☑ [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py):
+  - 모든 path 인자가 `image:/a/b/c` 다단계 받게 — `resolve_path` 구현.
   - `mkdir <image:/path>` / `rmdir <image:/path>` 서브명령 추가.
   - `ls <image:/path>` 가 디렉터리면 그 디렉터리 entries 출력 (현재 root 만).
   - `cp` / `rm` 도 다단계 path 수용. host↔image 양방향 모두.
-- ☐ FAT16 디렉터리 cluster 할당 / `.`/`..` 초기화 / FAT chain 갱신을 게스트와 동일한 정책으로 (호환성 위해 byte-identical 한 BPB/엔트리 만들기).
-- ☐ 검증:
-  - 새 이미지 생성 → `mkdir /sub` → `cp HOST:tetris.he2 image:/sub/tetris.he2` → 호스트에서 다시 추출 후 `cmp` 일치.
-  - QEMU 부팅 후 `dir /sub` 에서 호스트가 만든 디렉터리/파일 보이고, 게스트에서 `rm /sub/tetris.he2`, `rmdir /sub` 후 `fsck_msdos -n` 통과.
-  - 역방향: 게스트에서 `mkdir`/파일 생성 → 호스트 `bxos_fat.py ls` 로 확인.
+- ☑ FAT16 디렉터리 cluster 할당 / `.`/`..` 초기화 / FAT chain 갱신을 게스트와 동일한 정책으로 (호환성 위해 byte-identical 한 BPB/엔트리 만들기).
+- ◐ 검증:
+  - ☑ 새 이미지 생성/복사본 → `mkdir /sub` → `mkdir /sub/inner` → `cp HOST:tetris.he2 image:/sub/tetris.he2` → 호스트에서 다시 추출 후 `cmp` 일치, `rm`/`rmdir` 후 `fsck_msdos -n` 통과.
+  - ☐ QEMU 부팅 후 `dir /sub` 에서 호스트가 만든 디렉터리/파일 보이고, 게스트에서 `rm /sub/tetris.he2`, `rmdir /sub` 후 `fsck_msdos -n` 통과.
+  - ☐ 역방향: 게스트에서 `mkdir`/파일 생성 → 호스트 `bxos_fat.py ls` 로 확인.
 
 ### Phase 7 — 문서 / 마무리 (0.5일)
 - ☐ [_doc/storage.md](storage.md) 갱신 — 디렉터리 cluster 레이아웃, `.`/`..` 의미, cwd 모델, 호스트 도구 path 사용법.

@@ -24,6 +24,9 @@ from pathlib import Path
 import mkfat12
 
 SECTOR = 512
+ATTR_VOLUME = 0x08
+ATTR_DIRECTORY = 0x10
+ATTR_ARCHIVE = 0x20
 
 
 def split_8_3(name: str) -> bytes:
@@ -47,7 +50,7 @@ def display_name(raw11: bytes) -> str:
 
 @dataclass
 class DirEntry:
-    index: int
+    offset: int
     raw_name: bytes
     attr: int
     cluster: int
@@ -137,39 +140,69 @@ class FatImage:
         for copy in range(self.fat_count):
             self.fat_set_one(copy, cluster, value)
 
-    def entries(self) -> list[DirEntry]:
+    def valid_cluster(self, cluster: int) -> bool:
+        return 2 <= cluster < self.cluster_count + 2
+
+    def entries(self, dir_cluster: int = 0) -> list[DirEntry]:
         out: list[DirEntry] = []
-        root = self.root_offset()
-        for i in range(self.root_entries):
-            off = root + i * 32
+        if dir_cluster == 0:
+            offsets = [self.root_offset() + i * 32 for i in range(self.root_entries)]
+        else:
+            offsets = []
+            for c in self.cluster_chain(dir_cluster):
+                base = self.cluster_offset(c)
+                offsets.extend(base + i * 32 for i in range(self.cluster_bytes // 32))
+        for off in offsets:
             first = self.data[off]
             if first == 0x00:
                 break
             if first == 0xE5:
                 continue
             attr = self.data[off + 11]
-            if attr & 0x08:
+            if attr & ATTR_VOLUME:
                 continue
             raw_name = bytes(self.data[off : off + 11])
             cluster = struct.unpack_from("<H", self.data, off + 26)[0]
             size = struct.unpack_from("<I", self.data, off + 28)[0]
-            out.append(DirEntry(i, raw_name, attr, cluster, size))
+            out.append(DirEntry(off, raw_name, attr, cluster, size))
         return out
 
-    def find(self, name: str) -> DirEntry | None:
-        raw = split_8_3(name)
-        for ent in self.entries():
+    def find_in_dir(self, dir_cluster: int, raw: bytes) -> DirEntry | None:
+        for ent in self.entries(dir_cluster):
             if ent.raw_name == raw and (ent.attr & 0x18) == 0:
                 return ent
         return None
 
-    def free_slot_index(self) -> int:
-        root = self.root_offset()
-        for i in range(self.root_entries):
-            first = self.data[root + i * 32]
-            if first in (0x00, 0xE5):
-                return i
-        raise SystemExit("[error] root directory is full")
+    def find_any_in_dir(self, dir_cluster: int, raw: bytes) -> DirEntry | None:
+        for ent in self.entries(dir_cluster):
+            if ent.raw_name == raw:
+                return ent
+        return None
+
+    def find(self, name: str) -> DirEntry | None:
+        resolved = self.resolve_path(name)
+        ent = resolved[2]
+        if ent is None or (ent.attr & ATTR_DIRECTORY):
+            return None
+        return ent
+
+    def free_slot_offset(self, dir_cluster: int) -> int:
+        if dir_cluster == 0:
+            root = self.root_offset()
+            for i in range(self.root_entries):
+                off = root + i * 32
+                first = self.data[off]
+                if first in (0x00, 0xE5):
+                    return off
+            raise SystemExit("[error] root directory is full")
+        for c in self.cluster_chain(dir_cluster):
+            base = self.cluster_offset(c)
+            for i in range(self.cluster_bytes // 32):
+                off = base + i * 32
+                if self.data[off] in (0x00, 0xE5):
+                    return off
+        new_cluster = self.append_dir_cluster(dir_cluster)
+        return self.cluster_offset(new_cluster)
 
     def cluster_chain(self, start: int) -> list[int]:
         chain: list[int] = []
@@ -182,6 +215,44 @@ class FatImage:
                 break
             cur = nxt
         return chain
+
+    def parent_cluster(self, dir_cluster: int) -> int:
+        if dir_cluster == 0:
+            return 0
+        off = self.cluster_offset(dir_cluster) + 32
+        if self.data[off : off + 2] != b"..":
+            raise SystemExit("[error] malformed directory: missing ..")
+        parent = struct.unpack_from("<H", self.data, off + 26)[0]
+        if parent != 0 and not self.valid_cluster(parent):
+            raise SystemExit("[error] malformed directory: invalid ..")
+        return parent
+
+    def resolve_path(self, path: str) -> tuple[int, bytes | None, DirEntry | None]:
+        if path is None:
+            raise SystemExit("[error] empty path")
+        path = path.replace("\\", "/")
+        if len(path) > 128:
+            raise SystemExit("[error] path too long")
+        parts = [p for p in path.split("/") if p not in ("", ".")]
+        cur = 0
+        if not parts:
+            return 0, None, None
+        for part in parts[:-1]:
+            if part == "..":
+                cur = self.parent_cluster(cur)
+                continue
+            raw = split_8_3(part)
+            ent = self.find_any_in_dir(cur, raw)
+            if ent is None:
+                raise SystemExit(f"[error] directory not found: {part}")
+            if not (ent.attr & ATTR_DIRECTORY):
+                raise SystemExit(f"[error] not a directory: {part}")
+            cur = ent.cluster
+        leaf = parts[-1]
+        if leaf == "..":
+            return self.parent_cluster(cur), None, None
+        raw_leaf = split_8_3(leaf)
+        return cur, raw_leaf, self.find_any_in_dir(cur, raw_leaf)
 
     def read_file(self, name: str) -> bytes:
         ent = self.find(name)
@@ -210,14 +281,53 @@ class FatImage:
                     return out
         raise SystemExit("[error] disk full")
 
+    def zero_cluster(self, cluster: int) -> None:
+        off = self.cluster_offset(cluster)
+        self.data[off : off + self.cluster_bytes] = b"\x00" * self.cluster_bytes
+
+    def tail_cluster(self, start: int) -> int:
+        chain = self.cluster_chain(start)
+        if not chain:
+            raise SystemExit("[error] invalid cluster chain")
+        return chain[-1]
+
+    def append_dir_cluster(self, dir_cluster: int) -> int:
+        if not self.valid_cluster(dir_cluster):
+            raise SystemExit("[error] invalid directory cluster")
+        new_cluster = self.find_free_clusters(1)[0]
+        self.zero_cluster(new_cluster)
+        self.fat_set(new_cluster, self.eoc())
+        self.fat_set(self.tail_cluster(dir_cluster), new_cluster)
+        return new_cluster
+
+    def make_entry(self, raw_name: bytes, attr: int, cluster: int = 0, size: int = 0) -> bytes:
+        entry = bytearray(32)
+        entry[0:11] = raw_name
+        entry[11] = attr
+        struct.pack_into("<H", entry, 26, cluster)
+        struct.pack_into("<I", entry, 28, size)
+        return bytes(entry)
+
+    def write_entry(self, offset: int, raw_name: bytes, attr: int, cluster: int = 0, size: int = 0) -> None:
+        self.data[offset : offset + 32] = self.make_entry(raw_name, attr, cluster, size)
+
+    def init_directory_cluster(self, cluster: int, parent_cluster: int) -> None:
+        self.zero_cluster(cluster)
+        self.write_entry(self.cluster_offset(cluster), b".          ", ATTR_DIRECTORY, cluster, 0)
+        self.write_entry(self.cluster_offset(cluster) + 32, b"..         ", ATTR_DIRECTORY, parent_cluster, 0)
+
     def write_file(self, name: str, payload: bytes) -> None:
-        old = self.find(name)
+        parent, raw_name, old = self.resolve_path(name)
+        if raw_name is None:
+            raise SystemExit("[error] invalid file path")
         if old is not None:
+            if old.attr & ATTR_DIRECTORY:
+                raise SystemExit(f"[error] is a directory: {name}")
             if old.cluster:
                 self.free_chain(old.cluster)
-            slot = old.index
+            slot = old.offset
         else:
-            slot = self.free_slot_index()
+            slot = self.free_slot_offset(parent)
 
         cluster_count = 0 if len(payload) == 0 else (len(payload) + self.cluster_bytes - 1) // self.cluster_bytes
         chain = self.find_free_clusters(cluster_count) if cluster_count else []
@@ -228,21 +338,51 @@ class FatImage:
             self.data[off : off + len(chunk)] = chunk
             self.fat_set(c, chain[i + 1] if i + 1 < len(chain) else self.eoc())
 
-        entry = bytearray(32)
-        entry[0:11] = split_8_3(name)
-        entry[11] = 0x20
-        struct.pack_into("<H", entry, 26, chain[0] if chain else 0)
-        struct.pack_into("<I", entry, 28, len(payload))
-        root = self.root_offset()
-        self.data[root + slot * 32 : root + (slot + 1) * 32] = entry
+        self.write_entry(slot, raw_name, ATTR_ARCHIVE, chain[0] if chain else 0, len(payload))
 
     def delete_file(self, name: str) -> None:
-        ent = self.find(name)
+        _, _, ent = self.resolve_path(name)
         if ent is None:
             raise SystemExit(f"[error] not found: {name}")
+        if ent.attr & ATTR_DIRECTORY:
+            raise SystemExit(f"[error] is a directory: {name}")
         if ent.cluster:
             self.free_chain(ent.cluster)
-        self.data[self.root_offset() + ent.index * 32] = 0xE5
+        self.data[ent.offset] = 0xE5
+
+    def mkdir(self, path: str) -> None:
+        if self.fs_type != 16:
+            raise SystemExit("[error] mkdir requires FAT16 image")
+        parent, raw_name, old = self.resolve_path(path)
+        if raw_name is None:
+            raise SystemExit("[error] invalid directory path")
+        if old is not None:
+            raise SystemExit(f"[error] already exists: {path}")
+        slot = self.free_slot_offset(parent)
+        cluster = self.find_free_clusters(1)[0]
+        self.init_directory_cluster(cluster, parent)
+        self.fat_set(cluster, self.eoc())
+        self.write_entry(slot, raw_name, ATTR_DIRECTORY, cluster, 0)
+
+    def directory_empty(self, cluster: int) -> bool:
+        for ent in self.entries(cluster):
+            if ent.name in (".", ".."):
+                continue
+            return False
+        return True
+
+    def rmdir(self, path: str) -> None:
+        parent, raw_name, ent = self.resolve_path(path)
+        if raw_name is None or ent is None:
+            raise SystemExit(f"[error] directory not found: {path}")
+        if not (ent.attr & ATTR_DIRECTORY):
+            raise SystemExit(f"[error] not a directory: {path}")
+        if not ent.cluster or not self.valid_cluster(ent.cluster):
+            raise SystemExit(f"[error] invalid directory: {path}")
+        if not self.directory_empty(ent.cluster):
+            raise SystemExit(f"[error] directory not empty: {path}")
+        self.data[ent.offset] = 0xE5
+        self.free_chain(ent.cluster)
 
     def save(self) -> None:
         self.path.write_bytes(self.data)
@@ -286,10 +426,25 @@ def cmd_create(args: argparse.Namespace) -> int:
 
 
 def cmd_ls(args: argparse.Namespace) -> int:
-    image, _ = parse_image_spec(args.target)
+    image, member = parse_image_spec(args.target)
     fat = FatImage(image)
-    for ent in fat.entries():
-        if (ent.attr & 0x18) == 0:
+    if member in ("", "/"):
+        dir_cluster = 0
+    else:
+        parent, raw_name, ent = fat.resolve_path(member)
+        if raw_name is None:
+            dir_cluster = parent
+        elif ent is None:
+            raise SystemExit(f"[error] not found: {member}")
+        elif not (ent.attr & ATTR_DIRECTORY):
+            print(f"{ent.name:<12} {ent.size:>8}")
+            return 0
+        else:
+            dir_cluster = ent.cluster
+    for ent in fat.entries(dir_cluster):
+        if ent.attr & ATTR_DIRECTORY:
+            print(f"{ent.name:<12} {'<DIR>':>8}")
+        else:
             print(f"{ent.name:<12} {ent.size:>8}")
     return 0
 
@@ -303,28 +458,57 @@ def cmd_rm(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mkdir(args: argparse.Namespace) -> int:
+    image, member = parse_image_spec(args.target)
+    fat = FatImage(image)
+    fat.mkdir(member)
+    fat.save()
+    print(f"[bxos_fat.py] mkdir {image}:{member}")
+    return 0
+
+
+def cmd_rmdir(args: argparse.Namespace) -> int:
+    image, member = parse_image_spec(args.target)
+    fat = FatImage(image)
+    fat.rmdir(member)
+    fat.save()
+    print(f"[bxos_fat.py] rmdir {image}:{member}")
+    return 0
+
+
 def cmd_cp(args: argparse.Namespace) -> int:
     src = parse_spec(args.src)
     dst = parse_spec(args.dst)
     if src.kind == "host" and dst.kind == "image":
         payload = src.path.read_bytes()
         fat = FatImage(dst.path)
-        fat.write_file(dst.member or ("/" + src.path.name), payload)
+        member = dst.member
+        if member in (None, "", "/"):
+            member = "/" + src.path.name
+        fat.write_file(member, payload)
         fat.save()
-        print(f"[bxos_fat.py] copied {src.path} -> {dst.path}:{dst.member}")
+        print(f"[bxos_fat.py] copied {src.path} -> {dst.path}:{member}")
         return 0
     if src.kind == "image" and dst.kind == "host":
         fat = FatImage(src.path)
         payload = fat.read_file(src.member or "/")
-        dst.path.write_bytes(payload)
-        print(f"[bxos_fat.py] copied {src.path}:{src.member} -> {dst.path}")
+        out = dst.path
+        if out.is_dir():
+            _, _, ent = fat.resolve_path(src.member or "/")
+            if ent is not None:
+                out = out / ent.name
+        out.write_bytes(payload)
+        print(f"[bxos_fat.py] copied {src.path}:{src.member} -> {out}")
         return 0
     if src.kind == "image" and dst.kind == "image" and src.path == dst.path:
         fat = FatImage(src.path)
         payload = fat.read_file(src.member or "/")
-        fat.write_file(dst.member or "/", payload)
+        member = dst.member or "/"
+        if member == "/":
+            raise SystemExit("[error] destination file path required")
+        fat.write_file(member, payload)
         fat.save()
-        print(f"[bxos_fat.py] copied {src.path}:{src.member} -> {dst.member}")
+        print(f"[bxos_fat.py] copied {src.path}:{src.member} -> {member}")
         return 0
     raise SystemExit("[error] cp supports HOST:<file> <image>:/name, <image>:/name HOST:<file>, or same-image copy")
 
@@ -352,6 +536,14 @@ def main(argv: list[str]) -> int:
     p_rm = sub.add_parser("rm")
     p_rm.add_argument("target")
     p_rm.set_defaults(func=cmd_rm)
+
+    p_mkdir = sub.add_parser("mkdir")
+    p_mkdir.add_argument("target")
+    p_mkdir.set_defaults(func=cmd_mkdir)
+
+    p_rmdir = sub.add_parser("rmdir")
+    p_rmdir.add_argument("target")
+    p_rmdir.set_defaults(func=cmd_rmdir)
 
     args = parser.parse_args(argv[1:])
     return args.func(args)
