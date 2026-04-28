@@ -433,6 +433,47 @@ char *fs_data_loadfile(int clustno, int *psize)
 	return buf;
 }
 
+int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned char *dst = (unsigned char *) buf;
+	unsigned char tmp[8 * 512];
+	int cluster_bytes, done = 0, off, chunk, i;
+	unsigned int nth, clus;
+
+	if (!g_data_mounted || finfo == 0 || pos < 0 || n < 0) {
+		return -1;
+	}
+	if ((unsigned int) pos >= finfo->size) {
+		return 0;
+	}
+	if ((unsigned int) (pos + n) > finfo->size) {
+		n = finfo->size - pos;
+	}
+	cluster_bytes = m->sectors_per_cluster * 512;
+	if (cluster_bytes > (int) sizeof tmp) {
+		return -1;
+	}
+
+	while (done < n) {
+		nth = (pos + done) / cluster_bytes;
+		off = (pos + done) % cluster_bytes;
+		chunk = n - done;
+		if (chunk > cluster_bytes - off) {
+			chunk = cluster_bytes - off;
+		}
+		clus = nth_cluster(m, finfo, nth, 0);
+		if (clus == 0 || read_cluster(m, clus, tmp) != 0) {
+			return -1;
+		}
+		for (i = 0; i < chunk; i++) {
+			dst[done + i] = tmp[off + i];
+		}
+		done += chunk;
+	}
+	return done;
+}
+
 int fs_data_create(char *name)
 {
 	struct FS_MOUNT *m = &g_data_mount;

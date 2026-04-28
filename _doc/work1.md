@@ -43,7 +43,7 @@
   - 기본 경로 `build/cmake/data.img` 가 존재하면 자동 부착
   - 부팅 이미지 기본 경로도 `build/cmake/haribote.img` → `harib27f/haribote.img` 폴백으로 정리
 - ☑ 데이터 디스크 기본 경로 컨벤션: **`build/cmake/data.img`** 로 확정 (2장 표 반영).
-- ☐ (다음 세션) Phase 1 착수.
+- ☑ Phase 1 착수 및 완료.
 
 ### Phase 1 — 빌드 구조 분리 (완료 — 2026-04-28)
 - ☑ [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) 에 `--fs {fat12,fat16}` + `--size` 옵션 추가. `FsParams` 데이터클래스 도입으로 BPB/FAT 폭 분기 일원화. FAT12 회귀 OK.
@@ -136,10 +136,17 @@
   - `touch.he2 empty.txt` 실행 → 0바이트 파일 생성 확인.
   - `fdel.he2 api.txt` 실행 → 파일 삭제 및 free cluster 수 증가, `fsck_msdos -n` 통과.
 
-### Phase 6 — 콘솔 명령 보강 (1일)
-- ☐ `cp <src> <dst>`, `rm <file>`, `mv <src> <dst>`, `mkdir <dir>` (선택).
-- ☐ 출력 리다이렉션 `cmd > file` (선택, 파서 수정 필요).
-- ☐ [BXOS-COMMANDS.md](BXOS-COMMANDS.md) 업데이트.
+### Phase 6 — 콘솔 명령 보강 (완료 — 2026-04-28)
+- ☑ `cp <src> <dst>`, `rm <file>`, `mv <src> <dst>` 추가/검증.
+  - `cp` 는 tek 자동 해제를 타지 않도록 `fs_data_read()` raw byte read 경로를 새로 사용.
+  - `mv` 는 raw copy 후 원본 unlink 방식.
+  - `rm` 은 Phase 4 의 `fs_data_unlink()` 기반 명령을 유지.
+- ☑ `mkdir <dir>` 은 선택 항목이라 보류. 서브디렉터리 cluster 탐색/write path 가 필요해 Phase 6 범위 밖.
+- ☑ 일반 출력 리다이렉션 `cmd > file` 은 보류. 현재는 built-in `echo <text> > <file>` 과 `echo.he2` 검증 앱만 지원.
+- ☑ [BXOS-COMMANDS.md](BXOS-COMMANDS.md) 업데이트.
+- ☑ 검증:
+  - QEMU HMP `sendkey` 로 `cp a.he2 b.he2`, `rm a.he2`, `b` 실행 → `B.HE2` 가 원본 `A.HE2` 와 byte-for-byte 동일, `A.HE2` 삭제 확인, `fsck_msdos -n` 통과.
+  - `mv type.he2 t2.he2` 실행 → `T2.HE2` 가 원본 `TYPE.HE2` 와 byte-for-byte 동일, `TYPE.HE2` 삭제 확인, `fsck_msdos -n` 통과.
 
 ### Phase 7 — 호스트 측 디스크 이미지 편집 도구 (1.5일)
 **목표**: 앱을 다시 빌드했을 때, **전체 데이터 이미지를 재생성하지 않고도** 호스트에서 파일을 디스크 이미지에 넣고 빼기.

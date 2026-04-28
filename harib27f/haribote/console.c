@@ -15,7 +15,9 @@ static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 		int *hist_count, char *cmdline);
 static char *skip_spaces(char *p);
 static int parse_decimal(char *p, int *out);
+static int split_two_args(char *args, char **arg1, char **arg2);
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh);
+static int copy_file_raw(char *src_name, char *dst_name);
 static struct FILEINFO *app_find(char *cmdline, char *app_name);
 static void app_name_from_finfo(char *dst, struct FILEINFO *finfo);
 static int app_subsystem(char *cmdline, int *fat);
@@ -388,6 +390,10 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_touch(cons, cmdline);
 	} else if (strncmp(cmdline, "rm ", 3) == 0 && cons->sht != 0) {
 		cmd_rm(cons, cmdline);
+	} else if (strncmp(cmdline, "cp ", 3) == 0 && cons->sht != 0) {
+		cmd_cp(cons, cmdline);
+	} else if (strncmp(cmdline, "mv ", 3) == 0 && cons->sht != 0) {
+		cmd_mv(cons, cmdline);
 	} else if (strncmp(cmdline, "echo ", 5) == 0 && cons->sht != 0) {
 		cmd_echo(cons, cmdline);
 	} else if (strncmp(cmdline, "mkfile ", 7) == 0 && cons->sht != 0) {
@@ -435,6 +441,33 @@ static int parse_decimal(char *p, int *out)
 	return 0;
 }
 
+static int split_two_args(char *args, char **arg1, char **arg2)
+{
+	char *p;
+	*arg1 = skip_spaces(args);
+	if (**arg1 == 0) {
+		return -1;
+	}
+	p = *arg1;
+	while (*p > ' ') {
+		p++;
+	}
+	if (*p == 0) {
+		return -1;
+	}
+	*p++ = 0;
+	*arg2 = skip_spaces(p);
+	if (**arg2 == 0) {
+		return -1;
+	}
+	p = *arg2;
+	while (*p > ' ') {
+		p++;
+	}
+	*p = 0;
+	return 0;
+}
+
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
 {
 	if (fh == 0 || fh->mode == FH_MODE_FREE) {
@@ -449,6 +482,55 @@ static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
 	fh->mode = FH_MODE_FREE;
 	fh->finfo = 0;
 	return;
+}
+
+static int copy_file_raw(char *src_name, char *dst_name)
+{
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	struct FILEINFO *src, *dst;
+	char *buf = 0;
+	int size, r;
+
+	src = fs_data_search(src_name);
+	if (src == 0) {
+		return -1;
+	}
+	dst = fs_data_search(dst_name);
+	if (dst == src) {
+		return -2;
+	}
+	size = src->size;
+	if (size > 0) {
+		buf = (char *) memman_alloc_4k(memman, size);
+		if (buf == 0) {
+			return -3;
+		}
+		if (fs_data_read(src, 0, buf, size) != size) {
+			memman_free_4k(memman, (int) buf, size);
+			return -4;
+		}
+	}
+
+	if (dst == 0) {
+		r = fs_data_create(dst_name);
+		if (r != 0) {
+			if (buf != 0) memman_free_4k(memman, (int) buf, size);
+			return -5;
+		}
+		dst = fs_data_search(dst_name);
+	}
+	if (dst == 0 || fs_data_truncate(dst, 0) != 0) {
+		if (buf != 0) memman_free_4k(memman, (int) buf, size);
+		return -6;
+	}
+	if (size > 0 && fs_data_write(dst, 0, buf, size) != size) {
+		memman_free_4k(memman, (int) buf, size);
+		return -7;
+	}
+	if (buf != 0) {
+		memman_free_4k(memman, (int) buf, size);
+	}
+	return 0;
 }
 
 void cmd_mem(struct CONSOLE *cons, int memtotal)
@@ -618,6 +700,56 @@ void cmd_rm(struct CONSOLE *cons, char *cmdline)
 	}
 	if (fs_data_unlink(finfo) != 0) {
 		cons_putstr0(cons, "rm failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_cp(struct CONSOLE *cons, char *cmdline)
+{
+	char *src, *dst;
+	int r;
+
+	if (split_two_args(cmdline + 3, &src, &dst) != 0) {
+		cons_putstr0(cons, "usage: cp <src> <dst>\n\n");
+		return;
+	}
+	r = copy_file_raw(src, dst);
+	if (r == -1) {
+		cons_putstr0(cons, "Source not found.\n\n");
+		return;
+	}
+	if (r != 0) {
+		cons_putstr0(cons, "cp failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_mv(struct CONSOLE *cons, char *cmdline)
+{
+	char *src, *dst;
+	struct FILEINFO *src_finfo;
+	int r;
+
+	if (split_two_args(cmdline + 3, &src, &dst) != 0) {
+		cons_putstr0(cons, "usage: mv <src> <dst>\n\n");
+		return;
+	}
+	src_finfo = fs_data_search(src);
+	if (src_finfo == 0) {
+		cons_putstr0(cons, "Source not found.\n\n");
+		return;
+	}
+	r = copy_file_raw(src, dst);
+	if (r != 0) {
+		cons_putstr0(cons, "mv failed.\n\n");
+		return;
+	}
+	if (fs_data_unlink(src_finfo) != 0) {
+		cons_putstr0(cons, "mv unlink failed.\n\n");
 		return;
 	}
 	cons_newline(cons);
