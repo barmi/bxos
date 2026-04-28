@@ -352,15 +352,6 @@ struct DBGWIN {
 	struct SCROLLWIN sw;
 };
 
-struct FILEHANDLE {
-	char *buf;
-	int size;
-	int pos;
-	int mode;                 /* 0=free, 1=read buffer, 2=write-through */
-	struct FILEINFO *finfo;   /* write handle target */
-};
-
-
 void console_task(struct SHEET *sheet, int memtotal);
 void cons_putchar(struct CONSOLE *cons, int chr, char move);
 void cons_newline(struct CONSOLE *cons);
@@ -457,6 +448,14 @@ struct DIR_SLOT {
 struct FS_FILE {
 	struct FILEINFO finfo;
 	struct DIR_SLOT slot;
+};
+struct FILEHANDLE {
+	char *buf;
+	int size;
+	int pos;
+	int mode;                 /* 0=free, 1=read buffer, 2=write-through */
+	struct FILEINFO *finfo;   /* legacy root write handle target */
+	struct FS_FILE file;      /* path-aware write handle target */
 };
 struct DIR_ITER {
 	unsigned int dir_clus;        /* 0 = root directory */

@@ -72,6 +72,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 		fhandle[i].pos = 0;
 		fhandle[i].mode = FH_MODE_FREE;
 		fhandle[i].finfo = 0;
+		fhandle[i].file.finfo.name[0] = 0;
 	}
 	task->fhandle = fhandle;
 	task->fat = fat;
@@ -625,6 +626,7 @@ static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
 	fh->pos = 0;
 	fh->mode = FH_MODE_FREE;
 	fh->finfo = 0;
+	fh->file.finfo.name[0] = 0;
 	return;
 }
 
@@ -1396,6 +1398,8 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 	task_set_app(task, app_name,
 			((h->flags & HE2_FLAG_SUBSYSTEM_MASK) == HE2_SUBSYSTEM_WINDOW) ?
 			TASK_APP_WINDOW : TASK_APP_CONSOLE);
+	task->cwd_clus = cons->cwd_clus;
+	strcpy(task->cwd_path, cons->cwd_path);
 	task->ds_base = (int) q;
 
 	/* 코드와 데이터 양쪽 모두 같은 영역(q)을 가리키게 한다.        */
@@ -1476,6 +1480,8 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 				q[esp + i] = p[dathrb + i];
 			}
 			task_set_app(task, app_name, TASK_APP_CONSOLE);
+			task->cwd_clus = cons->cwd_clus;
+			strcpy(task->cwd_path, cons->cwd_path);
 			start_app(0x1b, 0 * 8 + 4, esp, 1 * 8 + 4, &(task->tss.esp0));
 			task_reset_console(task);
 			shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
@@ -1515,7 +1521,7 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		/* reg[0] : EDI,   reg[1] : ESI,   reg[2] : EBP,   reg[3] : ESP */
 		/* reg[4] : EBX,   reg[5] : EDX,   reg[6] : ECX,   reg[7] : EAX */
 	int i;
-	struct FILEINFO *finfo;
+	struct FS_FILE file;
 	struct FILEHANDLE *fh;
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 
@@ -1674,11 +1680,10 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		}
 		reg[7] = 0;
 		if (i < 8) {
-			/* work1 Phase 3: 사용자 앱의 파일 열기도 데이터 드라이브로. */
-			finfo = fs_data_search((char *) ebx + ds_base);
-			if (finfo != 0) {
+			if (fs_data_open_path(task->cwd_clus, (char *) ebx + ds_base, &file) == 0) {
 				fh = &task->fhandle[i];
-				fh->size = finfo->size;
+				fh->file = file;
+				fh->size = file.finfo.size;
 				fh->pos = 0;
 				fh->mode = FH_MODE_READ;
 				fh->finfo = 0;
@@ -1686,7 +1691,7 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 					fh->buf = 0;
 					reg[7] = (int) fh;
 				} else {
-					fh->buf = fs_data_loadfile(finfo->clustno, &fh->size);
+					fh->buf = fs_data_loadfile(file.finfo.clustno, &fh->size);
 					if (fh->buf != 0) {
 						reg[7] = (int) fh;
 					} else {
@@ -1770,22 +1775,15 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		}
 		reg[7] = 0;
 		if (i < 8) {
-			char *name = (char *) ebx + ds_base;
-			finfo = fs_data_search(name);
-			if (finfo == 0) {
-				if (fs_data_create(name) == 0) {
-					finfo = fs_data_search(name);
-				}
-			} else if (fs_data_truncate(finfo, 0) != 0) {
-				finfo = 0;
-			}
-			if (finfo != 0) {
+			if (fs_data_create_path(task->cwd_clus, (char *) ebx + ds_base, &file) == 0 &&
+					fs_file_truncate(&file, 0) == 0) {
 				fh = &task->fhandle[i];
 				fh->buf = 0;
-				fh->size = finfo->size;
+				fh->file = file;
+				fh->size = file.finfo.size;
 				fh->pos = 0;
 				fh->mode = FH_MODE_WRITE;
-				fh->finfo = finfo;
+				fh->finfo = &fh->file.finfo;
 				reg[7] = (int) fh;
 			}
 		}
@@ -1793,21 +1791,34 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		// api_fwrite
 		fh = (struct FILEHANDLE *) eax;
 		reg[7] = 0;
-		if (fh != 0 && fh->mode == FH_MODE_WRITE && fh->finfo != 0 && ecx >= 0) {
-			i = fs_data_write(fh->finfo, fh->pos, (char *) ebx + ds_base, ecx);
+		if (fh != 0 && fh->mode == FH_MODE_WRITE && ecx >= 0) {
+			i = fs_file_write(&fh->file, fh->pos, (char *) ebx + ds_base, ecx);
 			if (i > 0) {
 				fh->pos += i;
-				fh->size = fh->finfo->size;
+				fh->size = fh->file.finfo.size;
+				fh->finfo = &fh->file.finfo;
 			}
 			reg[7] = i;
 		}
 	} else if (edx == 30) {
 		// api_fdelete
-		finfo = fs_data_search((char *) ebx + ds_base);
-		if (finfo != 0 && fs_data_unlink(finfo) == 0) {
+		if (fs_data_open_path(task->cwd_clus, (char *) ebx + ds_base, &file) == 0 &&
+				fs_file_unlink(&file) == 0) {
 			reg[7] = 0;
 		} else {
 			reg[7] = -1;
+		}
+	} else if (edx == 31) {
+		// api_getcwd
+		char *dst = (char *) ebx + ds_base;
+		char *src = task->cwd_path;
+		reg[7] = -1;
+		if (dst != 0 && ecx > 0) {
+			for (i = 0; i < ecx - 1 && src[i] != 0; i++) {
+				dst[i] = src[i];
+			}
+			dst[i] = 0;
+			reg[7] = i;
 		}
 	}
 	return 0;

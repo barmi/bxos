@@ -253,7 +253,7 @@ bxos_libbxos()
 set(BXOS_HE2_APPS_BASIC
     a hello3 hello4 hello5
     sosu sosu2 sosu3
-    type touch echo fdel beepdown
+    type touch echo fdel pwd beepdown
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")

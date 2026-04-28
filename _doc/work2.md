@@ -97,17 +97,17 @@
   - ☐ `cp /sub/a.txt b.txt` 같은 mixed-prefix 경로 OK. (QEMU 대화형 확인 필요)
 
 ### Phase 5 — 사용자 API + HE2 앱 (1.5일)
-- ☐ syscall 디스패처: `api_fopen` / `api_fopen_w` / `api_fdelete` 가 받는 path 인자를 path resolution 경유로 처리. (edx 번호 보존, 의미만 확장.) cwd 는 호출 task 의 콘솔 cwd 를 사용 (앱 task 는 부모 콘솔 cwd 상속).
-- ☐ 신규 syscall: `api_getcwd(buf, n)` — `cwd_path` 를 buf 에 복사. edx 번호 31 (work1 의 28~30 다음).
-- ☐ HE2 [he2/libbxos](../he2/libbxos) 에 `bx_getcwd(buf, n)` wrapper 추가. legacy HRB `apilib` 에 `api031.nas` 도 추가 (전 작업과 일관).
-- ☐ 검증용 HE2 앱 추가:
+- ☑ syscall 디스패처: `api_fopen` / `api_fopen_w` / `api_fdelete` 가 받는 path 인자를 path resolution 경유로 처리. (edx 번호 보존, 의미만 확장.) cwd 는 호출 task 의 콘솔 cwd 를 사용 (앱 task 는 부모 콘솔 cwd 상속).
+- ☑ 신규 syscall: `api_getcwd(buf, n)` — `cwd_path` 를 buf 에 복사. edx 번호 31 (work1 의 28~30 다음).
+- ☑ HE2 [he2/libbxos](../he2/libbxos) 에 `bx_getcwd(buf, n)` wrapper 추가. legacy HRB `apilib` 에 `api031.nas` 도 추가 (전 작업과 일관).
+- ☑ 검증용 HE2 앱 추가:
   - `mkdir.he2 <path>` — `api_mkdir` 가 없으므로... 이건 어떻게? **결정**: 앱이 직접 디렉터리 만들 일은 적고, syscall 추가 비용보다 콘솔 명령으로 충분. **`api_mkdir`/`api_rmdir` 는 도입하지 않는다.** Phase 5 에서 만드는 HE2 앱은 path 인자 검증용:
-  - `pwd.he2` — `bx_getcwd` 호출 결과 출력.
-  - 기존 `echo.he2 <text> > <path>`, `touch.he2 <path>`, `fdel.he2 <path>` 가 path 받게 자연스럽게 확장됨 (소스 변경 없이 syscall 의미 변경만으로 동작해야 함).
+  - ☑ `pwd.he2` — `bx_getcwd` 호출 결과 출력.
+  - ☑ 기존 `echo.he2 <text> > <path>`, `touch.he2 <path>`, `fdel.he2 <path>` 가 path 받게 자연스럽게 확장됨 (소스 변경 없이 syscall 의미 변경만으로 동작해야 함).
 - ☐ 검증:
-  - `cd /sub`, `echo.he2 hi > a.txt` → `/sub/a.txt` 에 저장됨, 호스트에서 확인.
-  - `pwd.he2` 가 `/sub` 출력.
-  - `fdel.he2 ../top.txt` (상대경로) 동작.
+  - ☐ `cd /sub`, `echo.he2 hi > a.txt` → `/sub/a.txt` 에 저장됨, 호스트에서 확인. (QEMU 대화형 확인 필요)
+  - ☐ `pwd.he2` 가 `/sub` 출력. (QEMU 대화형 확인 필요)
+  - ☐ `fdel.he2 ../top.txt` (상대경로) 동작. (QEMU 대화형 확인 필요)
 
 ### Phase 6 — 호스트 도구 (1.5일)
 - ☐ [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py):

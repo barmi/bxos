@@ -58,6 +58,11 @@ int   api_fdelete(const char *fname);
 /* ---- misc ---------------------------------------------------------------- */
 int   api_cmdline(char *buf, int maxsize);
 int   api_getlang(void);
+int   api_getcwd(char *buf, int maxsize);
+
+static inline int bx_getcwd(char *buf, int maxsize) {
+    return api_getcwd(buf, maxsize);
+}
 
 /* ---- memory layout exported by linker (linker-he2.lds) ------------------ */
 extern char _he2_image_end[];   /* end of file image (= bss start)          */

@@ -28,3 +28,4 @@ int api_fwrite(char *buf, int maxsize, int fhandle);
 int api_fdelete(char *fname);
 int api_cmdline(char *buf, int maxsize);
 int api_getlang(void);
+int api_getcwd(char *buf, int maxsize);

@@ -313,3 +313,10 @@ int api_fdelete(const char *fname) {
     return r;
 }
 
+/* ─── 31: getcwd — EBX=buf, ECX=maxsize → EAX = len, -1 on failure ── */
+int api_getcwd(char *buf, int maxsize) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(31), "b"(buf), "c"(maxsize) : "memory");
+    return r;
+}

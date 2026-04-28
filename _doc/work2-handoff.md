@@ -34,10 +34,18 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
   - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 `fs_data_open_path()`/`fs_data_create_path()`/`fs_file_read()`/`fs_file_write()`/`fs_file_truncate()`/`fs_file_unlink()` 추가.
   - [console.c](../harib27f/haribote/console.c)에 `cd`/`pwd`, path-aware `dir`/`touch`/`rm`/`cp`/`mv`/`echo`/`mkfile`, cwd 우선 + root fallback 앱 검색 추가.
   - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img`, `git diff --check` 통과.
+- **Phase 5 (사용자 API + HE2 앱) 코드 작업 완료**:
+  - [console.c](../harib27f/haribote/console.c) syscall `api_fopen`/`api_fopen_w`/`api_fdelete`를 task cwd 기준 path-aware API로 변경하고 `api_getcwd`(edx=31) 추가.
+  - 앱 실행 직전 HE2/HRB task cwd를 부모 콘솔 cwd로 동기화.
+  - [he2/libbxos](../he2/libbxos)에 `api_getcwd()` 및 `bx_getcwd()` wrapper 추가.
+  - legacy [apilib.h](../harib27f/apilib.h), [apilib/api031.nas](../harib27f/apilib/api031.nas), apilib Makefile 갱신.
+  - [harib27f/pwd/pwd.c](../harib27f/pwd/pwd.c) 추가, [CMakeLists.txt](../CMakeLists.txt)에 `pwd.he2` 추가.
+  - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img`, `bxos_fat.py ls build/cmake/data.img:/`에서 `PWD.HE2` 확인, `git diff --check` 통과.
 - 남은 확인: QEMU 콘솔에서 root 한 단계 명령(`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 대화형 회귀 확인.
 - 남은 확인: QEMU 콘솔에서 `resolve /`, `resolve tetris.he2`, `resolve nofile`, 추후 mkdir 이후 `resolve /sub/../x` 같은 대화형 확인.
 - 남은 확인: QEMU 콘솔에서 `mkdir /sub`, `mkdir /sub/inner`, `rmdir /sub` 거부, `rmdir /sub/inner`, `rmdir /sub` 흐름 확인. 호스트 `mount -t msdos`/`ls -laR` 확인도 남음.
 - 남은 확인: QEMU 콘솔에서 `cd /sub`, `pwd`, `touch a.txt`, `dir /sub`, `cp /sub/a.txt b.txt`, `start pwd` cwd 상속 등 Phase 4 시나리오 확인.
+- 남은 확인: QEMU 콘솔에서 `cd /sub`, `pwd.he2`, `echo.he2 hi > a.txt`, `fdel.he2 ../top.txt` 등 Phase 5 syscall 시나리오 확인.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -65,7 +73,7 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 | 2. 경로 파싱 / 해석 | 1d | `fs_resolve_path()` — 절대/상대, `.`/`..`, 8.3 packing. **코드 완료, QEMU 디버그 명령 확인 남음** |
 | 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>`. **코드 완료, QEMU/호스트 마운트 확인 남음** |
 | 4. cwd + 기존 명령 path 화 | 2d | `cd`/`pwd`, `dir`·`cp`·`mv`·`rm`·`touch`·`echo`·`mkfile` 의 path 인자. **코드 완료, QEMU 확인 남음** |
-| 5. 사용자 API + HE2 앱 | 1.5d | path 받는 fopen/fopen_w/fdelete, 신규 `api_getcwd` (edx=31), `pwd.he2` |
+| 5. 사용자 API + HE2 앱 | 1.5d | path 받는 fopen/fopen_w/fdelete, 신규 `api_getcwd` (edx=31), `pwd.he2`. **코드 완료, QEMU 확인 남음** |
 | 6. 호스트 도구 | 1.5d | `bxos_fat.py` path 다단계 + `mkdir`/`rmdir` |
 | 7. 문서 / 마무리 | 0.5d | storage.md / BXOS-COMMANDS.md / README / SETUP-MAC 갱신 |
 
@@ -118,8 +126,8 @@ work2.md §5 가 정본. 강조:
 
 ## 9. 시작 명령
 
-Phase 5 로 들어가면 됨. 다음 PR 단위 제안:
+Phase 6 로 들어가면 됨. 다음 PR 단위 제안:
 
-> "syscall `api_fopen`/`api_fopen_w`/`api_fdelete` 를 cwd 기준 path resolution으로 바꾸고, `api_getcwd`/`pwd.he2` 를 추가한다."
+> "`tools/modern/bxos_fat.py` 에 다단계 path resolution, `mkdir`/`rmdir`, subdir-aware `ls`/`cp`/`rm` 을 추가한다."
 
-QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 5 (사용자 API + HE2 앱) 로 진입한다.
+QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 6 (호스트 도구) 로 진입한다.
