@@ -426,10 +426,16 @@ void cmd_cls(struct CONSOLE *cons)
 
 void cmd_dir(struct CONSOLE *cons, char *cmdline)
 {
-	struct FILEINFO *finfo = (struct FILEINFO *) (ADR_DISKIMG + 0x002600);
+	/* work1 Phase 3: 데이터 드라이브(g_data_mount) 의 루트 디렉터리를 표시. */
+	struct FILEINFO *finfo = fs_data_root();
+	int max = fs_data_root_max();
 	int i, j;
 	char s[30];
-	for (i = 0; i < 224; i++) {
+	if (finfo == 0) {
+		cons_putstr0(cons, "(no data disk mounted)\n\n");
+		return;
+	}
+	for (i = 0; i < max; i++) {
 		if (finfo[i].name[0] == 0x00) {
 			break;
 		}
@@ -625,19 +631,19 @@ static struct FILEINFO *app_find(char *cmdline, char *app_name)
 		return 0;
 	}
 
-	finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+	finfo = fs_data_search(name);
 	if (finfo == 0 && has_dot == 0) {
 		name[i    ] = '.';
 		name[i + 1] = 'H';
 		name[i + 2] = 'E';
 		name[i + 3] = '2';
 		name[i + 4] = 0;
-		finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+		finfo = fs_data_search(name);
 		if (finfo == 0) {
 			name[i + 1] = 'H';
 			name[i + 2] = 'R';
 			name[i + 3] = 'B';
-			finfo = file_search(name, (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+			finfo = fs_data_search(name);
 		}
 	}
 	if (finfo != 0 && app_name != 0) {
@@ -678,7 +684,7 @@ static int app_subsystem(char *cmdline, int *fat)
 		return HE2_SUBSYSTEM_CONSOLE;
 	}
 	appsiz = finfo->size;
-	p = file_loadfile2(finfo->clustno, &appsiz, fat);
+	p = fs_data_loadfile(finfo->clustno, &appsiz);
 	if (p == 0) {
 		return HE2_SUBSYSTEM_CONSOLE;
 	}
@@ -805,7 +811,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 	if (finfo != 0) {
 		/* 파일이 발견되었을 경우 */
 		appsiz = finfo->size;
-		p = file_loadfile2(finfo->clustno, &appsiz, fat);
+		p = fs_data_loadfile(finfo->clustno, &appsiz);
 		if (p == 0) {
 			cons_putstr0(cons, "out of memory.\n\n");
 			return 1;
@@ -1035,13 +1041,13 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		fh = &task->fhandle[i];
 		reg[7] = 0;
 		if (i < 8) {
-			finfo = file_search((char *) ebx + ds_base,
-					(struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+			/* work1 Phase 3: 사용자 앱의 파일 열기도 데이터 드라이브로. */
+			finfo = fs_data_search((char *) ebx + ds_base);
 			if (finfo != 0) {
 				reg[7] = (int) fh;
 				fh->size = finfo->size;
 				fh->pos = 0;
-				fh->buf = file_loadfile2(finfo->clustno, &fh->size, task->fat);
+				fh->buf = fs_data_loadfile(finfo->clustno, &fh->size);
 			}
 		}
 	} else if (edx == 22) {

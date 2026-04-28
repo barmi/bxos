@@ -92,7 +92,7 @@ LDFLAGS = -m elf_i386 -nostdlib -static -T $(TOOLS_DIR)/linker-bootpack.lds
 # ─── 소스 ────────────────────────────────────────────────────────────
 # 원본 harib27f/haribote/Makefile 의 OBJS_BOOTPACK 과 같은 커널 소스만 사용한다.
 KERNEL_C_NAMES := bootpack graphic dsctbl int fifo keyboard mouse memory sheet timer \
-                  mtask window console file tek ata
+                  mtask window console file tek ata fs_fat
 KERNEL_C_SRCS := $(addprefix $(KSRC)/,$(addsuffix .c,$(KERNEL_C_NAMES)))
 KERNEL_OBJS   := $(addprefix $(BUILD)/,$(addsuffix .o,$(KERNEL_C_NAMES))) \
                  $(BUILD)/naskfunc.o $(BUILD)/hankaku.o \

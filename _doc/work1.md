@@ -71,18 +71,25 @@
 - ☑ CMake/Makefile.modern 의 `KERNEL_C_NAMES` 에 `ata` 등록
 - ☑ QEMU 부팅 후 `disk` 명령 실행 → `QEMU HARDDISK / sectors=65536 / size=32MB / LBA0 oem='HARIBOTE' sig=aa55` 정상 출력 확인
 
-### Phase 3 — FAT16 읽기 경로 통합 (2일)
-**목표**: 기존 메모리 이미지(`ADR_DISKIMG`) 의존을 떼고, **모든 파일 읽기를 ATA를 통한 FAT16 드라이버로** 일원화한다.
-
-- ☐ `harib27f/haribote/fs_fat.c` 신설 (또는 [file.c](harib27f/haribote/file.c) 리팩터링):
-  - 마운트 구조체 (BPB 캐시, FAT 캐시, 루트 디렉터리 위치)
-  - `fs_open(path)` / `fs_read(fh, buf, n)` / `fs_close(fh)` / `fs_readdir()`
-  - FAT12/FAT16 구분은 BPB 클러스터 수로 자동.
-- ☐ 기존 `file_search()` / `file_loadfile()` 호출부를 새 API로 교체. 두 가지 마운트 동시 지원:
-  - `A:` = 부팅 FDD (기존 메모리 이미지, 당분간 유지)
-  - `C:` = HDD (ATA, FAT16)
-- ☐ 콘솔 명령에 드라이브 prefix 도입 (기본은 `C:`, 부팅 시 자동 마운트).
-- ☐ `dir`, `type`, 앱 실행 (`run_app`) 모두 새 경로로 동작 확인.
+### Phase 3 — FAT16 읽기 경로 통합 (완료 — 2026-04-28)
+- ☑ [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) 신설:
+  - `struct FS_MOUNT` (BPB 파싱 결과 + FAT/루트 캐시)
+  - `fs_mount_data(drive)` — BPB 한 섹터 read → FAT 32KB + 루트 16KB 캐시
+  - `fs_data_search(name)` — 기존 file_search 위에 마운트된 루트 디렉터리 사용
+  - `fs_data_loadfile(clustno, *psize)` — FAT16/FAT12 체인 추적 + ATA cluster read + tek 압축 풀기
+- ☑ 기존 callsite 교체 ([console.c](../harib27f/haribote/console.c)):
+  - `cmd_dir` → `fs_data_root()` / `fs_data_root_max()` 사용
+  - `app_find` 의 file_search 3곳 → `fs_data_search`
+  - `app_subsystem` / `cmd_app` 의 file_loadfile2 → `fs_data_loadfile`
+  - syscall `api_fopen` (edx=21) 의 file_search/file_loadfile2 → 같이 교체
+- ☑ [bootpack.c](../harib27f/haribote/bootpack.c) `HariMain`: memman 초기화 직후 `fs_mount_data(0)` 호출 (master = data.img)
+- ☑ 부팅 FDD nihongo.fnt 로딩은 그대로 유지 (IPL 이 메모리 로드한 FAT12 이미지 사용)
+- ☑ CMake/Makefile.modern 의 `KERNEL_C_NAMES` 에 `fs_fat` 등록
+- ☑ 검증 (QEMU 화면 캡처):
+  - `dir` → data.img 의 28개 파일(.he2 20 + 데모 데이터 8) 정상 표시
+  - `winhelo` (974B, 1 cluster) → "hello" 창 정상 실행
+  - `tetris` (4488B, 3 cluster) → 게임 보드 + SCORE/LEVEL/NEXT 정상 그려짐 (멀티-클러스터 체인 OK)
+  - `type euc.txt` (syscall fopen 경로) → 파일 내용 정확히 출력
 
 ### Phase 4 — FAT16 쓰기 경로 (3~4일)
 **목표**: 파일 생성/추가/삭제. 이번 작업의 핵심.

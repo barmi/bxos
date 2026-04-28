@@ -89,6 +89,11 @@ void HariMain(void)
 	memman_free(memman, 0x00001000, 0x0009e000); /* 0x00001000 - 0x0009efff */
 	memman_free(memman, 0x00400000, memtotal - 0x00400000);
 
+	/* 데이터 드라이브 마운트 (work1 Phase 3). master(0) 의 BPB 를 읽고
+	 * FAT/루트디렉터리를 메모리에 캐시한다. 이후 콘솔의 `dir` 과 앱 실행은
+	 * 이 마운트(g_data_mount)를 통한다. memman 초기화 직후에 호출. */
+	fs_mount_data(0);
+
 	init_palette();
 	shtctl = shtctl_init(memman, binfo->vram, binfo->scrnx, binfo->scrny);
 	task_a = task_init(memman);

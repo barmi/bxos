@@ -406,6 +406,33 @@ void file_loadfile(int clustno, int size, char *buf, int *fat, char *img);
 struct FILEINFO *file_search(char *name, struct FILEINFO *finfo, int max);
 char *file_loadfile2(int clustno, int *psize, int *fat);
 
+/* fs_fat.c — FAT12/FAT16 마운트 + ATA 기반 read (work1 Phase 3).
+ * 데이터 드라이브(=ATA master, FAT16) 한 개만 다룬다. */
+struct FS_MOUNT {
+	int drive;
+	int fs_type;                  /* 12 or 16 */
+	unsigned int total_sectors;
+	int sectors_per_cluster;
+	int reserved_sectors;
+	int num_fats;
+	int sectors_per_fat;
+	int root_entries;
+	int root_sectors;
+	unsigned int cluster_count;
+	unsigned int fat_lba;
+	unsigned int root_lba;
+	unsigned int data_lba;
+	unsigned char *fat_cache;
+	struct FILEINFO *root_cache;
+};
+extern struct FS_MOUNT g_data_mount;
+extern int g_data_mounted;
+int fs_mount_data(int drive);
+struct FILEINFO *fs_data_root(void);
+int fs_data_root_max(void);
+struct FILEINFO *fs_data_search(char *name);
+char *fs_data_loadfile(int clustno, int *psize);
+
 
 /* tek.c */
 int tek_getsize(unsigned char *p);
