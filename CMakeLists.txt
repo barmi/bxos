@@ -8,11 +8,9 @@
 #   cmake --build build/cmake --target kernel
 #   cmake --build build/cmake --target run  # qemu 부팅
 #
-# 동작은 tools/modern/Makefile.modern 와 동일하다:
+# 동작:
 #   - 커널(haribote.sys) 은 NASM + i686-elf-gcc + Python 으로 새로 빌드.
-#   - 앱(.hrb) 은 harib27f/<app>/<app>.hrb 의 기존 빌드본을 그대로 IMG 에 포함.
-#
-# build-modern.sh / Makefile.modern 도 그대로 둔다 (둘 다 사용 가능).
+#   - 앱은 HE2(.he2) 포맷만 IMG 에 포함한다. 기존 .hrb 는 더 이상 포함하지 않는다.
 
 cmake_minimum_required(VERSION 3.20)
 
@@ -230,24 +228,11 @@ add_custom_command(
 )
 
 # ─── 11) 앱 등록 (HariboteApp.cmake) ─────────────────────────────────
+# 이전에는 harib27f/<app>/<app>.hrb 를 그대로 IMG 에 포함했지만,
+# 이제는 HE2 빌드(아래 11b)만 사용한다. HariboteApp.cmake 의
+# bxos_register_prebuilt_app / bxos_add_haribote_app 헬퍼는 호환성을 위해
+# 그대로 두지만, 기본 빌드에서는 호출하지 않는다.
 include(cmake/HariboteApp.cmake)
-
-# 기본: harib27f 의 모든 prebuilt .hrb 를 IMG 에 포함.
-# (build-modern.sh 가 wildcard 로 하던 것과 동일.)
-set(BXOS_APPS_PREBUILT
-    a hello3 hello4 hello5 winhelo winhelo2 winhelo3
-    star1 stars stars2 lines walk noodle beepdown
-    color color2 sosu sosu2 sosu3 type iroha chklang
-    notrec bball invader calc tview mmlplay gview
-)
-foreach(_app IN LISTS BXOS_APPS_PREBUILT)
-    bxos_register_prebuilt_app(${_app})
-endforeach()
-
-# (참고) 앱을 CMake 로 직접 빌드하고 싶을 때 — 현재는 미완성이지만 hook 은 준비됨:
-#   bxos_build_apilib()
-#   bxos_add_haribote_app(NAME a SOURCES a.c STACK 1k MALLOC 0k)
-#   bxos_register_built_app(a)
 
 # ─── 11b) HE2 (Haribote Executable v2) 앱 빌드 ──────────────────────
 #
@@ -344,8 +329,9 @@ endif()
 
 # ─── 14) info ────────────────────────────────────────────────────────
 # 리스트 변수는 ; 로 join 해서 한 인자로 묶어야 셸에 단어로 쪼개지지 않음.
-string(REPLACE ";" " " _BXOS_KC_PRINT  "${BXOS_KERNEL_C_NAMES}")
-string(REPLACE ";" " " _BXOS_APP_PRINT "${BXOS_APPS_PREBUILT}")
+set(_BXOS_HE2_APPS_ALL ${BXOS_HE2_APPS_BASIC} ${BXOS_HE2_APPS_WINDOW})
+string(REPLACE ";" " " _BXOS_KC_PRINT      "${BXOS_KERNEL_C_NAMES}")
+string(REPLACE ";" " " _BXOS_HE2_APP_PRINT "${_BXOS_HE2_APPS_ALL}")
 add_custom_target(info
     COMMAND ${CMAKE_COMMAND} -E echo "PROJECT_DIR = ${CMAKE_SOURCE_DIR}"
     COMMAND ${CMAKE_COMMAND} -E echo "BUILD       = ${BXOS_BUILD}"
@@ -357,15 +343,15 @@ add_custom_target(info
     COMMAND ${CMAKE_COMMAND} -E echo "PYTHON      = ${BXOS_PYTHON}"
     COMMAND ${CMAKE_COMMAND} -E echo "C_FLAGS     = ${CMAKE_C_FLAGS}"
     COMMAND ${CMAKE_COMMAND} -E echo "Kernel C    = ${_BXOS_KC_PRINT}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Apps        = ${_BXOS_APP_PRINT}"
+    COMMAND ${CMAKE_COMMAND} -E echo "HE2 Apps    = ${_BXOS_HE2_APP_PRINT}"
 )
 
 message(STATUS "BxOS configured:")
-message(STATUS "  CC      = ${CMAKE_C_COMPILER}")
-message(STATUS "  LD      = ${BXOS_LD}")
-message(STATUS "  NASM    = ${BXOS_NASM}")
-message(STATUS "  PYTHON  = ${BXOS_PYTHON}")
-message(STATUS "  Apps    = ${BXOS_APPS_PREBUILT}")
+message(STATUS "  CC       = ${CMAKE_C_COMPILER}")
+message(STATUS "  LD       = ${BXOS_LD}")
+message(STATUS "  NASM     = ${BXOS_NASM}")
+message(STATUS "  PYTHON   = ${BXOS_PYTHON}")
+message(STATUS "  HE2 Apps = ${_BXOS_HE2_APPS_ALL}")
 
 if(CMAKE_C_COMPILER MATCHES "/usr/bin/cc" OR CMAKE_C_COMPILER MATCHES "/usr/bin/gcc")
     if(APPLE)
