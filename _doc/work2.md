@@ -49,15 +49,15 @@
 ### Phase 1 — 디렉터리 추상화 (일반 directory I/O) (2일)
 **목표**: 기존 root 한정 함수들이 root + 일반 cluster chain 위 디렉터리 둘 다 다루도록 재구성. 외부 동작은 회귀 0.
 
-- ☐ `struct DIR_ITER` 도입 — `dir_clus` (0 = root), `cur_lba`, `cur_offset_in_sector`, `cur_cluster_offset`. root 는 `root_lba..root_lba+root_sectors`, subdir 는 cluster chain.
-- ☐ `dir_iter_open(clus)`, `dir_iter_next(*entry, *slot_addr)`, `dir_iter_close()`.
-- ☐ `dir_find(parent_clus, name83[11], *finfo, *slot_addr)` — 이름으로 entry 찾기. root + subdir 공용.
-- ☐ `dir_alloc_slot(parent_clus, *slot_addr)` — 빈 슬롯 찾기 + (subdir 한정) 클러스터 자동 확장.
-- ☐ `dir_write_slot(slot_addr, entry)` — 해당 LBA 섹터 read-modify-write + ATA flush. FAT1/FAT2 동기화 패턴과 동일한 트랜잭션.
-- ☐ 기존 `fs_data_search`, `fs_data_create`, `fs_data_unlink`, `sync_root_entry` 등을 위 추상화 위로 옮김. 외부 시그니처는 유지.
+- ☑ `struct DIR_ITER` 도입 — `dir_clus` (0 = root), `cur_lba`, `cur_offset_in_sector`, `cur_cluster_offset`. root 는 `root_lba..root_lba+root_sectors`, subdir 는 cluster chain.
+- ☑ `dir_iter_open(clus)`, `dir_iter_next(*entry, *slot_addr)`, `dir_iter_close()`.
+- ☑ `dir_find(parent_clus, name83[11], *finfo, *slot_addr)` — 이름으로 entry 찾기. root + subdir 공용.
+- ☑ `dir_alloc_slot(parent_clus, *slot_addr)` — 빈 슬롯 찾기 + (subdir 한정) 클러스터 자동 확장.
+- ☑ `dir_write_slot(slot_addr, entry)` — 해당 LBA 섹터 read-modify-write + ATA flush. FAT1/FAT2 동기화 패턴과 동일한 트랜잭션.
+- ☑ 기존 `fs_data_search`, `fs_data_create`, `fs_data_unlink`, `sync_root_entry` 등을 위 추상화 위로 옮김. 외부 시그니처는 유지.
 - ☐ 회귀 검증:
-  - 기존 콘솔 명령 (`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 모두 root 한 단계에서 work1 시점과 같은 결과.
-  - `fsck_msdos -n` 통과.
+  - ☐ 기존 콘솔 명령 (`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 모두 root 한 단계에서 work1 시점과 같은 결과. (QEMU 대화형 확인 필요)
+  - ☑ `fsck_msdos -n` 통과.
 
 ### Phase 2 — 경로 파싱 / 해석 (1일)
 - ☐ `fs_resolve_path(start_clus, path, *parent_clus, leaf_name83[11], *leaf_finfo)` 구현:

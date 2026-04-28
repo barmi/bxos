@@ -433,11 +433,34 @@ struct FS_MOUNT {
 	unsigned char *fat_cache;
 	struct FILEINFO *root_cache;
 };
+struct DIR_SLOT {
+	unsigned int lba;
+	unsigned short offset;
+	struct FILEINFO *cache_entry;
+};
+struct DIR_ITER {
+	unsigned int dir_clus;        /* 0 = root directory */
+	unsigned int cur_lba;
+	unsigned int cur_offset_in_sector;
+	unsigned int cur_cluster_offset;
+	unsigned int cur_clus;
+	unsigned int entry_index;
+	unsigned char sector[512];
+	int sector_loaded;
+	int at_end;
+};
 extern struct FS_MOUNT g_data_mount;
 extern int g_data_mounted;
 int fs_mount_data(int drive);
 struct FILEINFO *fs_data_root(void);
 int fs_data_root_max(void);
+int dir_iter_open(struct DIR_ITER *it, unsigned int dir_clus);
+int dir_iter_next(struct DIR_ITER *it, struct FILEINFO *entry, struct DIR_SLOT *slot_addr);
+void dir_iter_close(struct DIR_ITER *it);
+int dir_find(unsigned int parent_clus, unsigned char name83[11],
+		struct FILEINFO *finfo, struct DIR_SLOT *slot_addr);
+int dir_alloc_slot(unsigned int parent_clus, struct DIR_SLOT *slot_addr);
+int dir_write_slot(struct DIR_SLOT *slot_addr, struct FILEINFO *entry);
 struct FILEINFO *fs_data_search(char *name);
 char *fs_data_loadfile(int clustno, int *psize);
 int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n);

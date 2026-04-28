@@ -13,7 +13,12 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 ## 2. 현재 위치 (2026-04-28 기준)
 
 - **Phase 0 (계획 수립) 완료**, 본 문서 + [work2.md](work2.md) 작성됨.
-- 코드 변경은 아직 없음. 다음에 시작할 것은 **Phase 1 — 디렉터리 추상화**.
+- **Phase 1 (디렉터리 추상화) 코드 작업 완료**:
+  - [bootpack.h](../harib27f/haribote/bootpack.h)에 `struct DIR_SLOT`, `struct DIR_ITER`, `dir_*` 프로토타입 추가.
+  - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 `dir_iter_open`/`dir_iter_next`/`dir_iter_close`, `dir_find`, `dir_alloc_slot`, `dir_write_slot` 구현.
+  - 기존 `fs_data_search`, `fs_data_create`, `fs_data_write`, `fs_data_truncate`, `fs_data_unlink`는 root 전용 직접 슬롯 갱신 대신 directory slot 추상화를 경유.
+  - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img`, `bxos_fat.py ls build/cmake/data.img:/` 통과.
+- 남은 확인: QEMU 콘솔에서 root 한 단계 명령(`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 대화형 회귀 확인.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -37,7 +42,7 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 | Phase | 분량 | 핵심 산출물 |
 |---|---|---|
 | 0. 결정 / 인터페이스 | 1d | 본 문서 + work2.md (☑ 완료) |
-| 1. 디렉터리 추상화 | 2d | `struct DIR_ITER` + `dir_*` 함수, root/subdir 공용 코드 경로. **외부 동작 회귀 0**. |
+| 1. 디렉터리 추상화 | 2d | `struct DIR_ITER` + `dir_*` 함수, root/subdir 공용 코드 경로. **코드 완료, QEMU 대화형 회귀 확인 남음**. |
 | 2. 경로 파싱 / 해석 | 1d | `fs_resolve_path()` — 절대/상대, `.`/`..`, 8.3 packing |
 | 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>` |
 | 4. cwd + 기존 명령 path 화 | 2d | `cd`/`pwd`, `dir`·`cp`·`mv`·`rm`·`touch`·`echo`·`mkfile` 의 path 인자 |
@@ -94,8 +99,8 @@ work2.md §5 가 정본. 강조:
 
 ## 9. 시작 명령
 
-Phase 1 부터 들어가면 됨. 첫 PR 단위 제안:
+Phase 2 로 들어가면 됨. 다음 PR 단위 제안:
 
-> "fs_fat.c 의 root 한정 디렉터리 함수들을 일반 디렉터리(클러스터 체인) 도 다룰 수 있는 추상화 위로 옮기고, 외부 시그니처는 유지하면서 회귀 0 인 상태에서 끊는다."
+> "`fs_resolve_path()` 를 추가해 절대/상대 path, `.`/`..`, 컴포넌트별 8.3 packing 을 처리하고, 임시 디버그 명령으로 해석 결과를 확인한다."
 
-이 PR 이 통과하면 Phase 2~3 (resolve + mkdir/rmdir) 로 진입.
+QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 2~3 (resolve + mkdir/rmdir) 로 진입한다.

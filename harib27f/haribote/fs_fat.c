@@ -14,6 +14,12 @@
 struct FS_MOUNT g_data_mount;
 int g_data_mounted = 0;
 
+static int pack_83_name(char *name, unsigned char out[11]);
+static int sync_finfo_entry(struct FS_MOUNT *m, struct FILEINFO *finfo);
+static int zero_cluster(struct FS_MOUNT *m, unsigned int clus);
+static unsigned int find_free_cluster(struct FS_MOUNT *m);
+static unsigned int find_tail_cluster(struct FS_MOUNT *m, unsigned int clus);
+
 /* BPB(첫 섹터) 한 장만 읽어 마운트 정보를 채운다. */
 static int read_bpb(int drive, struct FS_MOUNT *m)
 {
@@ -114,8 +120,24 @@ int fs_data_root_max(void)
 
 struct FILEINFO *fs_data_search(char *name)
 {
+	static struct FILEINFO found;
+	unsigned char name83[11];
+	struct DIR_SLOT slot;
+
 	if (!g_data_mounted) return 0;
-	return file_search(name, g_data_mount.root_cache, g_data_mount.root_entries);
+	if (pack_83_name(name, name83) != 0) {
+		return 0;
+	}
+	if (dir_find(0, name83, &found, &slot) != 0) {
+		return 0;
+	}
+	if ((found.type & 0x18) != 0) {
+		return 0;
+	}
+	if (slot.cache_entry != 0) {
+		return slot.cache_entry;
+	}
+	return &found;
 }
 
 /* FAT 한 엔트리 읽기. FAT12 는 12bit packed, FAT16 은 16bit LE. */
@@ -188,20 +210,191 @@ static int sync_fat_entry(struct FS_MOUNT *m, unsigned int clus)
 	return 0;
 }
 
-static int sync_root_entry(struct FS_MOUNT *m, struct FILEINFO *finfo)
+int dir_iter_open(struct DIR_ITER *it, unsigned int dir_clus)
 {
-	unsigned int idx, sec;
-	unsigned char *root = (unsigned char *) m->root_cache;
+	struct FS_MOUNT *m = &g_data_mount;
 
+	if (!g_data_mounted || it == 0) {
+		return -1;
+	}
+	if (dir_clus != 0 && !valid_data_cluster(m, dir_clus)) {
+		return -1;
+	}
+	it->dir_clus = dir_clus;
+	it->cur_lba = (dir_clus == 0) ? m->root_lba : cluster_lba(m, dir_clus);
+	it->cur_offset_in_sector = 0;
+	it->cur_cluster_offset = 0;
+	it->cur_clus = dir_clus;
+	it->entry_index = 0;
+	it->sector_loaded = 0;
+	it->at_end = 0;
+	return 0;
+}
+
+int dir_iter_next(struct DIR_ITER *it, struct FILEINFO *entry, struct DIR_SLOT *slot_addr)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	struct FILEINFO *src;
+	unsigned int next;
+
+	if (!g_data_mounted || it == 0 || entry == 0 || slot_addr == 0 || it->at_end) {
+		return 0;
+	}
+	if (it->dir_clus == 0) {
+		if (it->entry_index >= (unsigned int) m->root_entries) {
+			it->at_end = 1;
+			return 0;
+		}
+		src = &m->root_cache[it->entry_index];
+		*entry = *src;
+		slot_addr->lba = m->root_lba + (it->entry_index * 32) / 512;
+		slot_addr->offset = (unsigned short) ((it->entry_index * 32) % 512);
+		slot_addr->cache_entry = src;
+		it->cur_lba = slot_addr->lba;
+		it->cur_offset_in_sector = slot_addr->offset;
+		it->entry_index++;
+		return 1;
+	}
+
+	if (!valid_data_cluster(m, it->cur_clus)) {
+		return -1;
+	}
+	if (!it->sector_loaded) {
+		if (ata_read_sectors(m->drive, it->cur_lba, 1, it->sector) != 1) {
+			return -1;
+		}
+		it->sector_loaded = 1;
+	}
+	src = (struct FILEINFO *) (it->sector + it->cur_offset_in_sector);
+	*entry = *src;
+	slot_addr->lba = it->cur_lba;
+	slot_addr->offset = (unsigned short) it->cur_offset_in_sector;
+	slot_addr->cache_entry = 0;
+
+	it->cur_offset_in_sector += 32;
+	it->entry_index++;
+	if (it->cur_offset_in_sector >= 512) {
+		it->cur_offset_in_sector = 0;
+		it->sector_loaded = 0;
+		it->cur_lba++;
+		it->cur_cluster_offset++;
+		if (it->cur_cluster_offset >= (unsigned int) m->sectors_per_cluster) {
+			next = fat_get(m, it->cur_clus);
+			if (is_eoc(m, next)) {
+				it->at_end = 1;
+			} else if (!valid_data_cluster(m, next)) {
+				return -1;
+			} else {
+				it->cur_clus = next;
+				it->cur_lba = cluster_lba(m, next);
+				it->cur_cluster_offset = 0;
+			}
+		}
+	}
+	return 1;
+}
+
+void dir_iter_close(struct DIR_ITER *it)
+{
+	if (it != 0) {
+		it->at_end = 1;
+	}
+	return;
+}
+
+int dir_find(unsigned int parent_clus, unsigned char name83[11],
+		struct FILEINFO *finfo, struct DIR_SLOT *slot_addr)
+{
+	struct DIR_ITER it;
+	struct FILEINFO cur;
+	struct DIR_SLOT slot;
+	unsigned char *entry;
+	int i, r;
+
+	if (name83 == 0 || finfo == 0 || slot_addr == 0) {
+		return -1;
+	}
+	if (dir_iter_open(&it, parent_clus) != 0) {
+		return -1;
+	}
+	for (;;) {
+		r = dir_iter_next(&it, &cur, &slot);
+		if (r <= 0) {
+			break;
+		}
+		if (cur.name[0] == 0x00) {
+			break;
+		}
+		if (cur.name[0] == 0xe5 || (cur.type & 0x08) != 0) {
+			continue;
+		}
+		entry = (unsigned char *) &cur;
+		for (i = 0; i < 11; i++) {
+			if (entry[i] != name83[i]) {
+				goto next_entry;
+			}
+		}
+		*finfo = cur;
+		*slot_addr = slot;
+		dir_iter_close(&it);
+		return 0;
+next_entry:
+		;
+	}
+	dir_iter_close(&it);
+	return -1;
+}
+
+int dir_write_slot(struct DIR_SLOT *slot_addr, struct FILEINFO *entry)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned char secbuf[512];
+	struct FILEINFO *dst;
+
+	if (!g_data_mounted || slot_addr == 0 || entry == 0 ||
+			slot_addr->offset > 512 - 32) {
+		return -1;
+	}
+	if (slot_addr->cache_entry != 0) {
+		*slot_addr->cache_entry = *entry;
+	}
+	if (ata_read_sectors(m->drive, slot_addr->lba, 1, secbuf) != 1) {
+		return -1;
+	}
+	dst = (struct FILEINFO *) (secbuf + slot_addr->offset);
+	*dst = *entry;
+	if (ata_write_sectors(m->drive, slot_addr->lba, 1, secbuf) != 1) {
+		return -1;
+	}
+	return 0;
+}
+
+static int dir_slot_from_finfo(struct FS_MOUNT *m, struct FILEINFO *finfo,
+		struct DIR_SLOT *slot_addr)
+{
+	unsigned int idx;
+
+	if (m == 0 || finfo == 0 || slot_addr == 0) {
+		return -1;
+	}
 	idx = finfo - m->root_cache;
 	if (idx >= (unsigned int) m->root_entries) {
 		return -1;
 	}
-	sec = (idx * 32) / 512;
-	if (ata_write_sectors(m->drive, m->root_lba + sec, 1, root + sec * 512) != 1) {
+	slot_addr->lba = m->root_lba + (idx * 32) / 512;
+	slot_addr->offset = (unsigned short) ((idx * 32) % 512);
+	slot_addr->cache_entry = finfo;
+	return 0;
+}
+
+static int sync_finfo_entry(struct FS_MOUNT *m, struct FILEINFO *finfo)
+{
+	struct DIR_SLOT slot;
+
+	if (dir_slot_from_finfo(m, finfo, &slot) != 0) {
 		return -1;
 	}
-	return 0;
+	return dir_write_slot(&slot, finfo);
 }
 
 static int pack_83_name(char *name, unsigned char out[11])
@@ -279,6 +472,79 @@ static unsigned int find_free_cluster(struct FS_MOUNT *m)
 			return clus;
 		}
 	}
+	return 0;
+}
+
+static unsigned int append_dir_cluster(struct FS_MOUNT *m, unsigned int dir_clus)
+{
+	unsigned int newclus, tail;
+
+	if (!valid_data_cluster(m, dir_clus)) {
+		return 0;
+	}
+	newclus = find_free_cluster(m);
+	if (newclus == 0) {
+		return 0;
+	}
+	if (zero_cluster(m, newclus) != 0) {
+		return 0;
+	}
+	fat_set(m, newclus, eoc_value(m));
+	if (sync_fat_entry(m, newclus) != 0) {
+		return 0;
+	}
+	tail = find_tail_cluster(m, dir_clus);
+	if (tail == 0) {
+		return 0;
+	}
+	fat_set(m, tail, newclus);
+	if (sync_fat_entry(m, tail) != 0) {
+		return 0;
+	}
+	return newclus;
+}
+
+int dir_alloc_slot(unsigned int parent_clus, struct DIR_SLOT *slot_addr)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	struct DIR_ITER it;
+	struct FILEINFO cur;
+	struct DIR_SLOT slot;
+	unsigned int newclus;
+	int r;
+
+	if (!g_data_mounted || m->fs_type != 16 || slot_addr == 0) {
+		return -1;
+	}
+	if (dir_iter_open(&it, parent_clus) != 0) {
+		return -1;
+	}
+	for (;;) {
+		r = dir_iter_next(&it, &cur, &slot);
+		if (r < 0) {
+			dir_iter_close(&it);
+			return -1;
+		}
+		if (r == 0) {
+			break;
+		}
+		if (cur.name[0] == 0x00 || cur.name[0] == 0xe5) {
+			*slot_addr = slot;
+			dir_iter_close(&it);
+			return 0;
+		}
+	}
+	dir_iter_close(&it);
+	if (parent_clus == 0) {
+		return -1;
+	}
+	newclus = append_dir_cluster(m, parent_clus);
+	if (newclus == 0) {
+		return -1;
+	}
+	slot_addr->lba = cluster_lba(m, newclus);
+	slot_addr->offset = 0;
+	slot_addr->cache_entry = 0;
 	return 0;
 }
 
@@ -476,41 +742,36 @@ int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n)
 
 int fs_data_create(char *name)
 {
-	struct FS_MOUNT *m = &g_data_mount;
-	struct FILEINFO *slot = 0;
+	struct FILEINFO entry;
+	struct FILEINFO existing;
+	struct DIR_SLOT slot;
 	unsigned char s[11];
-	unsigned char *entry;
-	int i, j;
+	unsigned char *raw;
+	int j;
 
-	if (!g_data_mounted || m->fs_type != 16) {
+	if (!g_data_mounted || g_data_mount.fs_type != 16) {
 		return -1;
 	}
 	if (pack_83_name(name, s) != 0) {
 		return -1;
 	}
-	if (file_search(name, m->root_cache, m->root_entries) != 0) {
+	if (dir_find(0, s, &existing, &slot) == 0) {
 		return -2;
 	}
-	for (i = 0; i < m->root_entries; i++) {
-		if (m->root_cache[i].name[0] == 0x00 || m->root_cache[i].name[0] == 0xe5) {
-			slot = &m->root_cache[i];
-			break;
-		}
-	}
-	if (slot == 0) {
+	if (dir_alloc_slot(0, &slot) != 0) {
 		return -3;
 	}
 
-	entry = (unsigned char *) slot;
+	raw = (unsigned char *) &entry;
 	for (j = 0; j < 32; j++) {
-		entry[j] = 0;
+		raw[j] = 0;
 	}
-	for (j = 0; j < 8; j++) slot->name[j] = s[j];
-	for (j = 0; j < 3; j++) slot->ext[j]  = s[8 + j];
-	slot->type = 0x20;	/* archive */
-	slot->clustno = 0;
-	slot->size = 0;
-	if (sync_root_entry(m, slot) != 0) {
+	for (j = 0; j < 8; j++) entry.name[j] = s[j];
+	for (j = 0; j < 3; j++) entry.ext[j]  = s[8 + j];
+	entry.type = 0x20;	/* archive */
+	entry.clustno = 0;
+	entry.size = 0;
+	if (dir_write_slot(&slot, &entry) != 0) {
 		return -4;
 	}
 	return 0;
@@ -562,7 +823,7 @@ int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)
 	if ((unsigned int) (pos + n) > finfo->size) {
 		finfo->size = pos + n;
 	}
-	if (sync_root_entry(m, finfo) != 0) {
+	if (sync_finfo_entry(m, finfo) != 0) {
 		return -1;
 	}
 	return done;
@@ -585,7 +846,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 	}
 	if (finfo->clustno == 0) {
 		finfo->size = 0;
-		return sync_root_entry(m, finfo);
+		return sync_finfo_entry(m, finfo);
 	}
 
 	cluster_bytes = m->sectors_per_cluster * 512;
@@ -593,7 +854,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 		clus = finfo->clustno;
 		finfo->clustno = 0;
 		finfo->size = 0;
-		if (sync_root_entry(m, finfo) != 0) {
+		if (sync_finfo_entry(m, finfo) != 0) {
 			return -1;
 		}
 		while (valid_data_cluster(m, clus)) {
@@ -624,7 +885,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 		return -1;
 	}
 	finfo->size = size;
-	if (sync_root_entry(m, finfo) != 0) {
+	if (sync_finfo_entry(m, finfo) != 0) {
 		return -1;
 	}
 	while (valid_data_cluster(m, next)) {
@@ -653,7 +914,7 @@ int fs_data_unlink(struct FILEINFO *finfo)
 	finfo->name[0] = 0xe5;
 	finfo->clustno = 0;
 	finfo->size = 0;
-	if (sync_root_entry(m, finfo) != 0) {
+	if (sync_finfo_entry(m, finfo) != 0) {
 		return -1;
 	}
 	while (valid_data_cluster(m, clus)) {
