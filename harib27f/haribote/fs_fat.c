@@ -21,6 +21,16 @@ static unsigned int find_free_cluster(struct FS_MOUNT *m);
 static unsigned int find_tail_cluster(struct FS_MOUNT *m, unsigned int clus);
 static int dotdot_cluster(unsigned int dir_clus, unsigned int *parent_clus);
 static int valid_data_cluster(const struct FS_MOUNT *m, unsigned int clus);
+static unsigned int eoc_value(const struct FS_MOUNT *m);
+static void fat_set(struct FS_MOUNT *m, unsigned int clus, unsigned int val);
+static int sync_fat_entry(struct FS_MOUNT *m, unsigned int clus);
+static int write_cluster(struct FS_MOUNT *m, unsigned int clus, const void *buf);
+static void clear_entry(struct FILEINFO *entry);
+static void set_name83(struct FILEINFO *entry, unsigned char name83[11]);
+static int init_dir_cluster(struct FS_MOUNT *m, unsigned int dir_clus,
+		unsigned int parent_clus);
+static int dir_is_empty(unsigned int dir_clus);
+static int free_cluster_chain(struct FS_MOUNT *m, unsigned int clus);
 
 /* BPB(첫 섹터) 한 장만 읽어 마운트 정보를 채운다. */
 static int read_bpb(int drive, struct FS_MOUNT *m)
@@ -153,6 +163,64 @@ static int has_more_components(char *p)
 	return *p != 0;
 }
 
+static void clear_entry(struct FILEINFO *entry)
+{
+	unsigned char *p = (unsigned char *) entry;
+	int i;
+	for (i = 0; i < 32; i++) {
+		p[i] = 0;
+	}
+	return;
+}
+
+static void set_name83(struct FILEINFO *entry, unsigned char name83[11])
+{
+	int i;
+	for (i = 0; i < 8; i++) {
+		entry->name[i] = name83[i];
+	}
+	for (i = 0; i < 3; i++) {
+		entry->ext[i] = name83[8 + i];
+	}
+	return;
+}
+
+static int init_dir_cluster(struct FS_MOUNT *m, unsigned int dir_clus,
+		unsigned int parent_clus)
+{
+	unsigned char buf[8 * 512];
+	struct FILEINFO *entry = (struct FILEINFO *) buf;
+	int bytes, i;
+
+	if (!valid_data_cluster(m, dir_clus) ||
+			(parent_clus != 0 && !valid_data_cluster(m, parent_clus))) {
+		return -1;
+	}
+	bytes = m->sectors_per_cluster * 512;
+	if (bytes > (int) sizeof buf) {
+		return -1;
+	}
+	for (i = 0; i < bytes; i++) {
+		buf[i] = 0;
+	}
+	clear_entry(&entry[0]);
+	entry[0].name[0] = '.';
+	for (i = 1; i < 8; i++) entry[0].name[i] = ' ';
+	for (i = 0; i < 3; i++) entry[0].ext[i] = ' ';
+	entry[0].type = 0x10;
+	entry[0].clustno = dir_clus;
+
+	clear_entry(&entry[1]);
+	entry[1].name[0] = '.';
+	entry[1].name[1] = '.';
+	for (i = 2; i < 8; i++) entry[1].name[i] = ' ';
+	for (i = 0; i < 3; i++) entry[1].ext[i] = ' ';
+	entry[1].type = 0x10;
+	entry[1].clustno = parent_clus;
+
+	return write_cluster(m, dir_clus, buf);
+}
+
 int fs_resolve_path(unsigned int start_clus, char *path,
 		unsigned int *parent_clus, unsigned char leaf_name83[11],
 		struct FILEINFO *leaf_finfo, struct DIR_SLOT *leaf_slot)
@@ -266,6 +334,101 @@ int fs_resolve_path(unsigned int start_clus, char *path,
 		p = q;
 	}
 	*parent_clus = cur;
+	return 0;
+}
+
+int fs_mkdir(unsigned int start_clus, char *path)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned int parent_clus, newclus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf, entry;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (!g_data_mounted || m->fs_type != 16) {
+		return -1;
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		return r;
+	}
+	if (leaf_name83[0] == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	if (leaf.name[0] != 0) {
+		return -2;
+	}
+	if (dir_alloc_slot(parent_clus, &slot) != 0) {
+		return -3;
+	}
+	newclus = find_free_cluster(m);
+	if (newclus == 0) {
+		return -4;
+	}
+	if (init_dir_cluster(m, newclus, parent_clus) != 0) {
+		return -5;
+	}
+	fat_set(m, newclus, eoc_value(m));
+	if (sync_fat_entry(m, newclus) != 0) {
+		fat_set(m, newclus, 0);
+		return -6;
+	}
+
+	clear_entry(&entry);
+	set_name83(&entry, leaf_name83);
+	entry.type = 0x10;
+	entry.clustno = newclus;
+	entry.size = 0;
+	if (dir_write_slot(&slot, &entry) != 0) {
+		free_cluster_chain(m, newclus);
+		return -7;
+	}
+	return 0;
+}
+
+int fs_rmdir(unsigned int start_clus, char *path)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned int parent_clus, clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (!g_data_mounted || m->fs_type != 16) {
+		return -1;
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		return r;
+	}
+	if (leaf_name83[0] == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	if (leaf.name[0] == 0) {
+		return FS_RESOLVE_NOT_FOUND;
+	}
+	if ((leaf.type & 0x10) == 0) {
+		return FS_RESOLVE_NOT_DIR;
+	}
+	clus = leaf.clustno;
+	if (!valid_data_cluster(m, clus)) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	r = dir_is_empty(clus);
+	if (r <= 0) {
+		return (r == 0) ? -2 : -3;
+	}
+	leaf.name[0] = 0xe5;
+	leaf.clustno = 0;
+	leaf.size = 0;
+	if (dir_write_slot(&slot, &leaf) != 0) {
+		return -4;
+	}
+	if (free_cluster_chain(m, clus) != 0) {
+		return -5;
+	}
 	return 0;
 }
 
@@ -485,6 +648,57 @@ static int dotdot_cluster(unsigned int dir_clus, unsigned int *parent_clus)
 		return -1;
 	}
 	*parent_clus = entry.clustno;
+	return 0;
+}
+
+static int dir_is_empty(unsigned int dir_clus)
+{
+	struct DIR_ITER it;
+	struct FILEINFO entry;
+	struct DIR_SLOT slot;
+	int r, is_dot;
+
+	if (dir_iter_open(&it, dir_clus) != 0) {
+		return -1;
+	}
+	for (;;) {
+		r = dir_iter_next(&it, &entry, &slot);
+		if (r < 0) {
+			dir_iter_close(&it);
+			return -1;
+		}
+		if (r == 0 || entry.name[0] == 0x00) {
+			break;
+		}
+		if (entry.name[0] == 0xe5) {
+			continue;
+		}
+		is_dot = entry.name[0] == '.' &&
+			(entry.name[1] == ' ' || entry.name[1] == '.');
+		if (!is_dot) {
+			dir_iter_close(&it);
+			return 0;
+		}
+	}
+	dir_iter_close(&it);
+	return 1;
+}
+
+static int free_cluster_chain(struct FS_MOUNT *m, unsigned int clus)
+{
+	unsigned int next;
+
+	while (valid_data_cluster(m, clus)) {
+		next = fat_get(m, clus);
+		fat_set(m, clus, 0);
+		if (sync_fat_entry(m, clus) != 0) {
+			return -1;
+		}
+		if (is_eoc(m, next)) {
+			break;
+		}
+		clus = next;
+	}
 	return 0;
 }
 

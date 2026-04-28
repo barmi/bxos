@@ -389,6 +389,10 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_disk(cons);
 	} else if (strncmp(cmdline, "resolve ", 8) == 0 && cons->sht != 0) {
 		cmd_resolve(cons, cmdline);
+	} else if (strncmp(cmdline, "mkdir ", 6) == 0 && cons->sht != 0) {
+		cmd_mkdir(cons, cmdline);
+	} else if (strncmp(cmdline, "rmdir ", 6) == 0 && cons->sht != 0) {
+		cmd_rmdir(cons, cmdline);
 	} else if (strncmp(cmdline, "touch ", 6) == 0 && cons->sht != 0) {
 		cmd_touch(cons, cmdline);
 	} else if (strncmp(cmdline, "rm ", 3) == 0 && cons->sht != 0) {
@@ -726,6 +730,54 @@ void cmd_resolve(struct CONSOLE *cons, char *cmdline)
 	sprintf(s, "found=yes attr=%02x clus=%d size=%d\n\n",
 			leaf.type, leaf.clustno, leaf.size);
 	cons_putstr0(cons, s);
+	return;
+}
+
+void cmd_mkdir(struct CONSOLE *cons, char *cmdline)
+{
+	char *path = skip_spaces(cmdline + 6);
+	int r;
+
+	if (*path == 0) {
+		cons_putstr0(cons, "usage: mkdir <path>\n\n");
+		return;
+	}
+	r = fs_mkdir(0, path);
+	if (r != 0) {
+		cons_putstr0(cons, "mkdir failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_rmdir(struct CONSOLE *cons, char *cmdline)
+{
+	char *path = skip_spaces(cmdline + 6);
+	int r;
+
+	if (*path == 0) {
+		cons_putstr0(cons, "usage: rmdir <path>\n\n");
+		return;
+	}
+	r = fs_rmdir(0, path);
+	if (r == FS_RESOLVE_NOT_FOUND) {
+		cons_putstr0(cons, "Directory not found.\n\n");
+		return;
+	}
+	if (r == FS_RESOLVE_NOT_DIR) {
+		cons_putstr0(cons, "Not a directory.\n\n");
+		return;
+	}
+	if (r == -2) {
+		cons_putstr0(cons, "Directory not empty.\n\n");
+		return;
+	}
+	if (r != 0) {
+		cons_putstr0(cons, "rmdir failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
 	return;
 }
 

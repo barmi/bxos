@@ -362,6 +362,8 @@ void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);
 void cmd_disk(struct CONSOLE *cons);
 void cmd_resolve(struct CONSOLE *cons, char *cmdline);
+void cmd_mkdir(struct CONSOLE *cons, char *cmdline);
+void cmd_rmdir(struct CONSOLE *cons, char *cmdline);
 void cmd_touch(struct CONSOLE *cons, char *cmdline);
 void cmd_rm(struct CONSOLE *cons, char *cmdline);
 void cmd_cp(struct CONSOLE *cons, char *cmdline);
@@ -472,6 +474,8 @@ int dir_write_slot(struct DIR_SLOT *slot_addr, struct FILEINFO *entry);
 int fs_resolve_path(unsigned int start_clus, char *path,
 		unsigned int *parent_clus, unsigned char leaf_name83[11],
 		struct FILEINFO *leaf_finfo, struct DIR_SLOT *leaf_slot);
+int fs_mkdir(unsigned int start_clus, char *path);
+int fs_rmdir(unsigned int start_clus, char *path);
 struct FILEINFO *fs_data_search(char *name);
 char *fs_data_loadfile(int clustno, int *psize);
 int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n);

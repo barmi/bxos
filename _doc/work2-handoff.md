@@ -23,8 +23,14 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
   - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 절대/상대 path, `.`/`..`, 컴포넌트별 8.3 packing, 마지막 leaf 분리, leaf 존재 여부 조회 구현.
   - [console.c](../harib27f/haribote/console.c)에 임시 디버그 명령 `resolve <path>` 추가. 출력: parent cluster, leaf 8.3 이름, found/attr/cluster/size.
   - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img` 통과.
+- **Phase 3 (mkdir / rmdir + 콘솔 명령) 코드 작업 완료**:
+  - [bootpack.h](../harib27f/haribote/bootpack.h)에 `fs_mkdir()`/`fs_rmdir()` 및 `cmd_mkdir()`/`cmd_rmdir()` 프로토타입 추가.
+  - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 디렉터리 cluster 초기화(`.`/`..`), 빈 디렉터리 검사, FAT chain 해제, `fs_mkdir()`/`fs_rmdir()` 구현.
+  - [console.c](../harib27f/haribote/console.c)에 `mkdir <path>`/`rmdir <path>` built-in 추가.
+  - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img` 통과.
 - 남은 확인: QEMU 콘솔에서 root 한 단계 명령(`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 대화형 회귀 확인.
 - 남은 확인: QEMU 콘솔에서 `resolve /`, `resolve tetris.he2`, `resolve nofile`, 추후 mkdir 이후 `resolve /sub/../x` 같은 대화형 확인.
+- 남은 확인: QEMU 콘솔에서 `mkdir /sub`, `mkdir /sub/inner`, `rmdir /sub` 거부, `rmdir /sub/inner`, `rmdir /sub` 흐름 확인. 호스트 `mount -t msdos`/`ls -laR` 확인도 남음.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -50,7 +56,7 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 | 0. 결정 / 인터페이스 | 1d | 본 문서 + work2.md (☑ 완료) |
 | 1. 디렉터리 추상화 | 2d | `struct DIR_ITER` + `dir_*` 함수, root/subdir 공용 코드 경로. **코드 완료, QEMU 대화형 회귀 확인 남음**. |
 | 2. 경로 파싱 / 해석 | 1d | `fs_resolve_path()` — 절대/상대, `.`/`..`, 8.3 packing. **코드 완료, QEMU 디버그 명령 확인 남음** |
-| 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>` |
+| 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>`. **코드 완료, QEMU/호스트 마운트 확인 남음** |
 | 4. cwd + 기존 명령 path 화 | 2d | `cd`/`pwd`, `dir`·`cp`·`mv`·`rm`·`touch`·`echo`·`mkfile` 의 path 인자 |
 | 5. 사용자 API + HE2 앱 | 1.5d | path 받는 fopen/fopen_w/fdelete, 신규 `api_getcwd` (edx=31), `pwd.he2` |
 | 6. 호스트 도구 | 1.5d | `bxos_fat.py` path 다단계 + `mkdir`/`rmdir` |
@@ -105,8 +111,8 @@ work2.md §5 가 정본. 강조:
 
 ## 9. 시작 명령
 
-Phase 3 로 들어가면 됨. 다음 PR 단위 제안:
+Phase 4 로 들어가면 됨. 다음 PR 단위 제안:
 
-> "`fs_mkdir()`/`fs_rmdir()` 와 콘솔 `mkdir <path>`/`rmdir <path>` 를 추가하고, `resolve` 디버그 명령으로 만든 디렉터리 경로 해석까지 확인한다."
+> "`struct CONSOLE` 에 cwd 상태를 추가하고, `cd`/`pwd` 및 기존 root-only 명령들의 path 인자화를 시작한다."
 
-QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 3 (mkdir/rmdir) 로 진입한다.
+QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 4 (cwd + 기존 명령 path 화) 로 진입한다.

@@ -69,19 +69,19 @@
 - ☐ 단위 테스트 대신 콘솔에서 임시 디버그 명령 `resolve <path>` 로 출력 확인 (Phase 3 직전에 제거). (명령 추가 완료, QEMU 대화형 확인 필요)
 
 ### Phase 3 — mkdir / rmdir + 콘솔 명령 (2일)
-- ☐ `fs_mkdir(start_clus, path)`:
-  - resolve → parent_clus + leaf_name 확보, leaf 가 이미 존재하면 -EEXIST.
-  - 빈 cluster 1 개 할당 → zero-fill → entry[0]=`.` (clus = 새 cluster), entry[1]=`..` (clus = parent_clus, root 면 0).
-  - parent 에 새 directory entry 추가 (attr=0x10, first cluster = 새 cluster, size = 0).
-  - FAT 체인 종료 마크 + FAT1/FAT2 동기화 + parent slot flush + cluster flush 모두 write-through.
-- ☐ `fs_rmdir(start_clus, path)`:
-  - resolve → 존재해야 하고 attr=0x10 이어야 함.
-  - dir 의 모든 entry 확인 — `.`/`..` 외 free(0x00) / deleted(0xE5) 만 있을 때만 진행.
-  - parent 의 슬롯을 0xE5 로 마크 + FAT chain 해제 (모든 cluster 0 으로) + flush.
-- ☐ 콘솔 추가: `mkdir <path>`, `rmdir <path>`.
+- ☑ `fs_mkdir(start_clus, path)`:
+  - ☑ resolve → parent_clus + leaf_name 확보, leaf 가 이미 존재하면 -EEXIST.
+  - ☑ 빈 cluster 1 개 할당 → zero-fill → entry[0]=`.` (clus = 새 cluster), entry[1]=`..` (clus = parent_clus, root 면 0).
+  - ☑ parent 에 새 directory entry 추가 (attr=0x10, first cluster = 새 cluster, size = 0).
+  - ☑ FAT 체인 종료 마크 + FAT1/FAT2 동기화 + parent slot flush + cluster flush 모두 write-through.
+- ☑ `fs_rmdir(start_clus, path)`:
+  - ☑ resolve → 존재해야 하고 attr=0x10 이어야 함.
+  - ☑ dir 의 모든 entry 확인 — `.`/`..` 외 free(0x00) / deleted(0xE5) 만 있을 때만 진행.
+  - ☑ parent 의 슬롯을 0xE5 로 마크 + FAT chain 해제 (모든 cluster 0 으로) + flush.
+- ☑ 콘솔 추가: `mkdir <path>`, `rmdir <path>`.
 - ☐ 검증 시나리오:
-  - `mkdir /sub`, `mkdir /sub/inner`, `dir /sub` 으로 inner 보임, `rmdir /sub` 은 거부, `rmdir /sub/inner` → `rmdir /sub` 순으로 가능.
-  - 각 단계 후 `fsck_msdos -n` 통과 + macOS `mount -t msdos` 마운트 후 `ls -laR` 로 호환성 확인.
+  - ☐ `mkdir /sub`, `mkdir /sub/inner`, `dir /sub` 으로 inner 보임, `rmdir /sub` 은 거부, `rmdir /sub/inner` → `rmdir /sub` 순으로 가능. (QEMU 대화형 확인 필요)
+  - ☑ 각 단계 후 `fsck_msdos -n` 통과. ☐ macOS `mount -t msdos` 마운트 후 `ls -laR` 로 호환성 확인.
 
 ### Phase 4 — cwd + 기존 명령 path 화 (2일)
 - ☐ `struct CONSOLE` 에 `unsigned int cwd_clus`, `char cwd_path[MAX_PATH]` 추가. console 생성 시 0/`"/"` 로 초기화. `start <cmd>` / `ncst <cmd>` 로 자식 콘솔 만들 때 부모 값을 복사.
