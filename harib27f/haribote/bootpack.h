@@ -216,6 +216,13 @@ int timer_cancel(struct TIMER *timer);
 void timer_cancelall(struct FIFO32 *fifo);
 
 /* mtask.c */
+#define MAX_PATH	128
+#define FS_MAX_DEPTH	16
+#define FS_RESOLVE_NO_DISK		-1
+#define FS_RESOLVE_BAD_PATH		-2
+#define FS_RESOLVE_TOO_LONG		-3
+#define FS_RESOLVE_NOT_FOUND	-4
+#define FS_RESOLVE_NOT_DIR		-5
 #define MAX_TASKS		1000	/* 최대 태스크 수  */
 #define TASK_GDT0		3		/* TSS를 GDT의 몇 번부터 할당할 것인가  */
 #define MAX_TASKS_LV	100
@@ -240,6 +247,8 @@ struct TASK {
 	unsigned char langmode, langbyte1, app_type;
 	char name[16];
 	unsigned int time;
+	unsigned int cwd_clus;
+	char cwd_path[MAX_PATH];
 };
 #define TASK_APP_SYSTEM		0
 #define TASK_APP_CONSOLE	1
@@ -306,6 +315,8 @@ struct CONSOLE {
 	int scroll_y;			// 현재 스크롤되어 있는 위치
 	int bgcolor;
 	int width, height;
+	unsigned int cwd_clus;
+	char cwd_path[MAX_PATH];
 };
 
 /* 공통 스크롤 텍스트 영역 — console/debug 모두 사용 */
@@ -364,6 +375,8 @@ void cmd_disk(struct CONSOLE *cons);
 void cmd_resolve(struct CONSOLE *cons, char *cmdline);
 void cmd_mkdir(struct CONSOLE *cons, char *cmdline);
 void cmd_rmdir(struct CONSOLE *cons, char *cmdline);
+void cmd_cd(struct CONSOLE *cons, char *cmdline);
+void cmd_pwd(struct CONSOLE *cons);
 void cmd_touch(struct CONSOLE *cons, char *cmdline);
 void cmd_rm(struct CONSOLE *cons, char *cmdline);
 void cmd_cp(struct CONSOLE *cons, char *cmdline);
@@ -419,13 +432,6 @@ char *file_loadfile2(int clustno, int *psize, int *fat);
 
 /* fs_fat.c — FAT12/FAT16 마운트 + ATA 기반 read (work1 Phase 3).
  * 데이터 드라이브(=ATA master, FAT16) 한 개만 다룬다. */
-#define MAX_PATH	128
-#define FS_MAX_DEPTH	16
-#define FS_RESOLVE_NO_DISK		-1
-#define FS_RESOLVE_BAD_PATH		-2
-#define FS_RESOLVE_TOO_LONG		-3
-#define FS_RESOLVE_NOT_FOUND	-4
-#define FS_RESOLVE_NOT_DIR		-5
 struct FS_MOUNT {
 	int drive;
 	int fs_type;                  /* 12 or 16 */
@@ -447,6 +453,10 @@ struct DIR_SLOT {
 	unsigned int lba;
 	unsigned short offset;
 	struct FILEINFO *cache_entry;
+};
+struct FS_FILE {
+	struct FILEINFO finfo;
+	struct DIR_SLOT slot;
 };
 struct DIR_ITER {
 	unsigned int dir_clus;        /* 0 = root directory */
@@ -476,6 +486,12 @@ int fs_resolve_path(unsigned int start_clus, char *path,
 		struct FILEINFO *leaf_finfo, struct DIR_SLOT *leaf_slot);
 int fs_mkdir(unsigned int start_clus, char *path);
 int fs_rmdir(unsigned int start_clus, char *path);
+int fs_data_open_path(unsigned int start_clus, char *path, struct FS_FILE *file);
+int fs_data_create_path(unsigned int start_clus, char *path, struct FS_FILE *file);
+int fs_file_read(struct FS_FILE *file, int pos, void *buf, int n);
+int fs_file_write(struct FS_FILE *file, int pos, const void *buf, int n);
+int fs_file_truncate(struct FS_FILE *file, int size);
+int fs_file_unlink(struct FS_FILE *file);
 struct FILEINFO *fs_data_search(char *name);
 char *fs_data_loadfile(int clustno, int *psize);
 int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n);

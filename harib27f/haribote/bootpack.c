@@ -486,6 +486,7 @@ struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
 	struct TASK *task = task_alloc();
+	struct TASK *parent = task_now();
 	int *cons_fifo = (int *) memman_alloc_4k(memman, 128 * 4);
 	task->cons_stack = memman_alloc_4k(memman, 64 * 1024);
 	task->tss.esp = task->cons_stack + 64 * 1024 - 12;
@@ -498,6 +499,13 @@ struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal)
 	task->tss.gs = 1 * 8;
 	task->time = 0;
 	task->app_type = TASK_APP_CONSOLE;
+	if (parent != 0 && parent->cons != 0) {
+		task->cwd_clus = parent->cons->cwd_clus;
+		strcpy(task->cwd_path, parent->cons->cwd_path);
+	} else {
+		task->cwd_clus = 0;
+		strcpy(task->cwd_path, "/");
+	}
 	strcpy(task->name, "console");
 	*((int *) (task->tss.esp + 4)) = (int) sht;
 	*((int *) (task->tss.esp + 8)) = memtotal;

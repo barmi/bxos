@@ -31,6 +31,13 @@ static int init_dir_cluster(struct FS_MOUNT *m, unsigned int dir_clus,
 		unsigned int parent_clus);
 static int dir_is_empty(unsigned int dir_clus);
 static int free_cluster_chain(struct FS_MOUNT *m, unsigned int clus);
+static int sync_file_entry(struct FS_MOUNT *m, struct FILEINFO *finfo,
+		struct DIR_SLOT *slot);
+static int fs_write_common(struct FILEINFO *finfo, struct DIR_SLOT *slot,
+		int pos, const void *buf, int n);
+static int fs_truncate_common(struct FILEINFO *finfo, struct DIR_SLOT *slot,
+		int size);
+static int fs_unlink_common(struct FILEINFO *finfo, struct DIR_SLOT *slot);
 
 /* BPB(첫 섹터) 한 장만 읽어 마운트 정보를 채운다. */
 static int read_bpb(int drive, struct FS_MOUNT *m)
@@ -430,6 +437,106 @@ int fs_rmdir(unsigned int start_clus, char *path)
 		return -5;
 	}
 	return 0;
+}
+
+int fs_data_open_path(unsigned int start_clus, char *path, struct FS_FILE *file)
+{
+	unsigned int parent_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (file == 0) {
+		return -1;
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		return r;
+	}
+	if (leaf.name[0] == 0) {
+		return FS_RESOLVE_NOT_FOUND;
+	}
+	if ((leaf.type & 0x18) != 0) {
+		return FS_RESOLVE_NOT_DIR;
+	}
+	file->finfo = leaf;
+	file->slot = slot;
+	return 0;
+}
+
+int fs_data_create_path(unsigned int start_clus, char *path, struct FS_FILE *file)
+{
+	unsigned int parent_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf, entry;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (file == 0) {
+		return -1;
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		return r;
+	}
+	if (leaf_name83[0] == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	if (leaf.name[0] != 0) {
+		if ((leaf.type & 0x18) != 0) {
+			return FS_RESOLVE_NOT_DIR;
+		}
+		file->finfo = leaf;
+		file->slot = slot;
+		return 0;
+	}
+	if (dir_alloc_slot(parent_clus, &slot) != 0) {
+		return -2;
+	}
+	clear_entry(&entry);
+	set_name83(&entry, leaf_name83);
+	entry.type = 0x20;
+	entry.clustno = 0;
+	entry.size = 0;
+	if (dir_write_slot(&slot, &entry) != 0) {
+		return -3;
+	}
+	file->finfo = entry;
+	file->slot = slot;
+	return 0;
+}
+
+int fs_file_read(struct FS_FILE *file, int pos, void *buf, int n)
+{
+	if (file == 0) {
+		return -1;
+	}
+	return fs_data_read(&file->finfo, pos, buf, n);
+}
+
+int fs_file_write(struct FS_FILE *file, int pos, const void *buf, int n)
+{
+	if (file == 0) {
+		return -1;
+	}
+	return fs_write_common(&file->finfo, &file->slot, pos, buf, n);
+}
+
+int fs_file_truncate(struct FS_FILE *file, int size)
+{
+	if (file == 0) {
+		return -1;
+	}
+	return fs_truncate_common(&file->finfo, &file->slot, size);
+}
+
+int fs_file_unlink(struct FS_FILE *file)
+{
+	if (file == 0) {
+		return -1;
+	}
+	return fs_unlink_common(&file->finfo, &file->slot);
 }
 
 struct FILEINFO *fs_data_search(char *name)
@@ -1177,7 +1284,17 @@ int fs_data_create(char *name)
 	return 0;
 }
 
-int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)
+static int sync_file_entry(struct FS_MOUNT *m, struct FILEINFO *finfo,
+		struct DIR_SLOT *slot)
+{
+	if (slot != 0) {
+		return dir_write_slot(slot, finfo);
+	}
+	return sync_finfo_entry(m, finfo);
+}
+
+static int fs_write_common(struct FILEINFO *finfo, struct DIR_SLOT *slot,
+		int pos, const void *buf, int n)
 {
 	struct FS_MOUNT *m = &g_data_mount;
 	const unsigned char *src = (const unsigned char *) buf;
@@ -1223,13 +1340,19 @@ int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)
 	if ((unsigned int) (pos + n) > finfo->size) {
 		finfo->size = pos + n;
 	}
-	if (sync_finfo_entry(m, finfo) != 0) {
+	if (sync_file_entry(m, finfo, slot) != 0) {
 		return -1;
 	}
 	return done;
 }
 
-int fs_data_truncate(struct FILEINFO *finfo, int size)
+int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)
+{
+	return fs_write_common(finfo, 0, pos, buf, n);
+}
+
+static int fs_truncate_common(struct FILEINFO *finfo, struct DIR_SLOT *slot,
+		int size)
 {
 	struct FS_MOUNT *m = &g_data_mount;
 	int cluster_bytes;
@@ -1246,7 +1369,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 	}
 	if (finfo->clustno == 0) {
 		finfo->size = 0;
-		return sync_finfo_entry(m, finfo);
+		return sync_file_entry(m, finfo, slot);
 	}
 
 	cluster_bytes = m->sectors_per_cluster * 512;
@@ -1254,7 +1377,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 		clus = finfo->clustno;
 		finfo->clustno = 0;
 		finfo->size = 0;
-		if (sync_finfo_entry(m, finfo) != 0) {
+		if (sync_file_entry(m, finfo, slot) != 0) {
 			return -1;
 		}
 		while (valid_data_cluster(m, clus)) {
@@ -1285,7 +1408,7 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 		return -1;
 	}
 	finfo->size = size;
-	if (sync_finfo_entry(m, finfo) != 0) {
+	if (sync_file_entry(m, finfo, slot) != 0) {
 		return -1;
 	}
 	while (valid_data_cluster(m, next)) {
@@ -1302,7 +1425,12 @@ int fs_data_truncate(struct FILEINFO *finfo, int size)
 	return 0;
 }
 
-int fs_data_unlink(struct FILEINFO *finfo)
+int fs_data_truncate(struct FILEINFO *finfo, int size)
+{
+	return fs_truncate_common(finfo, 0, size);
+}
+
+static int fs_unlink_common(struct FILEINFO *finfo, struct DIR_SLOT *slot)
 {
 	struct FS_MOUNT *m = &g_data_mount;
 	unsigned int clus, next;
@@ -1314,7 +1442,7 @@ int fs_data_unlink(struct FILEINFO *finfo)
 	finfo->name[0] = 0xe5;
 	finfo->clustno = 0;
 	finfo->size = 0;
-	if (sync_finfo_entry(m, finfo) != 0) {
+	if (sync_file_entry(m, finfo, slot) != 0) {
 		return -1;
 	}
 	while (valid_data_cluster(m, clus)) {
@@ -1329,4 +1457,9 @@ int fs_data_unlink(struct FILEINFO *finfo)
 		clus = next;
 	}
 	return 0;
+}
+
+int fs_data_unlink(struct FILEINFO *finfo)
+{
+	return fs_unlink_common(finfo, 0);
 }

@@ -84,17 +84,17 @@
   - ☑ 각 단계 후 `fsck_msdos -n` 통과. ☐ macOS `mount -t msdos` 마운트 후 `ls -laR` 로 호환성 확인.
 
 ### Phase 4 — cwd + 기존 명령 path 화 (2일)
-- ☐ `struct CONSOLE` 에 `unsigned int cwd_clus`, `char cwd_path[MAX_PATH]` 추가. console 생성 시 0/`"/"` 로 초기화. `start <cmd>` / `ncst <cmd>` 로 자식 콘솔 만들 때 부모 값을 복사.
-- ☐ 콘솔 `cd <path>` / `pwd` built-in 추가. `cd` 는 resolve 후 디렉터리인지 확인하고 `cwd_clus`/`cwd_path` 갱신. `cwd_path` 는 정규화된 표준 형태로 유지 (`.`/`..` 풀어서, `//` 정리).
-- ☐ 기존 명령 인자가 path 가능하도록:
-  - `dir [<path>]` — 인자 없으면 cwd 의 디렉터리 출력.
-  - `cp <src> <dst>`, `mv <src> <dst>`, `rm <path>`, `touch <path>`, `echo <text> > <path>`, `mkfile <path> <bytes>`, `type <path>` (※ type 은 현재 HE2 앱만 — 콘솔 빌트인 추가 여부 별도 결정. 일단 보류.)
-  - 앱 검색 (`app_find`) 도 `<cwd>` 와 root 둘 다 살피도록: `./foo`, `/bin/foo` 같은 경로 입력을 받으면 그대로 resolve. 인자 없는 그냥 이름은 cwd 우선, 없으면 root 폴백.
-- ☐ 회귀: cwd 가 `/` 인 상태에서 work1 시점 동작 모두 동일.
+- ☑ `struct CONSOLE` 에 `unsigned int cwd_clus`, `char cwd_path[MAX_PATH]` 추가. console 생성 시 0/`"/"` 로 초기화. `start <cmd>` / `ncst <cmd>` 로 자식 콘솔 만들 때 부모 값을 복사.
+- ☑ 콘솔 `cd <path>` / `pwd` built-in 추가. `cd` 는 resolve 후 디렉터리인지 확인하고 `cwd_clus`/`cwd_path` 갱신. `cwd_path` 는 정규화된 표준 형태로 유지 (`.`/`..` 풀어서, `//` 정리).
+- ☑ 기존 명령 인자가 path 가능하도록:
+  - ☑ `dir [<path>]` — 인자 없으면 cwd 의 디렉터리 출력.
+  - ☑ `cp <src> <dst>`, `mv <src> <dst>`, `rm <path>`, `touch <path>`, `echo <text> > <path>`, `mkfile <path> <bytes>`. `type <path>` 는 HE2 앱 syscall 경유라 Phase 5 에서 완료.
+  - ☑ 앱 검색 (`app_find`) 도 `<cwd>` 와 root 둘 다 살피도록: `./foo`, `/bin/foo` 같은 경로 입력을 받으면 그대로 resolve. 인자 없는 그냥 이름은 cwd 우선, 없으면 root 폴백.
+- ☐ 회귀: cwd 가 `/` 인 상태에서 work1 시점 동작 모두 동일. (QEMU 대화형 확인 필요)
 - ☐ 검증:
-  - `cd /sub`, `dir`, `touch a.txt`, `cd /`, `dir /sub` → `A.TXT` 보임.
-  - `cd ..`, `cd .`, `cd /` 정상 동작.
-  - `cp /sub/a.txt b.txt` 같은 mixed-prefix 경로 OK.
+  - ☐ `cd /sub`, `dir`, `touch a.txt`, `cd /`, `dir /sub` → `A.TXT` 보임. (QEMU 대화형 확인 필요)
+  - ☐ `cd ..`, `cd .`, `cd /` 정상 동작. (QEMU 대화형 확인 필요)
+  - ☐ `cp /sub/a.txt b.txt` 같은 mixed-prefix 경로 OK. (QEMU 대화형 확인 필요)
 
 ### Phase 5 — 사용자 API + HE2 앱 (1.5일)
 - ☐ syscall 디스패처: `api_fopen` / `api_fopen_w` / `api_fdelete` 가 받는 path 인자를 path resolution 경유로 처리. (edx 번호 보존, 의미만 확장.) cwd 는 호출 task 의 콘솔 cwd 를 사용 (앱 task 는 부모 콘솔 cwd 상속).

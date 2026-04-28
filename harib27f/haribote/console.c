@@ -17,11 +17,14 @@ static char *skip_spaces(char *p);
 static int parse_decimal(char *p, int *out);
 static int split_two_args(char *args, char **arg1, char **arg2);
 static void name83_to_text(unsigned char name83[11], char *dst);
+static int normalize_path(char *cwd, char *path, char out[MAX_PATH]);
+static int cons_open_file(struct CONSOLE *cons, char *path, struct FS_FILE *file);
+static int cons_create_file(struct CONSOLE *cons, char *path, struct FS_FILE *file);
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh);
-static int copy_file_raw(char *src_name, char *dst_name);
-static struct FILEINFO *app_find(char *cmdline, char *app_name);
+static int copy_file_raw(struct CONSOLE *cons, char *src_name, char *dst_name);
+static struct FILEINFO *app_find(struct CONSOLE *cons, char *cmdline, char *app_name);
 static void app_name_from_finfo(char *dst, struct FILEINFO *finfo);
-static int app_subsystem(char *cmdline, int *fat);
+static int app_subsystem(struct CONSOLE *cons, char *cmdline, int *fat);
 static void task_set_app(struct TASK *task, char *name, int app_type);
 static void task_reset_console(struct TASK *task);
 
@@ -50,6 +53,8 @@ void console_task(struct SHEET *sheet, int memtotal)
 	 * console_resize() 가 호출되면 이 값이 갱신되어 wrap/scroll 이 따라감.   */
 	cons.width  = 240;
 	cons.height = 128;
+	cons.cwd_clus = task->cwd_clus;
+	strcpy(cons.cwd_path, task->cwd_path[0] != 0 ? task->cwd_path : "/");
 	task->cons = &cons;
 	task->app_type = TASK_APP_CONSOLE;
 	cmdline[0] = 0;
@@ -381,7 +386,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_mem(cons, memtotal);
 	} else if (strcmp(cmdline, "cls") == 0 && cons->sht != 0) {
 		cmd_cls(cons);
-	} else if (strcmp(cmdline, "dir") == 0 && cons->sht != 0) {
+	} else if ((strcmp(cmdline, "dir") == 0 || strncmp(cmdline, "dir ", 4) == 0) && cons->sht != 0) {
 		cmd_dir(cons, cmdline);
 	} else if (strcmp(cmdline, "task") == 0) {
 		cmd_task();
@@ -393,6 +398,10 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_mkdir(cons, cmdline);
 	} else if (strncmp(cmdline, "rmdir ", 6) == 0 && cons->sht != 0) {
 		cmd_rmdir(cons, cmdline);
+	} else if (strcmp(cmdline, "pwd") == 0 && cons->sht != 0) {
+		cmd_pwd(cons);
+	} else if ((strcmp(cmdline, "cd") == 0 || strncmp(cmdline, "cd ", 3) == 0) && cons->sht != 0) {
+		cmd_cd(cons, cmdline);
 	} else if (strncmp(cmdline, "touch ", 6) == 0 && cons->sht != 0) {
 		cmd_touch(cons, cmdline);
 	} else if (strncmp(cmdline, "rm ", 3) == 0 && cons->sht != 0) {
@@ -506,6 +515,103 @@ static void name83_to_text(unsigned char name83[11], char *dst)
 	return;
 }
 
+static int append_path_component(char out[MAX_PATH], int *len, char *comp, int clen)
+{
+	int i;
+	if (clen == 0 || (clen == 1 && comp[0] == '.')) {
+		return 0;
+	}
+	if (clen == 2 && comp[0] == '.' && comp[1] == '.') {
+		if (*len > 1) {
+			(*len)--;
+			while (*len > 1 && out[*len - 1] != '/') {
+				(*len)--;
+			}
+			out[*len] = 0;
+		}
+		return 0;
+	}
+	if (*len > 1) {
+		if (*len + 1 >= MAX_PATH) {
+			return -1;
+		}
+		out[(*len)++] = '/';
+	}
+	for (i = 0; i < clen; i++) {
+		char c = comp[i];
+		if ('a' <= c && c <= 'z') {
+			c -= 0x20;
+		}
+		if (*len + 1 >= MAX_PATH) {
+			return -1;
+		}
+		out[(*len)++] = c;
+	}
+	out[*len] = 0;
+	return 0;
+}
+
+static int normalize_path(char *cwd, char *path, char out[MAX_PATH])
+{
+	char joined[MAX_PATH * 2];
+	char *p, *q;
+	int i = 0, len = 1, clen;
+
+	if (path == 0 || path[0] == 0) {
+		return -1;
+	}
+	if (path[0] == '/') {
+		for (i = 0; path[i] != 0 && i < (int) sizeof joined - 1; i++) {
+			joined[i] = path[i];
+		}
+	} else {
+		for (i = 0; cwd[i] != 0 && i < (int) sizeof joined - 1; i++) {
+			joined[i] = cwd[i];
+		}
+		if (i > 1 && i < (int) sizeof joined - 1) {
+			joined[i++] = '/';
+		}
+		for (p = path; *p != 0 && i < (int) sizeof joined - 1; p++) {
+			joined[i++] = *p;
+		}
+	}
+	if (i >= (int) sizeof joined - 1) {
+		return -1;
+	}
+	joined[i] = 0;
+	out[0] = '/';
+	out[1] = 0;
+	p = joined;
+	while (*p != 0) {
+		while (*p == '/') {
+			p++;
+		}
+		if (*p == 0) {
+			break;
+		}
+		q = p;
+		while (*q != 0 && *q != '/') {
+			q++;
+		}
+		clen = q - p;
+		if (append_path_component(out, &len, p, clen) != 0) {
+			return -1;
+		}
+		p = q;
+	}
+	return 0;
+}
+
+static int cons_open_file(struct CONSOLE *cons, char *path, struct FS_FILE *file)
+{
+	return fs_data_open_path(cons->cwd_clus, path, file);
+}
+
+static int cons_create_file(struct CONSOLE *cons, char *path, struct FS_FILE *file)
+{
+	return fs_data_create_path(cons->cwd_clus, path, file);
+}
+
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
 {
 	if (fh == 0 || fh->mode == FH_MODE_FREE) {
@@ -522,46 +628,44 @@ static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
 	return;
 }
 
-static int copy_file_raw(char *src_name, char *dst_name)
+static int copy_file_raw(struct CONSOLE *cons, char *src_name, char *dst_name)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
-	struct FILEINFO *src, *dst;
+	struct FS_FILE src, dst;
 	char *buf = 0;
 	int size, r;
 
-	src = fs_data_search(src_name);
-	if (src == 0) {
+	if (cons_open_file(cons, src_name, &src) != 0) {
 		return -1;
 	}
-	dst = fs_data_search(dst_name);
-	if (dst == src) {
+	r = cons_open_file(cons, dst_name, &dst);
+	if (r == 0 && dst.slot.lba == src.slot.lba && dst.slot.offset == src.slot.offset) {
 		return -2;
 	}
-	size = src->size;
+	size = src.finfo.size;
 	if (size > 0) {
 		buf = (char *) memman_alloc_4k(memman, size);
 		if (buf == 0) {
 			return -3;
 		}
-		if (fs_data_read(src, 0, buf, size) != size) {
+		if (fs_file_read(&src, 0, buf, size) != size) {
 			memman_free_4k(memman, (int) buf, size);
 			return -4;
 		}
 	}
 
-	if (dst == 0) {
-		r = fs_data_create(dst_name);
+	if (r != 0) {
+		r = cons_create_file(cons, dst_name, &dst);
 		if (r != 0) {
 			if (buf != 0) memman_free_4k(memman, (int) buf, size);
 			return -5;
 		}
-		dst = fs_data_search(dst_name);
 	}
-	if (dst == 0 || fs_data_truncate(dst, 0) != 0) {
+	if (fs_file_truncate(&dst, 0) != 0) {
 		if (buf != 0) memman_free_4k(memman, (int) buf, size);
 		return -6;
 	}
-	if (size > 0 && fs_data_write(dst, 0, buf, size) != size) {
+	if (size > 0 && fs_file_write(&dst, 0, buf, size) != size) {
 		memman_free_4k(memman, (int) buf, size);
 		return -7;
 	}
@@ -605,34 +709,62 @@ void cmd_cls(struct CONSOLE *cons)
 
 void cmd_dir(struct CONSOLE *cons, char *cmdline)
 {
-	/* work1 Phase 3: 데이터 드라이브(g_data_mount) 의 루트 디렉터리를 표시. */
-	struct FILEINFO *finfo = fs_data_root();
-	int max = fs_data_root_max();
+	char *path = skip_spaces(cmdline + 3);
+	unsigned int dir_clus = cons->cwd_clus, parent_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf, finfo;
+	struct DIR_SLOT slot;
+	struct DIR_ITER it;
 	int i, j;
 	char s[30];
-	if (finfo == 0) {
+	if (*path != 0) {
+		if (fs_resolve_path(cons->cwd_clus, path, &parent_clus,
+				leaf_name83, &leaf, &slot) != 0) {
+			cons_putstr0(cons, "Directory not found.\n\n");
+			return;
+		}
+		if (leaf_name83[0] == 0) {
+			dir_clus = parent_clus;
+		} else {
+			if (leaf.name[0] == 0 || (leaf.type & 0x10) == 0) {
+				cons_putstr0(cons, "Directory not found.\n\n");
+				return;
+			}
+			dir_clus = leaf.clustno;
+		}
+	}
+	if (dir_iter_open(&it, dir_clus) != 0) {
 		cons_putstr0(cons, "(no data disk mounted)\n\n");
 		return;
 	}
-	for (i = 0; i < max; i++) {
-		if (finfo[i].name[0] == 0x00) {
+	for (;;) {
+		i = dir_iter_next(&it, &finfo, &slot);
+		if (i <= 0 || finfo.name[0] == 0x00) {
 			break;
 		}
-		if (finfo[i].name[0] != 0xe5) {
-			if ((finfo[i].type & 0x18) == 0) {
-				sprintf(s, "filename.ext   %7d\n", finfo[i].size);
+		if (finfo.name[0] != 0xe5) {
+			if ((finfo.type & 0x08) == 0) {
+				sprintf(s, "filename.ext   %7d\n", finfo.size);
 				for (j = 0; j < 8; j++) {
-					s[j] = finfo[i].name[j];
+					s[j] = finfo.name[j];
 				}
-				s[ 9] = finfo[i].ext[0];
-				s[10] = finfo[i].ext[1];
-				s[11] = finfo[i].ext[2];
+				s[ 9] = finfo.ext[0];
+				s[10] = finfo.ext[1];
+				s[11] = finfo.ext[2];
+				if ((finfo.type & 0x10) != 0) {
+					s[17] = '<';
+					s[18] = 'D';
+					s[19] = 'I';
+					s[20] = 'R';
+					s[21] = '>';
+				}
 				cons_putstr0(cons, s);
 				//s[22] = ' ';
 				dbg_putstr0(s,COL8_FFFFFF);
 			}
 		}
 	}
+	dir_iter_close(&it);
 	cons_newline(cons);
 	return;
 }
@@ -714,7 +846,7 @@ void cmd_resolve(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, "usage: resolve <path>\n\n");
 		return;
 	}
-	r = fs_resolve_path(0, path, &parent_clus, leaf_name83, &leaf, &slot);
+	r = fs_resolve_path(cons->cwd_clus, path, &parent_clus, leaf_name83, &leaf, &slot);
 	if (r != 0) {
 		sprintf(s, "resolve failed: %d\n\n", r);
 		cons_putstr0(cons, s);
@@ -742,7 +874,7 @@ void cmd_mkdir(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, "usage: mkdir <path>\n\n");
 		return;
 	}
-	r = fs_mkdir(0, path);
+	r = fs_mkdir(cons->cwd_clus, path);
 	if (r != 0) {
 		cons_putstr0(cons, "mkdir failed.\n\n");
 		return;
@@ -760,7 +892,7 @@ void cmd_rmdir(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, "usage: rmdir <path>\n\n");
 		return;
 	}
-	r = fs_rmdir(0, path);
+	r = fs_rmdir(cons->cwd_clus, path);
 	if (r == FS_RESOLVE_NOT_FOUND) {
 		cons_putstr0(cons, "Directory not found.\n\n");
 		return;
@@ -781,20 +913,70 @@ void cmd_rmdir(struct CONSOLE *cons, char *cmdline)
 	return;
 }
 
+void cmd_pwd(struct CONSOLE *cons)
+{
+	cons_putstr0(cons, cons->cwd_path);
+	cons_putchar(cons, '\n', 1);
+	cons_newline(cons);
+	return;
+}
+
+void cmd_cd(struct CONSOLE *cons, char *cmdline)
+{
+	struct TASK *task = task_now();
+	char *path = skip_spaces(cmdline + 2);
+	unsigned int parent_clus, target_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	char new_path[MAX_PATH];
+	int r;
+
+	if (*path == 0) {
+		path = "/";
+	}
+	r = fs_resolve_path(cons->cwd_clus, path, &parent_clus,
+			leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		cons_putstr0(cons, "Directory not found.\n\n");
+		return;
+	}
+	if (leaf_name83[0] == 0) {
+		target_clus = parent_clus;
+	} else {
+		if (leaf.name[0] == 0 || (leaf.type & 0x10) == 0) {
+			cons_putstr0(cons, "Directory not found.\n\n");
+			return;
+		}
+		target_clus = leaf.clustno;
+	}
+	if (normalize_path(cons->cwd_path, path, new_path) != 0) {
+		cons_putstr0(cons, "Path too long.\n\n");
+		return;
+	}
+	cons->cwd_clus = target_clus;
+	strcpy(cons->cwd_path, new_path);
+	task->cwd_clus = target_clus;
+	strcpy(task->cwd_path, new_path);
+	cons_newline(cons);
+	return;
+}
+
 void cmd_touch(struct CONSOLE *cons, char *cmdline)
 {
 	char *name = skip_spaces(cmdline + 6);
+	struct FS_FILE file;
 	int r;
 
 	if (*name == 0) {
 		cons_putstr0(cons, "usage: touch <file>\n\n");
 		return;
 	}
-	if (fs_data_search(name) != 0) {
+	if (cons_open_file(cons, name, &file) == 0) {
 		cons_newline(cons);
 		return;
 	}
-	r = fs_data_create(name);
+	r = cons_create_file(cons, name, &file);
 	if (r != 0) {
 		cons_putstr0(cons, "touch failed.\n\n");
 		return;
@@ -806,18 +988,17 @@ void cmd_touch(struct CONSOLE *cons, char *cmdline)
 void cmd_rm(struct CONSOLE *cons, char *cmdline)
 {
 	char *name = skip_spaces(cmdline + 3);
-	struct FILEINFO *finfo;
+	struct FS_FILE file;
 
 	if (*name == 0) {
 		cons_putstr0(cons, "usage: rm <file>\n\n");
 		return;
 	}
-	finfo = fs_data_search(name);
-	if (finfo == 0) {
+	if (cons_open_file(cons, name, &file) != 0) {
 		cons_putstr0(cons, "File not found.\n\n");
 		return;
 	}
-	if (fs_data_unlink(finfo) != 0) {
+	if (fs_file_unlink(&file) != 0) {
 		cons_putstr0(cons, "rm failed.\n\n");
 		return;
 	}
@@ -834,7 +1015,7 @@ void cmd_cp(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, "usage: cp <src> <dst>\n\n");
 		return;
 	}
-	r = copy_file_raw(src, dst);
+	r = copy_file_raw(cons, src, dst);
 	if (r == -1) {
 		cons_putstr0(cons, "Source not found.\n\n");
 		return;
@@ -850,24 +1031,23 @@ void cmd_cp(struct CONSOLE *cons, char *cmdline)
 void cmd_mv(struct CONSOLE *cons, char *cmdline)
 {
 	char *src, *dst;
-	struct FILEINFO *src_finfo;
+	struct FS_FILE src_file;
 	int r;
 
 	if (split_two_args(cmdline + 3, &src, &dst) != 0) {
 		cons_putstr0(cons, "usage: mv <src> <dst>\n\n");
 		return;
 	}
-	src_finfo = fs_data_search(src);
-	if (src_finfo == 0) {
+	if (cons_open_file(cons, src, &src_file) != 0) {
 		cons_putstr0(cons, "Source not found.\n\n");
 		return;
 	}
-	r = copy_file_raw(src, dst);
+	r = copy_file_raw(cons, src, dst);
 	if (r != 0) {
 		cons_putstr0(cons, "mv failed.\n\n");
 		return;
 	}
-	if (fs_data_unlink(src_finfo) != 0) {
+	if (fs_file_unlink(&src_file) != 0) {
 		cons_putstr0(cons, "mv unlink failed.\n\n");
 		return;
 	}
@@ -880,7 +1060,7 @@ void cmd_echo(struct CONSOLE *cons, char *cmdline)
 	char *text = cmdline + 5;
 	char *gt = 0, *name;
 	char data[CONS_CMDLINE_MAX];
-	struct FILEINFO *finfo;
+	struct FS_FILE file;
 	int i, len, r;
 
 	for (i = 0; text[i] != 0; i++) {
@@ -910,17 +1090,9 @@ void cmd_echo(struct CONSOLE *cons, char *cmdline)
 	}
 	data[len++] = '\n';
 
-	finfo = fs_data_search(name);
-	if (finfo == 0) {
-		r = fs_data_create(name);
-		if (r != 0) {
-			cons_putstr0(cons, "echo failed.\n\n");
-			return;
-		}
-		finfo = fs_data_search(name);
-	}
-	if (finfo == 0 || fs_data_truncate(finfo, 0) != 0 ||
-			fs_data_write(finfo, 0, data, len) != len) {
+	r = cons_create_file(cons, name, &file);
+	if (r != 0 || fs_file_truncate(&file, 0) != 0 ||
+			fs_file_write(&file, 0, data, len) != len) {
 		cons_putstr0(cons, "echo failed.\n\n");
 		return;
 	}
@@ -933,7 +1105,7 @@ void cmd_mkfile(struct CONSOLE *cons, char *cmdline)
 	char *name = skip_spaces(cmdline + 7);
 	char *p = name;
 	char chunk[512];
-	struct FILEINFO *finfo;
+	struct FS_FILE file;
 	int size, pos = 0, n, i, r;
 
 	while (*p > ' ') {
@@ -949,16 +1121,8 @@ void cmd_mkfile(struct CONSOLE *cons, char *cmdline)
 		return;
 	}
 
-	finfo = fs_data_search(name);
-	if (finfo == 0) {
-		r = fs_data_create(name);
-		if (r != 0) {
-			cons_putstr0(cons, "mkfile failed.\n\n");
-			return;
-		}
-		finfo = fs_data_search(name);
-	}
-	if (finfo == 0 || fs_data_truncate(finfo, 0) != 0) {
+	r = cons_create_file(cons, name, &file);
+	if (r != 0 || fs_file_truncate(&file, 0) != 0) {
 		cons_putstr0(cons, "mkfile failed.\n\n");
 		return;
 	}
@@ -970,7 +1134,7 @@ void cmd_mkfile(struct CONSOLE *cons, char *cmdline)
 		for (i = 0; i < n; i++) {
 			chunk[i] = 'A' + ((pos + i) % 26);
 		}
-		if (fs_data_write(finfo, pos, chunk, n) != n) {
+		if (fs_file_write(&file, pos, chunk, n) != n) {
 			cons_putstr0(cons, "mkfile failed.\n\n");
 			return;
 		}
@@ -1008,7 +1172,7 @@ void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal)
 	struct SHEET *sht = 0;
 	struct TASK *task;
 	struct FIFO32 *fifo;
-	int i, subsystem = app_subsystem(cmdline + 6, fat);
+	int i, subsystem = app_subsystem(cons, cmdline + 6, fat);
 	if (subsystem == HE2_SUBSYSTEM_WINDOW) {
 		task = open_constask(0, memtotal);
 	} else {
@@ -1070,18 +1234,21 @@ struct he2_hdr_kern {
 	unsigned int	flags;
 };
 
-static struct FILEINFO *app_find(char *cmdline, char *app_name)
+static struct FILEINFO *app_find(struct CONSOLE *cons, char *cmdline, char *app_name)
 {
-	struct FILEINFO *finfo;
-	char name[18];
-	int i, has_dot = 0;
+	static struct FS_FILE app_file;
+	char name[MAX_PATH];
+	int i, has_dot = 0, has_slash = 0;
 
-	for (i = 0; i < 13; i++) {
+	for (i = 0; i < MAX_PATH - 5; i++) {
 		if (cmdline[i] <= ' ') {
 			break;
 		}
 		if (cmdline[i] == '.') {
 			has_dot = 1;
+		}
+		if (cmdline[i] == '/') {
+			has_slash = 1;
 		}
 		name[i] = cmdline[i];
 	}
@@ -1090,25 +1257,40 @@ static struct FILEINFO *app_find(char *cmdline, char *app_name)
 		return 0;
 	}
 
-	finfo = fs_data_search(name);
-	if (finfo == 0 && has_dot == 0) {
+	if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
+		goto found;
+	}
+	if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {
+		goto found;
+	}
+	if (has_dot == 0) {
 		name[i    ] = '.';
 		name[i + 1] = 'H';
 		name[i + 2] = 'E';
 		name[i + 3] = '2';
 		name[i + 4] = 0;
-		finfo = fs_data_search(name);
-		if (finfo == 0) {
-			name[i + 1] = 'H';
-			name[i + 2] = 'R';
-			name[i + 3] = 'B';
-			finfo = fs_data_search(name);
+		if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
+			goto found;
+		}
+		if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {
+			goto found;
+		}
+		name[i + 1] = 'H';
+		name[i + 2] = 'R';
+		name[i + 3] = 'B';
+		if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
+			goto found;
+		}
+		if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {
+			goto found;
 		}
 	}
-	if (finfo != 0 && app_name != 0) {
-		app_name_from_finfo(app_name, finfo);
+	return 0;
+found:
+	if (app_name != 0) {
+		app_name_from_finfo(app_name, &app_file.finfo);
 	}
-	return finfo;
+	return &app_file.finfo;
 }
 
 static void app_name_from_finfo(char *dst, struct FILEINFO *finfo)
@@ -1131,14 +1313,14 @@ static void app_name_from_finfo(char *dst, struct FILEINFO *finfo)
 	dst[j] = 0;
 }
 
-static int app_subsystem(char *cmdline, int *fat)
+static int app_subsystem(struct CONSOLE *cons, char *cmdline, int *fat)
 {
 	struct FILEINFO *finfo;
 	char *p;
 	int appsiz, subsystem = HE2_SUBSYSTEM_CONSOLE;
 	struct he2_hdr_kern *h;
 
-	finfo = app_find(cmdline, 0);
+	finfo = app_find(cons, cmdline, 0);
 	if (finfo == 0) {
 		return HE2_SUBSYSTEM_CONSOLE;
 	}
@@ -1261,7 +1443,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 	struct SHEET *sht;
 
 	/* 파일을 찾는다 */
-	finfo = app_find(cmdline, app_name);
+	finfo = app_find(cons, cmdline, app_name);
 
 	if (finfo != 0) {
 		/* 파일이 발견되었을 경우 */
