@@ -10,26 +10,29 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 
 ## 2. 현재 위치 (2026-04-28 기준)
 
-- **Phase 0, 1, 2, 3 완료**. Phase 4 (FAT16 쓰기 경로) 착수 직전.
+- **Phase 0, 1, 2, 3, 4 완료**. 다음은 Phase 5 (사용자 공간 쓰기 API 확장).
 - HE2(.he2) 포맷이 새로 도입되어, 빌드 이미지에 **.hrb 는 더 이상 포함되지 않고 .he2 앱 20개만** 들어감.
 - 빌드 산출물이 **두 갈래로 분리**됨:
   - `build/cmake/haribote.img` — 1.44MB FAT12 부팅 FDD (`HARIBOTE.SYS` + `NIHONGO.FNT` 만)
   - `build/cmake/data.img` — 32MB FAT16 데이터 HDD (HE2 앱 + 데모 데이터)
-- **ATA PIO 드라이버 + FAT16 read 경로 모두 동작**:
+- **ATA PIO 드라이버 + FAT16 read/write 경로 모두 동작**:
   - 부팅 시 `ata_init()` → IDENTIFY 캐시 → `fs_mount_data(0)` 가 BPB/FAT/루트 캐시
   - `dir` / 앱 실행 / `type <file>` / 사용자 앱의 `api_fopen` 모두 data.img 에서 작동
   - `winhelo`, `tetris` 등 HE2 앱이 ATA → FAT16 chain → tek 디컴프 → 실행까지 end-to-end 검증됨
-- 아직 **쓰기 경로 없음**. 파일 생성/추가/삭제는 Phase 4 작업.
+  - 콘솔 `touch`, `rm`, `echo <text> > <file>`, `mkfile <file> <bytes>` 로 파일 생성/쓰기/삭제 가능
+- 아직 **사용자 앱에서 쓰는 syscall/API는 없음**. `api_fwrite`, `api_fdelete` 등은 Phase 5 작업.
 
 ## 3. Phase 0 / Phase 1 에서 실제로 바뀐 것
 
 **Phase 0** (분기 결정 + 부팅 스크립트):
+
 | 파일 | 변경 |
 |---|---|
 | [_doc/work1.md](work1.md) | 2장 결정 사항 표를 "권장" → "확정"으로 잠금. Phase 0 체크박스 닫음. |
 | [run-qemu.sh](../run-qemu.sh) | `--data`, `--no-data`, `BXOS_DATA_IMG` 추가. `build/cmake/data.img` 자동 부착. 부팅 이미지 기본도 `build/cmake/haribote.img` 우선, 없으면 `harib27f/haribote.img` 폴백. |
 
 **Phase 1** (이미지 분리):
+
 | 파일 | 변경 |
 |---|---|
 | [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) | `--fs {fat12,fat16}` + `--size` 옵션. `FsParams` 데이터클래스로 BPB/FAT 폭 분기. FAT12 회귀 검증됨. |
@@ -37,6 +40,7 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 | [_doc/work1.md](work1.md) | Phase 1 체크박스 닫음. |
 
 **Phase 2** (ATA PIO 드라이버):
+
 | 파일 | 변경 |
 |---|---|
 | [harib27f/haribote/ata.c](../harib27f/haribote/ata.c) (신규) | IDENTIFY / READ SECTORS / WRITE SECTORS / CACHE FLUSH. 폴링 + 타임아웃. |
@@ -46,6 +50,7 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 | [CMakeLists.txt](../CMakeLists.txt), [tools/modern/Makefile.modern](../tools/modern/Makefile.modern) | `KERNEL_C_NAMES` 에 `ata` 등록. |
 
 **Phase 3** (FAT16 read 통합):
+
 | 파일 | 변경 |
 |---|---|
 | [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) (신규) | `struct FS_MOUNT` + `fs_mount_data` + `fs_data_search` + `fs_data_loadfile`. FAT12/16 자동 분기 (cluster_count). FAT/루트 메모리 캐시, 클러스터 데이터는 ATA on-demand. |
@@ -54,8 +59,16 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 | [harib27f/haribote/console.c](../harib27f/haribote/console.c) | `cmd_dir`, `app_find`, `app_subsystem`, `cmd_app`, `api_fopen` 의 ADR_DISKIMG 직접 접근을 새 fs_data_* 로 교체. |
 | [CMakeLists.txt](../CMakeLists.txt), [tools/modern/Makefile.modern](../tools/modern/Makefile.modern) | `KERNEL_C_NAMES` 에 `fs_fat` 등록. |
 
-**아직 손대지 않은 것** (의도적, Phase 4 이후 작업):
-- 쓰기 경로 — `fs_create` / `fs_write` / `fs_unlink` 모두 미구현. ATA 측 `ata_write_sectors` 는 Phase 2 에서 만들어뒀음.
+**Phase 4** (FAT16 write 통합):
+
+| 파일 | 변경 |
+|---|---|
+| [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | `fs_data_create`, `fs_data_write`, `fs_data_truncate`, `fs_data_unlink` 추가. FAT16 전용 write-through 경로, FAT1/FAT2 동기화, 루트 디렉터리 섹터 단위 갱신. |
+| [harib27f/haribote/bootpack.h](../harib27f/haribote/bootpack.h) | FAT 쓰기 API와 검증용 콘솔 명령 선언 추가. |
+| [harib27f/haribote/console.c](../harib27f/haribote/console.c) | `touch <file>`, `rm <file>`, `echo <text> > <file>`, `mkfile <file> <bytes>` 추가. |
+| [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) | 데이터 디스크 기본 설명과 신규 쓰기 명령 반영. |
+
+**아직 손대지 않은 것** (의도적, Phase 5 이후 작업):
 - 사용자 API 의 쓰기 syscall — `api_fwrite` / `api_fdelete` 등 미정의.
 - file.c 의 FDD 경로(nihongo.fnt 로딩) 는 그대로 유지. ADR_DISKIMG 을 완전히 떼는 작업은 향후 cleanup.
 
@@ -71,38 +84,24 @@ work1.md §2 표가 정본. 요약:
 - 게스트 드라이브: **`A:` = FDD, `C:` = HDD**, 콘솔 기본은 `C:` (Phase 3 도입)
 - 호스트 도구: **자체 Python** (외부 mtools 의존 없음)
 
-## 5. 다음 작업 (Phase 4 — FAT16 쓰기 경로)
+## 5. 다음 작업 (Phase 5 — 사용자 공간 API 확장)
 
-work1.md §3 Phase 4 그대로. 요지:
+work1.md §3 Phase 5 그대로. 요지:
 
-[harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) 에 쓰기 함수들을 추가하고, 콘솔 명령 + 사용자 API 도 함께 정비. `ata_write_sectors` 는 Phase 2 에서 이미 만들어뒀음.
-
-1. **`fs_fat.c` 에 추가**:
-   - `int fs_data_create(char *name)` — 빈 디렉터리 엔트리 생성, 클러스터는 아직 미할당. 같은 이름 있으면 에러.
-   - `int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)` — 필요 시 FAT 체인 확장(빈 클러스터 검색 + 링크), 데이터 cluster write, 디렉터리 엔트리의 size 갱신.
-   - `int fs_data_unlink(struct FILEINFO *finfo)` — FAT 체인 해제(엔트리 0 으로) + 디렉터리 엔트리 첫 바이트 0xE5.
-2. **트랜잭션 순서 (work1.md §5 함정)**:
-   - 항상 데이터 cluster 먼저 → FAT 갱신 → 디렉터리 엔트리 갱신 순.
-   - FAT 캐시 변경 → ata_write_sectors 로 FAT1/FAT2 둘 다 동기화.
-   - write-through (캐시는 메모리에 두되, 모든 변경은 즉시 ATA flush).
-3. **콘솔 명령 (검증용)**:
-   - `touch <name>` — 빈 파일 생성
-   - `rm <name>` — 삭제
-   - 또는 `echo <text> > <file>` 형태도 가능 (파서 수정 필요).
-4. **검증 시나리오**:
-   - 콘솔에서 파일 생성 → `dir` 에 보임
-   - QEMU 종료 후 호스트에서 `fsck_msdos -n build/cmake/data.img` 깨끗
-   - 호스트에서 마운트 후 파일 내용 확인
-   - 100KB 정도 큰 쓰기 → 다시 read 해서 일치 확인
-   - 삭제 후 재부팅, 클러스터 재사용
-
-**Phase 4 완료 기준**: 콘솔에서 파일 생성/삭제 후 재부팅해도 그 변화가 보존됨. fsck 통과.
+1. [harib27f/haribote/console.c](../harib27f/haribote/console.c) 의 `hrb_api` syscall 디스패처에 쓰기 API 번호를 추가한다.
+   - `api_fopen_w(path)` 또는 기존 `api_fopen` 확장 방식 결정.
+   - `api_fwrite(fh, buf, n)`.
+   - `api_fdelete(path)`.
+2. [harib27f/apilib](../harib27f/apilib) 의 기존 HRB용 wrapper 를 정리/확장한다.
+3. HE2 modern 앱도 같은 API 를 쓰도록 [he2/libbxos](../he2/libbxos) wrapper 를 추가한다.
+4. 검증용 앱을 추가한다.
+   - `touch` 또는 `echo` 앱: 인자를 받아 파일 생성/쓰기.
+   - 기존 콘솔 명령의 `fs_data_*` 구현을 syscall 경유로도 검증.
 
 **참고**:
-- FAT 체인 확장: cluster 2 부터 순회하면서 fat_get(c)==0 인 첫 free 클러스터 찾기. 끝.
-- 디렉터리 엔트리 갱신: root_cache 의 해당 엔트리 수정 → 그 엔트리가 속한 root 디렉터리 섹터 한 장만 ata_write_sectors 로 다시 쓰기.
-- FAT 갱신: fat_cache 의 해당 엔트리 수정 → 그 엔트리가 속한 FAT 섹터 한 장만 FAT1/FAT2 둘 다 ata_write_sectors.
-- 파일명 8.3 변환: file.c 의 file_search 코드 일부 재사용 가능 (대문자/공백 패딩 로직).
+- Phase 4 의 커널 내부 쓰기 함수는 `struct FILEINFO *` 기반이다. 앱 API 에서는 파일핸들 구조를 확장하거나, write-only 핸들용 metadata 를 별도로 잡아야 한다.
+- 기존 `struct FILEHANDLE` 은 read-only 버퍼(`buf`, `size`, `pos`) 중심이라 그대로는 디스크 write handle 로 쓰기 어렵다.
+- `api_fopen` read 경로는 tek 압축 자동 해제를 유지한다. write 경로는 raw bytes 를 그대로 써야 한다.
 
 ## 6. 빠른 빌드/실행 치트시트
 
@@ -170,8 +169,8 @@ echo -e "info block\nquit" | qemu-system-i386 -m 32 -accel tcg -display none \
 | 부팅 스크립트 | [run-qemu.sh](../run-qemu.sh) | ☑ Phase 0 완료. 추가 변경 불필요. |
 | 디스크 드라이버 | [harib27f/haribote/ata.c](../harib27f/haribote/ata.c) | ☑ Phase 2 완료. ATA PIO 28-bit LBA, IDENTIFY/READ/WRITE/FLUSH. |
 | 파일시스템 read | [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | ☑ Phase 3 완료. mount + read + tek 디컴프. FAT12/FAT16 자동 분기. |
-| 파일시스템 write | (확장) [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | ← Phase 4. 다음 작업 진입점. create/write/unlink + FAT/dir 동기화. |
-| 콘솔 명령 / API | [harib27f/haribote/console.c](../harib27f/haribote/console.c), [harib27f/haribote/bootpack.c](../harib27f/haribote/bootpack.c) | Phase 3, 5, 6. |
+| 파일시스템 write | (확장) [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | ☑ Phase 4 완료. create/write/truncate/unlink + FAT/dir 동기화. |
+| 콘솔 명령 / API | [harib27f/haribote/console.c](../harib27f/haribote/console.c), [harib27f/haribote/bootpack.c](../harib27f/haribote/bootpack.c) | 콘솔 검증 명령은 Phase 4 완료. syscall/API 확장은 Phase 5. |
 | 사용자 API (HE2) | [he2/libbxos/](../he2/libbxos/) | Phase 5. |
 | 문서 | [BXOS-COMMANDS.md](../BXOS-COMMANDS.md), [README.utf8.md](../README.utf8.md), [SETUP-MAC.md](../SETUP-MAC.md) | Phase 8. |
 

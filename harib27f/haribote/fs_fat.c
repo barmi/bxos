@@ -1,11 +1,12 @@
-/* fs_fat.c — FAT12/FAT16 마운트 + ATA-기반 read 경로 (work1 Phase 3).
+/* fs_fat.c — FAT12/FAT16 마운트 + ATA-기반 read/write 경로.
  *
  * 부팅 시 fs_mount_data() 가 호출되어 ATA drive 0 의 BPB 를 읽고,
  * FAT 한 카피와 루트 디렉터리를 메모리에 캐시한다.
  * 클러스터 데이터 자체는 on-demand 로 ata_read_sectors() 호출.
  *
  * 기존 file.c (FDD 메모리 이미지 기반) 는 nihongo.fnt 부팅 로딩에만 쓰이고,
- * 콘솔/앱 파일 접근은 모두 이 모듈을 통한다.
+ * 콘솔/앱 파일 접근은 모두 이 모듈을 통한다. Phase 4 의 쓰기 경로는
+ * 데이터 디스크(FAT16)만 대상으로 하며, 모든 변경은 즉시 ATA 로 flush 한다.
  */
 
 #include "bootpack.h"
@@ -141,6 +142,229 @@ static int is_eoc(const struct FS_MOUNT *m, unsigned int clus)
 	}
 }
 
+static unsigned int eoc_value(const struct FS_MOUNT *m)
+{
+	return (m->fs_type == 16) ? 0xFFFF : 0x0FFF;
+}
+
+static unsigned int cluster_lba(const struct FS_MOUNT *m, unsigned int clus)
+{
+	return m->data_lba + (clus - 2) * m->sectors_per_cluster;
+}
+
+static int valid_data_cluster(const struct FS_MOUNT *m, unsigned int clus)
+{
+	return clus >= 2 && clus < m->cluster_count + 2;
+}
+
+static void fat_set(struct FS_MOUNT *m, unsigned int clus, unsigned int val)
+{
+	if (m->fs_type == 16) {
+		unsigned int off = clus * 2;
+		m->fat_cache[off]     = val & 0xff;
+		m->fat_cache[off + 1] = (val >> 8) & 0xff;
+	}
+}
+
+static int sync_fat_entry(struct FS_MOUNT *m, unsigned int clus)
+{
+	unsigned int off, sec, lba;
+	int i;
+
+	if (m->fs_type != 16) {
+		return -1;
+	}
+	off = clus * 2;
+	sec = off / 512;
+	if (sec >= (unsigned int) m->sectors_per_fat) {
+		return -1;
+	}
+	for (i = 0; i < m->num_fats; i++) {
+		lba = m->fat_lba + i * m->sectors_per_fat + sec;
+		if (ata_write_sectors(m->drive, lba, 1, m->fat_cache + sec * 512) != 1) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int sync_root_entry(struct FS_MOUNT *m, struct FILEINFO *finfo)
+{
+	unsigned int idx, sec;
+	unsigned char *root = (unsigned char *) m->root_cache;
+
+	idx = finfo - m->root_cache;
+	if (idx >= (unsigned int) m->root_entries) {
+		return -1;
+	}
+	sec = (idx * 32) / 512;
+	if (ata_write_sectors(m->drive, m->root_lba + sec, 1, root + sec * 512) != 1) {
+		return -1;
+	}
+	return 0;
+}
+
+static int pack_83_name(char *name, unsigned char out[11])
+{
+	int i, j;
+	for (j = 0; j < 11; j++) {
+		out[j] = ' ';
+	}
+	j = 0;
+	if (name[0] == 0 || name[0] == '.') {
+		return -1;
+	}
+	for (i = 0; name[i] != 0; i++) {
+		unsigned char c = name[i];
+		if (c <= ' ' || c == '/' || c == '\\') {
+			return -1;
+		}
+		if (c == '.' && j <= 8) {
+			j = 8;
+			continue;
+		}
+		if (j >= 11) {
+			return -1;
+		}
+		if ('a' <= c && c <= 'z') {
+			c -= 0x20;
+		}
+		out[j++] = c;
+	}
+	return 0;
+}
+
+static int write_cluster(struct FS_MOUNT *m, unsigned int clus, const void *buf)
+{
+	if (!valid_data_cluster(m, clus)) {
+		return -1;
+	}
+	if (ata_write_sectors(m->drive, cluster_lba(m, clus),
+			m->sectors_per_cluster, buf) != m->sectors_per_cluster) {
+		return -1;
+	}
+	return 0;
+}
+
+static int read_cluster(struct FS_MOUNT *m, unsigned int clus, void *buf)
+{
+	if (!valid_data_cluster(m, clus)) {
+		return -1;
+	}
+	if (ata_read_sectors(m->drive, cluster_lba(m, clus),
+			m->sectors_per_cluster, buf) != m->sectors_per_cluster) {
+		return -1;
+	}
+	return 0;
+}
+
+static int zero_cluster(struct FS_MOUNT *m, unsigned int clus)
+{
+	unsigned char zero[8 * 512];
+	int i, bytes = m->sectors_per_cluster * 512;
+	if (bytes > (int) sizeof zero) {
+		return -1;
+	}
+	for (i = 0; i < bytes; i++) {
+		zero[i] = 0;
+	}
+	return write_cluster(m, clus, zero);
+}
+
+static unsigned int find_free_cluster(struct FS_MOUNT *m)
+{
+	unsigned int clus, end = m->cluster_count + 2;
+	for (clus = 2; clus < end; clus++) {
+		if (fat_get(m, clus) == 0) {
+			return clus;
+		}
+	}
+	return 0;
+}
+
+static unsigned int find_tail_cluster(struct FS_MOUNT *m, unsigned int clus)
+{
+	unsigned int next;
+	if (!valid_data_cluster(m, clus)) {
+		return 0;
+	}
+	for (;;) {
+		next = fat_get(m, clus);
+		if (is_eoc(m, next)) {
+			return clus;
+		}
+		if (!valid_data_cluster(m, next)) {
+			return 0;
+		}
+		clus = next;
+	}
+}
+
+static unsigned int append_cluster(struct FS_MOUNT *m, struct FILEINFO *finfo)
+{
+	unsigned int newclus, tail;
+
+	newclus = find_free_cluster(m);
+	if (newclus == 0) {
+		return 0;
+	}
+
+	/* 데이터 영역을 먼저 초기화한 뒤 FAT 에 연결한다. */
+	if (zero_cluster(m, newclus) != 0) {
+		return 0;
+	}
+	fat_set(m, newclus, eoc_value(m));
+	if (sync_fat_entry(m, newclus) != 0) {
+		return 0;
+	}
+
+	if (finfo->clustno == 0) {
+		finfo->clustno = newclus;
+		return newclus;
+	}
+	tail = find_tail_cluster(m, finfo->clustno);
+	if (tail == 0) {
+		return 0;
+	}
+	fat_set(m, tail, newclus);
+	if (sync_fat_entry(m, tail) != 0) {
+		return 0;
+	}
+	return newclus;
+}
+
+static unsigned int nth_cluster(struct FS_MOUNT *m, struct FILEINFO *finfo,
+		unsigned int nth, int create)
+{
+	unsigned int clus, next, i;
+
+	if (finfo->clustno == 0) {
+		if (!create) {
+			return 0;
+		}
+		if (append_cluster(m, finfo) == 0) {
+			return 0;
+		}
+	}
+	clus = finfo->clustno;
+	for (i = 0; i < nth; i++) {
+		next = fat_get(m, clus);
+		if (is_eoc(m, next)) {
+			if (!create) {
+				return 0;
+			}
+			next = append_cluster(m, finfo);
+			if (next == 0) {
+				return 0;
+			}
+		} else if (!valid_data_cluster(m, next)) {
+			return 0;
+		}
+		clus = next;
+	}
+	return clus;
+}
+
 /* clustno 부터 시작하는 체인을 따라 size 바이트만큼 읽어 buf 에 채운다.
  * 실패 시 -1, 성공 시 읽은 바이트 수 (size 그대로) 반환. */
 static int fs_read_chain(struct FS_MOUNT *m, unsigned int clustno, int size, char *buf)
@@ -207,4 +431,200 @@ char *fs_data_loadfile(int clustno, int *psize)
 		}
 	}
 	return buf;
+}
+
+int fs_data_create(char *name)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	struct FILEINFO *slot = 0;
+	unsigned char s[11];
+	unsigned char *entry;
+	int i, j;
+
+	if (!g_data_mounted || m->fs_type != 16) {
+		return -1;
+	}
+	if (pack_83_name(name, s) != 0) {
+		return -1;
+	}
+	if (file_search(name, m->root_cache, m->root_entries) != 0) {
+		return -2;
+	}
+	for (i = 0; i < m->root_entries; i++) {
+		if (m->root_cache[i].name[0] == 0x00 || m->root_cache[i].name[0] == 0xe5) {
+			slot = &m->root_cache[i];
+			break;
+		}
+	}
+	if (slot == 0) {
+		return -3;
+	}
+
+	entry = (unsigned char *) slot;
+	for (j = 0; j < 32; j++) {
+		entry[j] = 0;
+	}
+	for (j = 0; j < 8; j++) slot->name[j] = s[j];
+	for (j = 0; j < 3; j++) slot->ext[j]  = s[8 + j];
+	slot->type = 0x20;	/* archive */
+	slot->clustno = 0;
+	slot->size = 0;
+	if (sync_root_entry(m, slot) != 0) {
+		return -4;
+	}
+	return 0;
+}
+
+int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	const unsigned char *src = (const unsigned char *) buf;
+	unsigned char tmp[8 * 512];
+	int cluster_bytes, done = 0, off, chunk, i;
+	unsigned int nth, clus;
+
+	if (!g_data_mounted || m->fs_type != 16 || finfo == 0 || pos < 0 || n < 0) {
+		return -1;
+	}
+	if (pos > (int) finfo->size) {
+		return -1;	/* sparse write 는 아직 지원하지 않는다. */
+	}
+	cluster_bytes = m->sectors_per_cluster * 512;
+	if (cluster_bytes > (int) sizeof tmp) {
+		return -1;
+	}
+
+	while (done < n) {
+		nth = (pos + done) / cluster_bytes;
+		off = (pos + done) % cluster_bytes;
+		chunk = n - done;
+		if (chunk > cluster_bytes - off) {
+			chunk = cluster_bytes - off;
+		}
+		clus = nth_cluster(m, finfo, nth, 1);
+		if (clus == 0) {
+			return -1;
+		}
+		if (off != 0 || chunk != cluster_bytes) {
+			if (read_cluster(m, clus, tmp) != 0) {
+				return -1;
+			}
+		}
+		for (i = 0; i < chunk; i++) {
+			tmp[off + i] = src[done + i];
+		}
+		if (write_cluster(m, clus, tmp) != 0) {
+			return -1;
+		}
+		done += chunk;
+	}
+	if ((unsigned int) (pos + n) > finfo->size) {
+		finfo->size = pos + n;
+	}
+	if (sync_root_entry(m, finfo) != 0) {
+		return -1;
+	}
+	return done;
+}
+
+int fs_data_truncate(struct FILEINFO *finfo, int size)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	int cluster_bytes;
+	unsigned int keep_count, i, clus, next;
+
+	if (!g_data_mounted || m->fs_type != 16 || finfo == 0 || size < 0) {
+		return -1;
+	}
+	if ((unsigned int) size > finfo->size) {
+		return -1;
+	}
+	if (size == (int) finfo->size) {
+		return 0;
+	}
+	if (finfo->clustno == 0) {
+		finfo->size = 0;
+		return sync_root_entry(m, finfo);
+	}
+
+	cluster_bytes = m->sectors_per_cluster * 512;
+	if (size == 0) {
+		clus = finfo->clustno;
+		finfo->clustno = 0;
+		finfo->size = 0;
+		if (sync_root_entry(m, finfo) != 0) {
+			return -1;
+		}
+		while (valid_data_cluster(m, clus)) {
+			next = fat_get(m, clus);
+			fat_set(m, clus, 0);
+			if (sync_fat_entry(m, clus) != 0) {
+				return -1;
+			}
+			if (is_eoc(m, next)) {
+				break;
+			}
+			clus = next;
+		}
+		return 0;
+	}
+
+	keep_count = (size + cluster_bytes - 1) / cluster_bytes;
+	clus = finfo->clustno;
+	for (i = 1; i < keep_count; i++) {
+		clus = fat_get(m, clus);
+		if (!valid_data_cluster(m, clus)) {
+			return -1;
+		}
+	}
+	next = fat_get(m, clus);
+	fat_set(m, clus, eoc_value(m));
+	if (sync_fat_entry(m, clus) != 0) {
+		return -1;
+	}
+	finfo->size = size;
+	if (sync_root_entry(m, finfo) != 0) {
+		return -1;
+	}
+	while (valid_data_cluster(m, next)) {
+		clus = next;
+		next = fat_get(m, clus);
+		fat_set(m, clus, 0);
+		if (sync_fat_entry(m, clus) != 0) {
+			return -1;
+		}
+		if (is_eoc(m, next)) {
+			break;
+		}
+	}
+	return 0;
+}
+
+int fs_data_unlink(struct FILEINFO *finfo)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned int clus, next;
+
+	if (!g_data_mounted || m->fs_type != 16 || finfo == 0) {
+		return -1;
+	}
+	clus = finfo->clustno;
+	finfo->name[0] = 0xe5;
+	finfo->clustno = 0;
+	finfo->size = 0;
+	if (sync_root_entry(m, finfo) != 0) {
+		return -1;
+	}
+	while (valid_data_cluster(m, clus)) {
+		next = fat_get(m, clus);
+		fat_set(m, clus, 0);
+		if (sync_fat_entry(m, clus) != 0) {
+			return -1;
+		}
+		if (is_eoc(m, next)) {
+			break;
+		}
+		clus = next;
+	}
+	return 0;
 }

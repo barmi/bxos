@@ -91,21 +91,26 @@
   - `tetris` (4488B, 3 cluster) → 게임 보드 + SCORE/LEVEL/NEXT 정상 그려짐 (멀티-클러스터 체인 OK)
   - `type euc.txt` (syscall fopen 경로) → 파일 내용 정확히 출력
 
-### Phase 4 — FAT16 쓰기 경로 (3~4일)
+### Phase 4 — FAT16 쓰기 경로 (완료 — 2026-04-28)
 **목표**: 파일 생성/추가/삭제. 이번 작업의 핵심.
 
-- ☐ `fs_fat.c` 에 다음 추가:
-  - `fs_create(path)` — 빈 디렉터리 엔트리 생성.
-  - `fs_write(fh, buf, n)` — 클러스터 부족 시 FAT 체인 확장.
-  - `fs_truncate(fh, size)`.
-  - `fs_unlink(path)` — 디렉터리 엔트리 무효화 + FAT 체인 해제.
-  - `fs_mkdir(path)` / `fs_rmdir(path)` (선택, 우선순위 낮음).
-- ☐ FAT 갱신은 **두 카피 모두 일관**되게 쓰기 (FAT1/FAT2 동기화).
-- ☐ Write-through: 모든 쓰기는 즉시 ATA로 flush.
-- ☐ 단위 테스트 대신 **시나리오 검증**:
-  - 콘솔에서 `echo hello > test.txt` → 재부팅 후 `type test.txt` 확인.
-  - 큰 파일(100KB) 쓰기 후 다시 읽어 일치 확인.
-  - 파일 삭제 후 클러스터 재사용 확인.
+- ☑ `fs_fat.c` 에 다음 추가:
+  - `fs_data_create(name)` — 빈 루트 디렉터리 엔트리 생성. 8.3 이름 대문자 변환.
+  - `fs_data_write(finfo, pos, buf, n)` — 클러스터 부족 시 FAT16 체인 확장, 부분 클러스터 read-modify-write, 파일 크기 갱신.
+  - `fs_data_truncate(finfo, size)` — 현재 크기 이하로 축소, 불필요한 FAT 체인 해제.
+  - `fs_data_unlink(finfo)` — 루트 엔트리 삭제 마크(0xE5) + FAT 체인 해제.
+  - `fs_mkdir(path)` / `fs_rmdir(path)` 는 선택 항목이라 이번 phase 에서는 보류.
+- ☑ FAT 갱신은 **두 카피 모두 일관**되게 쓰기 (FAT1/FAT2 동기화).
+- ☑ Write-through: 데이터 클러스터, FAT 섹터, 루트 디렉터리 섹터 변경을 즉시 ATA로 flush.
+- ☑ 검증용 콘솔 명령 추가:
+  - `touch <file>` — 빈 파일 생성.
+  - `rm <file>` — 파일 삭제.
+  - `echo <text> > <file>` — 텍스트 파일 덮어쓰기.
+  - `mkfile <file> <bytes>` — A-Z 패턴으로 큰 파일 생성.
+- ☑ 단위 테스트 대신 **시나리오 검증**:
+  - QEMU HMP `sendkey` 로 임시 HDD 이미지에 `echo hello > echo.txt` 실행 → 호스트 FAT 파싱 결과 `ECHO.TXT` 내용 `hello\n`, `fsck_msdos -n` 통과.
+  - `mkfile big.bin 102400` 실행 → `BIG.BIN` 크기 102400B, FAT16 체인 50 clusters, `fsck_msdos -n` 통과.
+  - `mkfile test.txt 20` 후 `rm test.txt` 실행 → 파일 엔트리 제거, free cluster 수 원복, `fsck_msdos -n` 통과.
 
 ### Phase 5 — 사용자 공간 API 확장 (1.5일)
 **목표**: 앱이 파일을 쓸 수 있게 한다.

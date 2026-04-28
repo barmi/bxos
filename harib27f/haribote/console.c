@@ -13,6 +13,8 @@ static void cons_input_clear(struct CONSOLE *cons, char *cmdline, int *cmd_len);
 static void cons_input_set(struct CONSOLE *cons, char *cmdline, int *cmd_len, char *src);
 static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 		int *hist_count, char *cmdline);
+static char *skip_spaces(char *p);
+static int parse_decimal(char *p, int *out);
 static struct FILEINFO *app_find(char *cmdline, char *app_name);
 static void app_name_from_finfo(char *dst, struct FILEINFO *finfo);
 static int app_subsystem(char *cmdline, int *fat);
@@ -373,6 +375,14 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_task();
 	} else if (strcmp(cmdline, "disk") == 0 && cons->sht != 0) {
 		cmd_disk(cons);
+	} else if (strncmp(cmdline, "touch ", 6) == 0 && cons->sht != 0) {
+		cmd_touch(cons, cmdline);
+	} else if (strncmp(cmdline, "rm ", 3) == 0 && cons->sht != 0) {
+		cmd_rm(cons, cmdline);
+	} else if (strncmp(cmdline, "echo ", 5) == 0 && cons->sht != 0) {
+		cmd_echo(cons, cmdline);
+	} else if (strncmp(cmdline, "mkfile ", 7) == 0 && cons->sht != 0) {
+		cmd_mkfile(cons, cmdline);
 	} else if (strcmp(cmdline, "exit") == 0) {
 		cmd_exit(cons, fat);
 	} else if (strncmp(cmdline, "start ", 6) == 0) {
@@ -390,6 +400,30 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		}
 	}
 	return;
+}
+
+static char *skip_spaces(char *p)
+{
+	while (*p == ' ') {
+		p++;
+	}
+	return p;
+}
+
+static int parse_decimal(char *p, int *out)
+{
+	int v = 0, n = 0;
+	p = skip_spaces(p);
+	while ('0' <= *p && *p <= '9') {
+		v = v * 10 + (*p - '0');
+		p++;
+		n++;
+	}
+	if (n == 0 || *skip_spaces(p) != 0) {
+		return -1;
+	}
+	*out = v;
+	return 0;
 }
 
 void cmd_mem(struct CONSOLE *cons, int memtotal)
@@ -516,6 +550,155 @@ void cmd_disk(struct CONSOLE *cons)
 				cons_putstr0(cons, s);
 			}
 		}
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_touch(struct CONSOLE *cons, char *cmdline)
+{
+	char *name = skip_spaces(cmdline + 6);
+	int r;
+
+	if (*name == 0) {
+		cons_putstr0(cons, "usage: touch <file>\n\n");
+		return;
+	}
+	if (fs_data_search(name) != 0) {
+		cons_newline(cons);
+		return;
+	}
+	r = fs_data_create(name);
+	if (r != 0) {
+		cons_putstr0(cons, "touch failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_rm(struct CONSOLE *cons, char *cmdline)
+{
+	char *name = skip_spaces(cmdline + 3);
+	struct FILEINFO *finfo;
+
+	if (*name == 0) {
+		cons_putstr0(cons, "usage: rm <file>\n\n");
+		return;
+	}
+	finfo = fs_data_search(name);
+	if (finfo == 0) {
+		cons_putstr0(cons, "File not found.\n\n");
+		return;
+	}
+	if (fs_data_unlink(finfo) != 0) {
+		cons_putstr0(cons, "rm failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_echo(struct CONSOLE *cons, char *cmdline)
+{
+	char *text = cmdline + 5;
+	char *gt = 0, *name;
+	char data[CONS_CMDLINE_MAX];
+	struct FILEINFO *finfo;
+	int i, len, r;
+
+	for (i = 0; text[i] != 0; i++) {
+		if (text[i] == '>') {
+			gt = &text[i];
+			break;
+		}
+	}
+	if (gt == 0) {
+		cons_putstr0(cons, "usage: echo <text> > <file>\n\n");
+		return;
+	}
+	name = skip_spaces(gt + 1);
+	if (*name == 0) {
+		cons_putstr0(cons, "usage: echo <text> > <file>\n\n");
+		return;
+	}
+	while (gt > text && gt[-1] == ' ') {
+		gt--;
+	}
+	len = gt - text;
+	if (len >= CONS_CMDLINE_MAX - 1) {
+		len = CONS_CMDLINE_MAX - 2;
+	}
+	for (i = 0; i < len; i++) {
+		data[i] = text[i];
+	}
+	data[len++] = '\n';
+
+	finfo = fs_data_search(name);
+	if (finfo == 0) {
+		r = fs_data_create(name);
+		if (r != 0) {
+			cons_putstr0(cons, "echo failed.\n\n");
+			return;
+		}
+		finfo = fs_data_search(name);
+	}
+	if (finfo == 0 || fs_data_truncate(finfo, 0) != 0 ||
+			fs_data_write(finfo, 0, data, len) != len) {
+		cons_putstr0(cons, "echo failed.\n\n");
+		return;
+	}
+	cons_newline(cons);
+	return;
+}
+
+void cmd_mkfile(struct CONSOLE *cons, char *cmdline)
+{
+	char *name = skip_spaces(cmdline + 7);
+	char *p = name;
+	char chunk[512];
+	struct FILEINFO *finfo;
+	int size, pos = 0, n, i, r;
+
+	while (*p > ' ') {
+		p++;
+	}
+	if (*name == 0 || *p == 0) {
+		cons_putstr0(cons, "usage: mkfile <file> <bytes>\n\n");
+		return;
+	}
+	*p++ = 0;
+	if (parse_decimal(p, &size) != 0 || size < 0) {
+		cons_putstr0(cons, "usage: mkfile <file> <bytes>\n\n");
+		return;
+	}
+
+	finfo = fs_data_search(name);
+	if (finfo == 0) {
+		r = fs_data_create(name);
+		if (r != 0) {
+			cons_putstr0(cons, "mkfile failed.\n\n");
+			return;
+		}
+		finfo = fs_data_search(name);
+	}
+	if (finfo == 0 || fs_data_truncate(finfo, 0) != 0) {
+		cons_putstr0(cons, "mkfile failed.\n\n");
+		return;
+	}
+	while (pos < size) {
+		n = size - pos;
+		if (n > (int) sizeof chunk) {
+			n = sizeof chunk;
+		}
+		for (i = 0; i < n; i++) {
+			chunk[i] = 'A' + ((pos + i) % 26);
+		}
+		if (fs_data_write(finfo, pos, chunk, n) != n) {
+			cons_putstr0(cons, "mkfile failed.\n\n");
+			return;
+		}
+		pos += n;
 	}
 	cons_newline(cons);
 	return;

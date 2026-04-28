@@ -359,6 +359,10 @@ void cmd_cls(struct CONSOLE *cons);
 void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);
 void cmd_disk(struct CONSOLE *cons);
+void cmd_touch(struct CONSOLE *cons, char *cmdline);
+void cmd_rm(struct CONSOLE *cons, char *cmdline);
+void cmd_echo(struct CONSOLE *cons, char *cmdline);
+void cmd_mkfile(struct CONSOLE *cons, char *cmdline);
 void cmd_exit(struct CONSOLE *cons, int *fat);
 void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal);
 void cmd_ncst(struct CONSOLE *cons, char *cmdline, int memtotal);
@@ -432,6 +436,10 @@ struct FILEINFO *fs_data_root(void);
 int fs_data_root_max(void);
 struct FILEINFO *fs_data_search(char *name);
 char *fs_data_loadfile(int clustno, int *psize);
+int fs_data_create(char *name);
+int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n);
+int fs_data_truncate(struct FILEINFO *finfo, int size);
+int fs_data_unlink(struct FILEINFO *finfo);
 
 
 /* tek.c */
