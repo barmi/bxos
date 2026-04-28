@@ -167,10 +167,12 @@
   - `cmake --build build/cmake --target install-tetris` 성공.
   - `data.img:/tetris.he2` 추출본이 `build/cmake/he2/bin/tetris.he2` 와 byte-for-byte 동일, `fsck_msdos -n build/cmake/data.img` 통과.
 
-### Phase 8 — 문서화 / 마무리 (0.5일)
-- ☐ [_doc](_doc) 에 **드라이브 모델 / FAT16 레이아웃 / ATA 사용** 설명 문서 추가.
-- ☐ [README.utf8.md](README.utf8.md) / [SETUP-MAC.md](SETUP-MAC.md) 의 빌드/실행 섹션 갱신 (이미지 두 개 구조).
-- ☐ [BXOS-COMMANDS.md](BXOS-COMMANDS.md) 에 신규 콘솔 명령 추가.
+### Phase 8 — 문서화 / 마무리 (완료 — 2026-04-28)
+- ☑ [_doc/storage.md](_doc/storage.md) 신규 추가 — 드라이브 모델(A:/C:), FAT16 BPB/LBA 레이아웃, ATA PIO 드라이버 / I/O 포트 / 폴링 정책, 호스트 도구 사용법, 알려진 제약을 한 문서에 정리.
+- ☑ [README.utf8.md](README.utf8.md) — 빠른 시작/디렉터리 구조 섹션을 CMake 기반 두 이미지(haribote.img + data.img) 구조로 갱신. `install-<app>` 부분 갱신 흐름 추가.
+- ☑ [SETUP-MAC.md](SETUP-MAC.md) — 삭제된 `build-mac.sh` / `build-modern.sh` 경로를 제거하고, CMake + NASM + i686-elf-gcc + Python 단일 빌드 경로로 재작성. `install-<app>` / `bxos_fat.py ls` / `fsck_msdos` 검증 명령 포함.
+- ☑ [BXOS-COMMANDS.md](BXOS-COMMANDS.md) — 데이터 디스크에 실제로 들어 있는 23 HE2 앱만 남기고 (tetris 추가, 미포팅 HRB 앱 calc/tview/mmlplay/gview/invader/bball 등 제거), 이미지에서 빠진 앱은 별도 노트로 안내.
+- ☑ 검증: clean build (`cmake --build build/cmake`) 통과, `fsck_msdos -n` 양 이미지 통과, `install-tetris` 후 round-trip `cmp` 일치, `bxos_fat.py ls` 31 entries 확인.
 
 ## 4. 마일스톤 / 검증 시나리오
 

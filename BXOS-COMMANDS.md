@@ -29,25 +29,24 @@
 
 ## 앱 실행 방법
 
-콘솔에서 파일명만 입력하면 됩니다.
+콘솔에서 파일명만 입력하면 됩니다 (확장자 `.he2` 는 생략 가능).
 
 ```text
 a
 hello3
 winhelo
-calc 1+2*3
-gview fujisan.jpg
-mmlplay kirakira.mml
+tetris
+type euc.txt
 ```
 
 파일 목록은 `dir` 로 확인할 수 있습니다. 앱 실행 시 `Bad command or file name.` 이 나오면 파일명이 틀렸거나 이미지에 해당 파일이 없는 것입니다.
 
-## 포함 앱
+## 포함 앱 (HE2 23개)
 
 | 명령 | 설명 |
 |---|---|
 | `a` | 콘솔에 `A`를 출력합니다. |
-| `hello3`, `hello4`, `hello5` | 콘솔에 hello 메시지를 출력하는 예제입니다. |
+| `hello3`, `hello4` | 콘솔에 hello 메시지를 출력하는 예제입니다. |
 | `winhelo`, `winhelo2`, `winhelo3` | 작은 창을 열어 hello 메시지를 표시합니다. Enter로 종료합니다. |
 | `star1`, `stars`, `stars2` | 점/별을 창에 그리는 그래픽 예제입니다. Enter로 종료합니다. |
 | `lines` | 여러 색상의 선을 그립니다. Enter로 종료합니다. |
@@ -56,28 +55,24 @@ mmlplay kirakira.mml
 | `beepdown` | 비프음 주파수를 낮추는 예제입니다. 키를 누르면 종료합니다. |
 | `color`, `color2` | 색상 팔레트/그라데이션 표시 예제입니다. 키를 누르면 종료합니다. |
 | `sosu`, `sosu2`, `sosu3` | 소수(prime number)를 계산해 콘솔에 출력합니다. |
+| `tetris` | 테트리스 게임. 커서키 / Space / Enter 사용. |
 | `type <파일>` | 텍스트 파일 내용을 콘솔에 출력합니다. 예: `type euc.txt` |
 | `touch.he2 <파일>` | 사용자 API 경유로 빈 파일을 만듭니다. 기존 파일은 보존합니다. |
 | `echo.he2 <문자열> > <파일>` | 사용자 API 경유로 문자열과 줄바꿈을 파일에 저장합니다. 내장 `echo`와 구분하려면 `.he2`를 붙여 실행합니다. |
 | `fdel <파일>` | 사용자 API 경유로 파일을 삭제합니다. |
-| `iroha` | 일본어 문자열 출력 예제입니다. `langmode`와 함께 확인하면 좋습니다. |
-| `chklang` | 현재 언어 모드를 출력합니다. |
-| `notrec` | 비직사각형 창 표시 예제입니다. Enter로 종료합니다. |
-| `bball` | 공/선 그래픽 예제입니다. Enter로 종료합니다. |
-| `invader` | 인베이더 게임 예제입니다. 커서키와 Space를 사용합니다. |
-| `calc <식>` | 정수 계산기입니다. 예: `calc 123+0x10`, `calc (5+3)*4` |
-| `tview <파일> [-w30 -h10 -t4]` | 텍스트 파일 뷰어입니다. 예: `tview ipl09.nas`, `tview euc.txt -w40 -h15` |
-| `mmlplay <파일.mml>` | MML 음악 파일을 재생합니다. 예: `mmlplay kirakira.mml`, `mmlplay daigo.mml`, `mmlplay daiku.mml` |
-| `gview <그림파일>` | BMP/JPEG 뷰어입니다. 예: `gview fujisan.jpg`, `gview night.bmp` |
+
+> 옛 HRB 앱(`calc`, `tview`, `mmlplay`, `gview`, `invader`, `bball`, `notrec`, `iroha`, `chklang` 등) 은 현재 데이터 디스크에 포함되지 않습니다. work1 작업으로 이미지에 들어가는 앱이 HE2 포맷으로 한정됐고, 이 앱들은 아직 HE2 로 마이그레이션되지 않았습니다.
 
 ## 포함 데이터 파일
 
 | 파일 | 용도 |
 |---|---|
-| `euc.txt` | 텍스트/언어 모드 테스트용 파일입니다. |
-| `kirakira.mml`, `daigo.mml`, `daiku.mml` | `mmlplay` 로 재생할 수 있는 음악 데이터입니다. |
-| `fujisan.jpg`, `night.bmp` | `gview` 로 볼 수 있는 이미지 파일입니다. |
-| `nihongo.fnt` | 커널이 부팅 중 읽는 일본어 폰트 파일입니다. |
+| `euc.txt` | 텍스트/언어 모드 테스트용 파일입니다. `type euc.txt` 로 읽어볼 수 있습니다. |
+| `kirakira.mml`, `daigo.mml`, `daiku.mml` | MML 음악 데이터 (현재 재생 앱은 미포함). |
+| `fujisan.jpg`, `night.bmp` | 이미지 파일 (현재 뷰어 앱은 미포함). |
+| `ipl09.nas`, `make.bat` | 빌드 시점 자료 — `cp` / `type` 동작 검증용으로 들어 있습니다. |
+
+부팅 FDD(`A:`) 에는 `HARIBOTE.SYS` + `NIHONGO.FNT` 만 들어 있고, 콘솔/`dir` 등은 모두 데이터 HDD(`C:`) 만 봅니다. 자세한 디스크 구조는 [`_doc/storage.md`](_doc/storage.md) 참고.
 
 ## 입력 팁
 

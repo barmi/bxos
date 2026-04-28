@@ -10,7 +10,7 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 
 ## 2. 현재 위치 (2026-04-28 기준)
 
-- **Phase 0, 1, 2, 3, 4, 5, 6, 7 완료**. 다음은 Phase 8 (문서화 / 마무리).
+- **Phase 0 ~ 8 완료**. work1 작업은 모두 종료.
 - HE2(.he2) 포맷이 새로 도입되어, 빌드 이미지에 **.hrb 는 더 이상 포함되지 않고 .he2 앱 23개만** 들어감.
 - 빌드 산출물이 **두 갈래로 분리**됨:
   - `build/cmake/haribote.img` — 1.44MB FAT12 부팅 FDD (`HARIBOTE.SYS` + `NIHONGO.FNT` 만)
@@ -109,13 +109,14 @@ work1.md §2 표가 정본. 요약:
 - 게스트 드라이브: **`A:` = FDD, `C:` = HDD**, 콘솔 기본은 `C:` (Phase 3 도입)
 - 호스트 도구: **자체 Python** (외부 mtools 의존 없음)
 
-## 5. 다음 작업 (Phase 8 — 문서화 / 마무리)
+## 5. Phase 8 — 문서화 / 마무리 (완료)
 
-work1.md §3 Phase 8 그대로. 요지:
+다음 문서가 추가/갱신됨:
 
-1. [_doc](../_doc) 에 드라이브 모델 / FAT16 레이아웃 / ATA 사용 설명 문서 추가.
-2. [README.utf8.md](../README.utf8.md) / [SETUP-MAC.md](../SETUP-MAC.md) 의 빌드/실행 섹션을 두 이미지 구조로 갱신.
-3. [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 최종 점검.
+1. [_doc/storage.md](storage.md) **신규** — 드라이브 모델(A:/C:), FAT16 BPB/LBA 레이아웃, ATA PIO 드라이버 / I/O 포트 / 폴링 정책, 호스트 도구 사용법, 알려진 제약.
+2. [README.utf8.md](../README.utf8.md) — 빠른 시작/디렉터리 구조를 CMake 기반 두 이미지 구조로 갱신.
+3. [SETUP-MAC.md](../SETUP-MAC.md) — 삭제된 `build-mac.sh` / `build-modern.sh` 경로 제거 후 CMake 단일 빌드 경로로 재작성. `install-<app>` / `bxos_fat.py ls` / `fsck_msdos` 검증 절차 포함.
+4. [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) — 데이터 디스크에 실제로 들어 있는 HE2 앱 23 개만 남기고 미포팅 HRB 앱 항목 정리 (tetris 추가, 미포함 앱은 별도 노트로 안내).
 
 **Phase 7 검증 기록**:
 - `python3 tools/modern/bxos_fat.py create /tmp/bxos-fat-tool.img --size 32M` 성공.
@@ -123,6 +124,12 @@ work1.md §3 Phase 8 그대로. 요지:
 - `bxos_fat.py rm` 후 `fsck_msdos -n` 통과.
 - `cmake -S . -B build/cmake && cmake --build build/cmake --target install-tetris` 성공.
 - `data.img:/tetris.he2` 추출본이 `build/cmake/he2/bin/tetris.he2` 와 byte-for-byte 동일, `fsck_msdos -n build/cmake/data.img` 통과.
+
+**Phase 8 검증 기록**:
+- `cmake --build build/cmake --target bxos` clean re-build 성공.
+- `fsck_msdos -n build/cmake/haribote.img` / `fsck_msdos -n build/cmake/data.img` 둘 다 통과 (data.img: 31 files, 32590 KiB free).
+- `install-tetris` 후 호스트 추출 round-trip `cmp` 일치.
+- `bxos_fat.py ls build/cmake/data.img:/` 23 HE2 + 8 데모 데이터 = 31 entries 확인.
 
 ## 6. 빠른 빌드/실행 치트시트
 
@@ -193,7 +200,7 @@ echo -e "info block\nquit" | qemu-system-i386 -m 32 -accel tcg -display none \
 | 파일시스템 write | (확장) [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | ☑ Phase 4 완료. create/write/truncate/unlink + FAT/dir 동기화. |
 | 콘솔 명령 / API | [harib27f/haribote/console.c](../harib27f/haribote/console.c), [harib27f/haribote/bootpack.c](../harib27f/haribote/bootpack.c) | ☑ Phase 6 완료. `touch`/`rm`/`echo`/`mkfile`/`cp`/`mv` 지원. |
 | 사용자 API (HE2) | [he2/libbxos/](../he2/libbxos/) | ☑ Phase 5 완료. |
-| 문서 | [BXOS-COMMANDS.md](../BXOS-COMMANDS.md), [README.utf8.md](../README.utf8.md), [SETUP-MAC.md](../SETUP-MAC.md) | Phase 8. |
+| 문서 | [BXOS-COMMANDS.md](../BXOS-COMMANDS.md), [README.utf8.md](../README.utf8.md), [SETUP-MAC.md](../SETUP-MAC.md), [_doc/storage.md](storage.md) | ☑ Phase 8 완료. |
 
 ## 8. 이 작업에서 함정으로 미리 알아둘 것
 

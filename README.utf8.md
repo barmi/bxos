@@ -28,23 +28,43 @@
 
 ## 빠른 시작 (macOS Apple Silicon)
 
-자세한 안내는 `SETUP-MAC.md` 참고.
+자세한 안내는 `SETUP-MAC.md`, 콘솔 명령은 `BXOS-COMMANDS.md`, 디스크 구조는 `_doc/storage.md` 참고.
 
 ```bash
-# 1. QEMU 설치 (한 번만)
-brew install qemu
+# 1. 사전 도구 설치 (한 번만)
+brew install qemu nasm i686-elf-gcc i686-elf-binutils
+brew install --cask cmake     # 또는 brew install cmake
 
-# 2. 이미 빌드된 OS를 즉시 부팅
-cd harib27f
-qemu-system-i386 -m 32 -fda haribote.img -boot a
+# 2. CMake 구성 + 빌드
+cmake -S . -B build/cmake
+cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
+
+# 3. 부팅 (FDD 부팅 + data.img 자동으로 -hda 부착)
+./run-qemu.sh
+```
+
+빌드 산출물은 두 갈래로 분리되어 있습니다.
+
+| 이미지 | 위치 | 내용 |
+|---|---|---|
+| 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 23개 + 데모 데이터 8개 |
+
+앱 하나만 다시 빌드한 뒤 데이터 이미지에 부분 갱신하려면:
+
+```bash
+cmake --build build/cmake --target install-tetris   # 예: tetris.he2 만 교체
 ```
 
 ## 디렉터리 구조
 
 | 경로 | 설명 |
 |---|---|
-| `harib27f/` | 최종 단계 OS 소스 + 부팅 가능한 `haribote.img`/`haribote.iso` |
-| `harib27f/haribote/` | 커널(부트팩) 소스: bootpack.c, console.c, sheet.c, window.c … |
-| `harib27f/<app>/`   | 사용자 모드 앱: invader, calc, bball, gview, mmlplay … |
-| `z_tools/`           | 원본 Windows 빌드 툴체인 (.exe) — Wine 또는 현대 툴체인으로 대체 |
-| `z_osabin/`, `z_new_o/`, `z_new_w/` | 보조 빌드 스크립트 |
+| `harib27f/` | 커널 + legacy 앱 소스 + 폰트 / 데모 데이터 |
+| `harib27f/haribote/` | 커널(부트팩) 소스: bootpack.c, console.c, ata.c, fs_fat.c, sheet.c, window.c … |
+| `harib27f/<app>/`   | legacy 앱 소스 (HRB) — 빌드는 되지만 더 이상 이미지에 포함되지 않음 |
+| `he2/`               | 새 HE2 (Haribote Executable v2) 앱 트리 — 현재 이미지에 들어가는 앱들 |
+| `cmake/`             | CMake 툴체인 / HariboteApp 헬퍼 |
+| `tools/modern/`      | NASM + gcc + Python 빌드 도구 (`mkfat12.py`, `bxos_fat.py`, …) |
+| `z_tools/`, `z_osabin/`, `z_new_o/`, `z_new_w/` | 원본 Windows 빌드 툴체인 — 현재 빌드는 사용하지 않음 |
+| `_doc/`              | 설계 문서 (`storage.md`, `work1.md`, …) |
