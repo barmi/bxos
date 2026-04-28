@@ -15,11 +15,16 @@ static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 		int *hist_count, char *cmdline);
 static char *skip_spaces(char *p);
 static int parse_decimal(char *p, int *out);
+static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh);
 static struct FILEINFO *app_find(char *cmdline, char *app_name);
 static void app_name_from_finfo(char *dst, struct FILEINFO *finfo);
 static int app_subsystem(char *cmdline, int *fat);
 static void task_set_app(struct TASK *task, char *name, int app_type);
 static void task_reset_console(struct TASK *task);
+
+#define FH_MODE_FREE	0
+#define FH_MODE_READ	1
+#define FH_MODE_WRITE	2
 
 void console_task(struct SHEET *sheet, int memtotal)
 {
@@ -54,7 +59,11 @@ void console_task(struct SHEET *sheet, int memtotal)
 	}
 	file_readfat(fat, (unsigned char *) (ADR_DISKIMG + 0x000200));
 	for (i = 0; i < 8; i++) {
-		fhandle[i].buf = 0;	/* 미사용 마크 */
+		fhandle[i].buf = 0;
+		fhandle[i].size = 0;
+		fhandle[i].pos = 0;
+		fhandle[i].mode = FH_MODE_FREE;
+		fhandle[i].finfo = 0;
 	}
 	task->fhandle = fhandle;
 	task->fat = fat;
@@ -424,6 +433,22 @@ static int parse_decimal(char *p, int *out)
 	}
 	*out = v;
 	return 0;
+}
+
+static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
+{
+	if (fh == 0 || fh->mode == FH_MODE_FREE) {
+		return;
+	}
+	if (fh->mode == FH_MODE_READ && fh->buf != 0 && fh->size > 0) {
+		memman_free_4k(memman, (int) fh->buf, fh->size);
+	}
+	fh->buf = 0;
+	fh->size = 0;
+	fh->pos = 0;
+	fh->mode = FH_MODE_FREE;
+	fh->finfo = 0;
+	return;
 }
 
 void cmd_mem(struct CONSOLE *cons, int memtotal)
@@ -966,11 +991,7 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 		}
 	}
 	for (i = 0; i < 8; i++) {
-		if (task->fhandle[i].buf != 0) {
-			memman_free_4k(memman, (int) task->fhandle[i].buf,
-					task->fhandle[i].size);
-			task->fhandle[i].buf = 0;
-		}
+		filehandle_close(memman, &task->fhandle[i]);
 	}
 	timer_cancelall(&task->fifo);
 	memman_free_4k(memman, (int) q, total_sz);
@@ -1033,10 +1054,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 				}
 			}
 			for (i = 0; i < 8; i++) {	/* 클로우즈 하지 않는 파일을 클로우즈 */
-				if (task->fhandle[i].buf != 0) {
-					memman_free_4k(memman, (int) task->fhandle[i].buf, task->fhandle[i].size);
-					task->fhandle[i].buf = 0;
-				}
+				filehandle_close(memman, &task->fhandle[i]);
 			}
 			timer_cancelall(&task->fifo);
 			memman_free_4k(memman, (int) q, segsiz);
@@ -1217,62 +1235,80 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 	} else if (edx == 21) {
 		// api_fopen
 		for (i = 0; i < 8; i++) {
-			if (task->fhandle[i].buf == 0) {
+			if (task->fhandle[i].mode == FH_MODE_FREE) {
 				break;
 			}
 		}
-		fh = &task->fhandle[i];
 		reg[7] = 0;
 		if (i < 8) {
 			/* work1 Phase 3: 사용자 앱의 파일 열기도 데이터 드라이브로. */
 			finfo = fs_data_search((char *) ebx + ds_base);
 			if (finfo != 0) {
-				reg[7] = (int) fh;
+				fh = &task->fhandle[i];
 				fh->size = finfo->size;
 				fh->pos = 0;
-				fh->buf = fs_data_loadfile(finfo->clustno, &fh->size);
+				fh->mode = FH_MODE_READ;
+				fh->finfo = 0;
+				if (fh->size == 0) {
+					fh->buf = 0;
+					reg[7] = (int) fh;
+				} else {
+					fh->buf = fs_data_loadfile(finfo->clustno, &fh->size);
+					if (fh->buf != 0) {
+						reg[7] = (int) fh;
+					} else {
+						filehandle_close(memman, fh);
+					}
+				}
 			}
 		}
 	} else if (edx == 22) {
 		// api_fclose
 		fh = (struct FILEHANDLE *) eax;
-		memman_free_4k(memman, (int) fh->buf, fh->size);
-		fh->buf = 0;
+		filehandle_close(memman, fh);
 	} else if (edx == 23) {
 		// api_fseek
 		fh = (struct FILEHANDLE *) eax;
-		if (ecx == 0) {
-			fh->pos = ebx;
-		} else if (ecx == 1) {
-			fh->pos += ebx;
-		} else if (ecx == 2) {
-			fh->pos = fh->size + ebx;
-		}
-		if (fh->pos < 0) {
-			fh->pos = 0;
-		}
-		if (fh->pos > fh->size) {
-			fh->pos = fh->size;
+		if (fh != 0 && fh->mode != FH_MODE_FREE) {
+			if (ecx == 0) {
+				fh->pos = ebx;
+			} else if (ecx == 1) {
+				fh->pos += ebx;
+			} else if (ecx == 2) {
+				fh->pos = fh->size + ebx;
+			}
+			if (fh->pos < 0) {
+				fh->pos = 0;
+			}
+			if (fh->pos > fh->size) {
+				fh->pos = fh->size;
+			}
 		}
 	} else if (edx == 24) {
 		// api_fsize
 		fh = (struct FILEHANDLE *) eax;
-		if (ecx == 0) {
-			reg[7] = fh->size;
-		} else if (ecx == 1) {
-			reg[7] = fh->pos;
-		} else if (ecx == 2) {
-			reg[7] = fh->pos - fh->size;
+		reg[7] = 0;
+		if (fh != 0 && fh->mode != FH_MODE_FREE) {
+			if (ecx == 0) {
+				reg[7] = fh->size;
+			} else if (ecx == 1) {
+				reg[7] = fh->pos;
+			} else if (ecx == 2) {
+				reg[7] = fh->pos - fh->size;
+			}
 		}
 	} else if (edx == 25) {
 		// api_fread
 		fh = (struct FILEHANDLE *) eax;
-		for (i = 0; i < ecx; i++) {
-			if (fh->pos == fh->size) {
-				break;
+		i = 0;
+		if (fh != 0 && fh->mode == FH_MODE_READ) {
+			for (i = 0; i < ecx; i++) {
+				if (fh->pos == fh->size) {
+					break;
+				}
+				*((char *) ebx + ds_base + i) = fh->buf[fh->pos];
+				fh->pos++;
 			}
-			*((char *) ebx + ds_base + i) = fh->buf[fh->pos];
-			fh->pos++;
 		}
 		reg[7] = i;
 	} else if (edx == 26) {
@@ -1292,6 +1328,54 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 	} else if (edx == 27) {
 		// api_getlang
 		reg[7] = task->langmode;
+	} else if (edx == 28) {
+		// api_fopen_w
+		for (i = 0; i < 8; i++) {
+			if (task->fhandle[i].mode == FH_MODE_FREE) {
+				break;
+			}
+		}
+		reg[7] = 0;
+		if (i < 8) {
+			char *name = (char *) ebx + ds_base;
+			finfo = fs_data_search(name);
+			if (finfo == 0) {
+				if (fs_data_create(name) == 0) {
+					finfo = fs_data_search(name);
+				}
+			} else if (fs_data_truncate(finfo, 0) != 0) {
+				finfo = 0;
+			}
+			if (finfo != 0) {
+				fh = &task->fhandle[i];
+				fh->buf = 0;
+				fh->size = finfo->size;
+				fh->pos = 0;
+				fh->mode = FH_MODE_WRITE;
+				fh->finfo = finfo;
+				reg[7] = (int) fh;
+			}
+		}
+	} else if (edx == 29) {
+		// api_fwrite
+		fh = (struct FILEHANDLE *) eax;
+		reg[7] = 0;
+		if (fh != 0 && fh->mode == FH_MODE_WRITE && fh->finfo != 0 && ecx >= 0) {
+			i = fs_data_write(fh->finfo, fh->pos, (char *) ebx + ds_base, ecx);
+			if (i > 0) {
+				fh->pos += i;
+				fh->size = fh->finfo->size;
+			}
+			reg[7] = i;
+		}
+	} else if (edx == 30) {
+		// api_fdelete
+		finfo = fs_data_search((char *) ebx + ds_base);
+		if (finfo != 0 && fs_data_unlink(finfo) == 0) {
+			reg[7] = 0;
+		} else {
+			reg[7] = -1;
+		}
 	}
 	return 0;
 }

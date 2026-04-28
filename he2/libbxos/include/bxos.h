@@ -51,6 +51,9 @@ void  api_fclose(int fhandle);
 void  api_fseek(int fhandle, int offset, int mode);
 int   api_fsize(int fhandle, int mode);
 int   api_fread(char *buf, int maxsize, int fhandle);
+int   api_fopen_w(const char *fname);
+int   api_fwrite(const char *buf, int maxsize, int fhandle);
+int   api_fdelete(const char *fname);
 
 /* ---- misc ---------------------------------------------------------------- */
 int   api_cmdline(char *buf, int maxsize);

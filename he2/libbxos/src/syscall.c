@@ -288,3 +288,28 @@ int api_getlang(void) {
         : "=a"(r) : "d"(27) : "memory");
     return r;
 }
+
+/* ─── 28: fopen_w — EBX=fname → EAX = write handle ───────────────── */
+int api_fopen_w(const char *fname) {
+    int h;
+    __asm__ volatile ("int $0x40"
+            : "=a"(h) : "d"(28), "b"(fname) : "memory");
+    return h;
+}
+
+/* ─── 29: fwrite — EBX=buf, ECX=maxsize, EAX=fhandle → EAX = written */
+int api_fwrite(const char *buf, int maxsize, int fhandle) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(29), "b"(buf), "c"(maxsize), "0"(fhandle) : "memory");
+    return r;
+}
+
+/* ─── 30: fdelete — EBX=fname → EAX = 0 on success, -1 on failure ─── */
+int api_fdelete(const char *fname) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(30), "b"(fname) : "memory");
+    return r;
+}
+

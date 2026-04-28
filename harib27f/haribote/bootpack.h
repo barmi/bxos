@@ -345,6 +345,8 @@ struct FILEHANDLE {
 	char *buf;
 	int size;
 	int pos;
+	int mode;                 /* 0=free, 1=read buffer, 2=write-through */
+	struct FILEINFO *finfo;   /* write handle target */
 };
 
 

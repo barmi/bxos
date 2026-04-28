@@ -49,7 +49,7 @@
 - ☑ [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) 에 `--fs {fat12,fat16}` + `--size` 옵션 추가. `FsParams` 데이터클래스 도입으로 BPB/FAT 폭 분기 일원화. FAT12 회귀 OK.
 - ☑ CMake 타겟 정리:
   - `kernel-img` : `build/cmake/haribote.img` (FAT12 1.44MB) — `HARIBOTE.SYS` + `NIHONGO.FNT` 만
-  - `data-img`   : `build/cmake/data.img` (FAT16 32MB) — HE2 앱 20개 + 데모 데이터 8개
+  - `data-img`   : `build/cmake/data.img` (FAT16 32MB) — HE2 앱 23개 + 데모 데이터 8개
   - `image`, `bxos ALL` : 둘 다
   - `run` : `-fda haribote.img -hda data.img` 둘 다 부착
 - ☑ `run-qemu.sh` 는 Phase 0 에서 이미 정비됨 (자동 부착 동작 확인).
@@ -112,16 +112,29 @@
   - `mkfile big.bin 102400` 실행 → `BIG.BIN` 크기 102400B, FAT16 체인 50 clusters, `fsck_msdos -n` 통과.
   - `mkfile test.txt 20` 후 `rm test.txt` 실행 → 파일 엔트리 제거, free cluster 수 원복, `fsck_msdos -n` 통과.
 
-### Phase 5 — 사용자 공간 API 확장 (1.5일)
+### Phase 5 — 사용자 공간 API 확장 (완료 — 2026-04-28)
 **목표**: 앱이 파일을 쓸 수 있게 한다.
 
-- ☐ [apilib](harib27f/apilib) 의 `api_fopen` 류 함수 정리/확장:
-  - `api_fopen_w(path)` — 쓰기 모드.
-  - `api_fwrite(fh, buf, n)`.
-  - `api_fdelete(path)`.
-- ☐ syscall 디스패처([console.c](harib27f/haribote/console.c) `cmd_app` / API 0x40 계열) 에 신규 번호 추가.
-- ☐ HE2 `libbxos` ([he2/libbxos](he2/libbxos))에도 동일 API wrapper 추가해서 modern 빌드 앱도 사용 가능하게.
-- ☐ 검증용 작은 앱 추가: `harib27f/touch/touch.c`, `harib27f/echo/echo.c` (인자를 파일로 저장).
+- ☑ [apilib](harib27f/apilib) 의 `api_fopen` 류 함수 정리/확장:
+  - `api_fopen_w(path)` — 쓰기 모드로 파일 생성/덮어쓰기.
+  - `api_fwrite(fh, buf, n)` — 현재 파일 위치에 raw bytes write.
+  - `api_fdelete(path)` — 파일 삭제.
+- ☑ syscall 디스패처([console.c](harib27f/haribote/console.c) `hrb_api`) 에 신규 번호 추가:
+  - edx=28 `api_fopen_w`
+  - edx=29 `api_fwrite`
+  - edx=30 `api_fdelete`
+  - `struct FILEHANDLE` 을 `mode`/`finfo` 포함 형태로 확장해 read buffer handle 과 write-through handle 을 같은 슬롯에서 관리.
+- ☑ HE2 `libbxos` ([he2/libbxos](he2/libbxos))에도 동일 API wrapper 추가해서 modern 빌드 앱도 사용 가능하게 함.
+- ☑ legacy HRB `apilib` 에 `api028.nas` / `api029.nas` / `api030.nas` 추가.
+- ☑ 검증용 작은 앱 추가:
+  - `harib27f/touch/touch.c` — `touch.he2 <file>`.
+  - `harib27f/echo/echo.c` — `echo.he2 <text> > <file>`.
+  - `harib27f/fdel/fdel.c` — `fdel.he2 <file>`.
+- ☑ 검증:
+  - 전체 빌드 성공, `data.img` 에 HE2 앱 23개 + 데모 데이터 8개 포함.
+  - QEMU HMP `sendkey` 로 `echo.he2 hello > api.txt` 실행 → 호스트 FAT 파싱 결과 `API.TXT = hello\n`, `fsck_msdos -n` 통과.
+  - `touch.he2 empty.txt` 실행 → 0바이트 파일 생성 확인.
+  - `fdel.he2 api.txt` 실행 → 파일 삭제 및 free cluster 수 증가, `fsck_msdos -n` 통과.
 
 ### Phase 6 — 콘솔 명령 보강 (1일)
 - ☐ `cp <src> <dst>`, `rm <file>`, `mv <src> <dst>`, `mkdir <dir>` (선택).
@@ -133,11 +146,11 @@
 
 - ☐ `tools/modern/fat16.py` (또는 `mkfat12.py` 를 확장한 `bxos_fat.py`):
   - `bxos_fat.py create   data.img --size 32M`
-  - `bxos_fat.py cp HOST:hello.hrb data.img:/hello.hrb`
-  - `bxos_fat.py rm data.img:/hello.hrb`
+  - `bxos_fat.py cp HOST:hello.he2 data.img:/hello.he2`
+  - `bxos_fat.py rm data.img:/hello.he2`
   - `bxos_fat.py ls data.img:/`
 - ☐ CMake 에 `install-app <APP>` 류 헬퍼 타겟 추가:
-  - `cmake --build build/modern --target install-tetris` → 빌드된 `tetris.hrb` 를 `data.img` 에 복사.
+  - `cmake --build build/cmake --target install-tetris` → 빌드된 `tetris.he2` 를 `data.img` 에 복사.
 - ☐ macOS/Linux에서 동일하게 돌도록 외부 의존 없는 순수 Python 유지.
 
 ### Phase 8 — 문서화 / 마무리 (0.5일)
@@ -155,9 +168,9 @@
 | Phase 2 | 부팅 시 디버그 창에 IDENTIFY 결과(모델/섹터수) 출력. |
 | Phase 3 | `dir` 명령이 HDD(`C:`) 의 내용을 보여주고, 거기 들어 있는 `winhelo` 가 실행됨. |
 | Phase 4 | 콘솔에서 파일 생성 → 재부팅 후에도 그 파일이 살아있음. |
-| Phase 5 | 사용자 앱(`echo hi > x.txt`)이 동작. |
-| Phase 6 | `cp a.hrb b.hrb && rm a.hrb && b` 시퀀스 동작. |
-| Phase 7 | 호스트에서 `bxos_fat.py cp build/.../tetris.hrb data.img:/tetris.hrb` 한 번으로 새 앱 반영, QEMU 재시작 후 `tetris` 실행 가능. |
+| Phase 5 | 사용자 앱(`echo.he2 hi > x.txt`)이 동작. |
+| Phase 6 | `cp a.he2 b.he2 && rm a.he2 && b` 시퀀스 동작. |
+| Phase 7 | 호스트에서 `bxos_fat.py cp build/.../tetris.he2 data.img:/tetris.he2` 한 번으로 새 앱 반영, QEMU 재시작 후 `tetris` 실행 가능. |
 
 ## 5. 위험 요소 / 함정
 
