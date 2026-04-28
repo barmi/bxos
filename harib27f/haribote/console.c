@@ -16,6 +16,7 @@ static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 static char *skip_spaces(char *p);
 static int parse_decimal(char *p, int *out);
 static int split_two_args(char *args, char **arg1, char **arg2);
+static void name83_to_text(unsigned char name83[11], char *dst);
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh);
 static int copy_file_raw(char *src_name, char *dst_name);
 static struct FILEINFO *app_find(char *cmdline, char *app_name);
@@ -386,6 +387,8 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_task();
 	} else if (strcmp(cmdline, "disk") == 0 && cons->sht != 0) {
 		cmd_disk(cons);
+	} else if (strncmp(cmdline, "resolve ", 8) == 0 && cons->sht != 0) {
+		cmd_resolve(cons, cmdline);
 	} else if (strncmp(cmdline, "touch ", 6) == 0 && cons->sht != 0) {
 		cmd_touch(cons, cmdline);
 	} else if (strncmp(cmdline, "rm ", 3) == 0 && cons->sht != 0) {
@@ -466,6 +469,37 @@ static int split_two_args(char *args, char **arg1, char **arg2)
 	}
 	*p = 0;
 	return 0;
+}
+
+static void name83_to_text(unsigned char name83[11], char *dst)
+{
+	int i, j = 0, ext = 0;
+	if (name83[0] == 0) {
+		dst[0] = '(';
+		dst[1] = 'n';
+		dst[2] = 'o';
+		dst[3] = 'n';
+		dst[4] = 'e';
+		dst[5] = ')';
+		dst[6] = 0;
+		return;
+	}
+	for (i = 0; i < 8 && name83[i] != ' '; i++) {
+		dst[j++] = name83[i];
+	}
+	for (i = 8; i < 11; i++) {
+		if (name83[i] != ' ') {
+			ext = 1;
+		}
+	}
+	if (ext) {
+		dst[j++] = '.';
+		for (i = 8; i < 11 && name83[i] != ' '; i++) {
+			dst[j++] = name83[i];
+		}
+	}
+	dst[j] = 0;
+	return;
 }
 
 static void filehandle_close(struct MEMMAN *memman, struct FILEHANDLE *fh)
@@ -659,6 +693,39 @@ void cmd_disk(struct CONSOLE *cons)
 		}
 	}
 	cons_newline(cons);
+	return;
+}
+
+void cmd_resolve(struct CONSOLE *cons, char *cmdline)
+{
+	char *path = skip_spaces(cmdline + 8);
+	unsigned int parent_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	char name[16], s[80];
+	int r;
+
+	if (*path == 0) {
+		cons_putstr0(cons, "usage: resolve <path>\n\n");
+		return;
+	}
+	r = fs_resolve_path(0, path, &parent_clus, leaf_name83, &leaf, &slot);
+	if (r != 0) {
+		sprintf(s, "resolve failed: %d\n\n", r);
+		cons_putstr0(cons, s);
+		return;
+	}
+	name83_to_text(leaf_name83, name);
+	sprintf(s, "parent=%d leaf=%s\n", parent_clus, name);
+	cons_putstr0(cons, s);
+	if (leaf.name[0] == 0) {
+		cons_putstr0(cons, "found=no\n\n");
+		return;
+	}
+	sprintf(s, "found=yes attr=%02x clus=%d size=%d\n\n",
+			leaf.type, leaf.clustno, leaf.size);
+	cons_putstr0(cons, s);
 	return;
 }
 

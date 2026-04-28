@@ -361,6 +361,7 @@ void cmd_cls(struct CONSOLE *cons);
 void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);
 void cmd_disk(struct CONSOLE *cons);
+void cmd_resolve(struct CONSOLE *cons, char *cmdline);
 void cmd_touch(struct CONSOLE *cons, char *cmdline);
 void cmd_rm(struct CONSOLE *cons, char *cmdline);
 void cmd_cp(struct CONSOLE *cons, char *cmdline);
@@ -416,6 +417,13 @@ char *file_loadfile2(int clustno, int *psize, int *fat);
 
 /* fs_fat.c — FAT12/FAT16 마운트 + ATA 기반 read (work1 Phase 3).
  * 데이터 드라이브(=ATA master, FAT16) 한 개만 다룬다. */
+#define MAX_PATH	128
+#define FS_MAX_DEPTH	16
+#define FS_RESOLVE_NO_DISK		-1
+#define FS_RESOLVE_BAD_PATH		-2
+#define FS_RESOLVE_TOO_LONG		-3
+#define FS_RESOLVE_NOT_FOUND	-4
+#define FS_RESOLVE_NOT_DIR		-5
 struct FS_MOUNT {
 	int drive;
 	int fs_type;                  /* 12 or 16 */
@@ -461,6 +469,9 @@ int dir_find(unsigned int parent_clus, unsigned char name83[11],
 		struct FILEINFO *finfo, struct DIR_SLOT *slot_addr);
 int dir_alloc_slot(unsigned int parent_clus, struct DIR_SLOT *slot_addr);
 int dir_write_slot(struct DIR_SLOT *slot_addr, struct FILEINFO *entry);
+int fs_resolve_path(unsigned int start_clus, char *path,
+		unsigned int *parent_clus, unsigned char leaf_name83[11],
+		struct FILEINFO *leaf_finfo, struct DIR_SLOT *leaf_slot);
 struct FILEINFO *fs_data_search(char *name);
 char *fs_data_loadfile(int clustno, int *psize);
 int fs_data_read(struct FILEINFO *finfo, int pos, void *buf, int n);

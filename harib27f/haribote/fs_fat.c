@@ -19,6 +19,8 @@ static int sync_finfo_entry(struct FS_MOUNT *m, struct FILEINFO *finfo);
 static int zero_cluster(struct FS_MOUNT *m, unsigned int clus);
 static unsigned int find_free_cluster(struct FS_MOUNT *m);
 static unsigned int find_tail_cluster(struct FS_MOUNT *m, unsigned int clus);
+static int dotdot_cluster(unsigned int dir_clus, unsigned int *parent_clus);
+static int valid_data_cluster(const struct FS_MOUNT *m, unsigned int clus);
 
 /* BPB(첫 섹터) 한 장만 읽어 마운트 정보를 채운다. */
 static int read_bpb(int drive, struct FS_MOUNT *m)
@@ -116,6 +118,155 @@ struct FILEINFO *fs_data_root(void)
 int fs_data_root_max(void)
 {
 	return g_data_mounted ? g_data_mount.root_entries : 0;
+}
+
+static int clear_name83(unsigned char name83[11])
+{
+	int i;
+	if (name83 == 0) {
+		return -1;
+	}
+	for (i = 0; i < 11; i++) {
+		name83[i] = 0;
+	}
+	return 0;
+}
+
+static int copy_component(char *dst, int dstsz, char *src, int len)
+{
+	int i;
+	if (dst == 0 || src == 0 || len <= 0 || len >= dstsz) {
+		return -1;
+	}
+	for (i = 0; i < len; i++) {
+		dst[i] = src[i];
+	}
+	dst[len] = 0;
+	return 0;
+}
+
+static int has_more_components(char *p)
+{
+	while (*p == '/') {
+		p++;
+	}
+	return *p != 0;
+}
+
+int fs_resolve_path(unsigned int start_clus, char *path,
+		unsigned int *parent_clus, unsigned char leaf_name83[11],
+		struct FILEINFO *leaf_finfo, struct DIR_SLOT *leaf_slot)
+{
+	unsigned int cur;
+	char comp[MAX_PATH];
+	char *p, *q;
+	unsigned char name83[11];
+	struct FILEINFO finfo;
+	struct DIR_SLOT slot;
+	int len, depth, more, trailing_dir;
+
+	if (!g_data_mounted) {
+		return FS_RESOLVE_NO_DISK;
+	}
+	if (path == 0 || parent_clus == 0 || leaf_name83 == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	for (len = 0; path[len] != 0; len++) {
+		if (len >= MAX_PATH) {
+			return FS_RESOLVE_TOO_LONG;
+		}
+		if (path[len] == '\\') {
+			return FS_RESOLVE_BAD_PATH;
+		}
+	}
+	if (len == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	if (start_clus != 0 && !valid_data_cluster(&g_data_mount, start_clus)) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+
+	clear_name83(leaf_name83);
+	if (leaf_finfo != 0) {
+		leaf_finfo->name[0] = 0;
+	}
+	if (leaf_slot != 0) {
+		leaf_slot->lba = 0;
+		leaf_slot->offset = 0;
+		leaf_slot->cache_entry = 0;
+	}
+
+	cur = (path[0] == '/') ? 0 : start_clus;
+	p = path;
+	depth = 0;
+	while (*p != 0) {
+		while (*p == '/') {
+			p++;
+		}
+		if (*p == 0) {
+			break;
+		}
+		q = p;
+		while (*q != 0 && *q != '/') {
+			q++;
+		}
+		len = q - p;
+		if (copy_component(comp, sizeof comp, p, len) != 0) {
+			return FS_RESOLVE_BAD_PATH;
+		}
+		more = has_more_components(q);
+		trailing_dir = (*q == '/' && !more);
+		depth++;
+		if (depth > FS_MAX_DEPTH) {
+			return FS_RESOLVE_TOO_LONG;
+		}
+		if (comp[0] == '.' && comp[1] == 0) {
+			p = q;
+			continue;
+		}
+		if (comp[0] == '.' && comp[1] == '.' && comp[2] == 0) {
+			if (dotdot_cluster(cur, &cur) != 0) {
+				return FS_RESOLVE_BAD_PATH;
+			}
+			p = q;
+			continue;
+		}
+		if (pack_83_name(comp, name83) != 0) {
+			return FS_RESOLVE_BAD_PATH;
+		}
+		if (!more) {
+			int i;
+			*parent_clus = cur;
+			for (i = 0; i < 11; i++) {
+				leaf_name83[i] = name83[i];
+			}
+			if (dir_find(cur, name83, &finfo, &slot) == 0) {
+				if (trailing_dir && (finfo.type & 0x10) == 0) {
+					return FS_RESOLVE_NOT_DIR;
+				}
+				if (leaf_finfo != 0) {
+					*leaf_finfo = finfo;
+				}
+				if (leaf_slot != 0) {
+					*leaf_slot = slot;
+				}
+			}
+			return 0;
+		}
+		if (dir_find(cur, name83, &finfo, &slot) != 0) {
+			return FS_RESOLVE_NOT_FOUND;
+		}
+		if ((finfo.type & 0x10) == 0) {
+			return FS_RESOLVE_NOT_DIR;
+		}
+		cur = finfo.clustno;
+		if (cur != 0 && !valid_data_cluster(&g_data_mount, cur)) {
+			return FS_RESOLVE_BAD_PATH;
+		}
+		p = q;
+	}
+	*parent_clus = cur;
+	return 0;
 }
 
 struct FILEINFO *fs_data_search(char *name)
@@ -300,6 +451,41 @@ void dir_iter_close(struct DIR_ITER *it)
 		it->at_end = 1;
 	}
 	return;
+}
+
+static int dotdot_cluster(unsigned int dir_clus, unsigned int *parent_clus)
+{
+	struct DIR_ITER it;
+	struct FILEINFO entry;
+	struct DIR_SLOT slot;
+	int r, i;
+
+	if (parent_clus == 0) {
+		return -1;
+	}
+	if (dir_clus == 0) {
+		*parent_clus = 0;
+		return 0;
+	}
+	if (dir_iter_open(&it, dir_clus) != 0) {
+		return -1;
+	}
+	for (i = 0; i < 2; i++) {
+		r = dir_iter_next(&it, &entry, &slot);
+		if (r <= 0) {
+			dir_iter_close(&it);
+			return -1;
+		}
+	}
+	dir_iter_close(&it);
+	if (entry.name[0] != '.' || entry.name[1] != '.' || entry.name[2] != ' ') {
+		return -1;
+	}
+	if (entry.clustno != 0 && !valid_data_cluster(&g_data_mount, entry.clustno)) {
+		return -1;
+	}
+	*parent_clus = entry.clustno;
+	return 0;
 }
 
 int dir_find(unsigned int parent_clus, unsigned char name83[11],

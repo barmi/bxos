@@ -18,7 +18,13 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
   - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 `dir_iter_open`/`dir_iter_next`/`dir_iter_close`, `dir_find`, `dir_alloc_slot`, `dir_write_slot` 구현.
   - 기존 `fs_data_search`, `fs_data_create`, `fs_data_write`, `fs_data_truncate`, `fs_data_unlink`는 root 전용 직접 슬롯 갱신 대신 directory slot 추상화를 경유.
   - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img`, `bxos_fat.py ls build/cmake/data.img:/` 통과.
+- **Phase 2 (경로 파싱 / 해석) 코드 작업 완료**:
+  - [bootpack.h](../harib27f/haribote/bootpack.h)에 `MAX_PATH=128`, `FS_MAX_DEPTH=16`, `FS_RESOLVE_*` 에러 코드, `fs_resolve_path()` 프로토타입 추가.
+  - [fs_fat.c](../harib27f/haribote/fs_fat.c)에 절대/상대 path, `.`/`..`, 컴포넌트별 8.3 packing, 마지막 leaf 분리, leaf 존재 여부 조회 구현.
+  - [console.c](../harib27f/haribote/console.c)에 임시 디버그 명령 `resolve <path>` 추가. 출력: parent cluster, leaf 8.3 이름, found/attr/cluster/size.
+  - 검증: `cmake --build build/cmake --target kernel`, `cmake --build build/cmake`, `fsck_msdos -n build/cmake/data.img` 통과.
 - 남은 확인: QEMU 콘솔에서 root 한 단계 명령(`dir`, `cp`, `mv`, `rm`, `touch`, `echo > x`, `mkfile`) 대화형 회귀 확인.
+- 남은 확인: QEMU 콘솔에서 `resolve /`, `resolve tetris.he2`, `resolve nofile`, 추후 mkdir 이후 `resolve /sub/../x` 같은 대화형 확인.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -43,7 +49,7 @@ work1 으로 도입된 쓰기 가능한 FAT16 데이터 디스크에 **서브디
 |---|---|---|
 | 0. 결정 / 인터페이스 | 1d | 본 문서 + work2.md (☑ 완료) |
 | 1. 디렉터리 추상화 | 2d | `struct DIR_ITER` + `dir_*` 함수, root/subdir 공용 코드 경로. **코드 완료, QEMU 대화형 회귀 확인 남음**. |
-| 2. 경로 파싱 / 해석 | 1d | `fs_resolve_path()` — 절대/상대, `.`/`..`, 8.3 packing |
+| 2. 경로 파싱 / 해석 | 1d | `fs_resolve_path()` — 절대/상대, `.`/`..`, 8.3 packing. **코드 완료, QEMU 디버그 명령 확인 남음** |
 | 3. mkdir / rmdir + 콘솔 | 2d | `fs_mkdir`/`fs_rmdir`, 콘솔 `mkdir <path>`/`rmdir <path>` |
 | 4. cwd + 기존 명령 path 화 | 2d | `cd`/`pwd`, `dir`·`cp`·`mv`·`rm`·`touch`·`echo`·`mkfile` 의 path 인자 |
 | 5. 사용자 API + HE2 앱 | 1.5d | path 받는 fopen/fopen_w/fdelete, 신규 `api_getcwd` (edx=31), `pwd.he2` |
@@ -99,8 +105,8 @@ work2.md §5 가 정본. 강조:
 
 ## 9. 시작 명령
 
-Phase 2 로 들어가면 됨. 다음 PR 단위 제안:
+Phase 3 로 들어가면 됨. 다음 PR 단위 제안:
 
-> "`fs_resolve_path()` 를 추가해 절대/상대 path, `.`/`..`, 컴포넌트별 8.3 packing 을 처리하고, 임시 디버그 명령으로 해석 결과를 확인한다."
+> "`fs_mkdir()`/`fs_rmdir()` 와 콘솔 `mkdir <path>`/`rmdir <path>` 를 추가하고, `resolve` 디버그 명령으로 만든 디렉터리 경로 해석까지 확인한다."
 
-QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 2~3 (resolve + mkdir/rmdir) 로 진입한다.
+QEMU 대화형 콘솔 회귀 확인을 먼저 끝내면 더 좋고, 그 뒤 Phase 3 (mkdir/rmdir) 로 진입한다.

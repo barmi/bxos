@@ -60,13 +60,13 @@
   - ☑ `fsck_msdos -n` 통과.
 
 ### Phase 2 — 경로 파싱 / 해석 (1일)
-- ☐ `fs_resolve_path(start_clus, path, *parent_clus, leaf_name83[11], *leaf_finfo)` 구현:
-  - `path` 가 `/` 로 시작하면 root 부터, 아니면 `start_clus` 부터.
-  - 컴포넌트별 `.`/`..` 처리. `..` 는 parent dir 의 entry[1] 로 따라가기. root 의 `..` = root.
-  - 마지막 컴포넌트만 leaf 로 분리해서 caller 가 후속 처리(존재 여부, 생성 등).
-  - 8.3 변환 (`pack_83_name`) 컴포넌트별 적용.
-  - 길이 초과 / 잘못된 컴포넌트 / 중간 경로가 디렉터리가 아님 등 에러 코드 반환.
-- ☐ 단위 테스트 대신 콘솔에서 임시 디버그 명령 `resolve <path>` 로 출력 확인 (Phase 3 직전에 제거).
+- ☑ `fs_resolve_path(start_clus, path, *parent_clus, leaf_name83[11], *leaf_finfo)` 구현:
+  - ☑ `path` 가 `/` 로 시작하면 root 부터, 아니면 `start_clus` 부터.
+  - ☑ 컴포넌트별 `.`/`..` 처리. `..` 는 parent dir 의 entry[1] 로 따라가기. root 의 `..` = root.
+  - ☑ 마지막 컴포넌트만 leaf 로 분리해서 caller 가 후속 처리(존재 여부, 생성 등).
+  - ☑ 8.3 변환 (`pack_83_name`) 컴포넌트별 적용.
+  - ☑ 길이 초과 / 잘못된 컴포넌트 / 중간 경로가 디렉터리가 아님 등 에러 코드 반환.
+- ☐ 단위 테스트 대신 콘솔에서 임시 디버그 명령 `resolve <path>` 로 출력 확인 (Phase 3 직전에 제거). (명령 추가 완료, QEMU 대화형 확인 필요)
 
 ### Phase 3 — mkdir / rmdir + 콘솔 명령 (2일)
 - ☐ `fs_mkdir(start_clus, path)`:
