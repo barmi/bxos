@@ -10,7 +10,7 @@
 
 ### 이번 작업의 목표
 1. **경로 표현 도입** — `/foo/bar.txt`, `../baz` 같은 다단계 경로를 OS / 콘솔 / 사용자 API / 호스트 도구 전부에서 받는다.
-2. **mkdir / rmdir** — 콘솔 명령 + 사용자 API + 호스트 도구로 디렉터리를 생성/삭제할 수 있게.
+2. **mkdir / rmdir** — 콘솔 명령 + 호스트 도구로 디렉터리를 생성/삭제할 수 있게.
 3. **cwd (현재 작업 디렉터리)** — per-task 상태로 도입, `cd <path>` / `pwd` 콘솔 명령. 자식 콘솔/앱은 부모의 cwd 를 상속.
 4. 기존 명령(`dir`/`cp`/`mv`/`rm`/`touch`/`echo`/`mkfile`/`type`/앱 검색) 모두 절대·상대 경로 수용.
 5. 호스트 도구 [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py) 도 동일하게 — `data.img:/sub/file`, `mkdir`, `rmdir` 서브명령.
@@ -41,10 +41,10 @@
 체크박스(☐)는 PR 경계를 표시한다.
 
 ### Phase 0 — 결정 / 인터페이스 확정 (1일)
-- ☐ 2장 결정 표 잠금. 본 문서 + work2-handoff.md 에 반영.
-- ☐ 새 syscall 번호 예약: `api_getcwd` = edx 31. (`api_chdir` 는 도입하지 않음 — cwd 는 콘솔 built-in 만.)
-- ☐ 새 콘솔 prompt 정책: 기본 `>`, `pwd` 출력만 path 표시. (prompt 자체에 cwd 박는 건 화면 폭 좁아 보류.)
-- ☐ 신규 헤더 선언 자리 잡기: `bootpack.h` 에 `MAX_PATH = 128`, `struct DIR_ITER`, `fs_resolve_path`, `fs_mkdir`, `fs_rmdir`, `fs_data_open_dir` 등.
+- ☑ 2장 결정 표 잠금. 본 문서 + work2-handoff.md 에 반영.
+- ☑ 새 syscall 번호 예약: `api_getcwd` = edx 31. (`api_chdir` 는 도입하지 않음 — cwd 는 콘솔 built-in 만.)
+- ☑ 새 콘솔 prompt 정책: 기본 `>`, `pwd` 출력만 path 표시. (prompt 자체에 cwd 박는 건 화면 폭 좁아 보류.)
+- ☑ 신규 헤더 선언 자리 잡기: `bootpack.h` 에 `MAX_PATH = 128`, `struct DIR_ITER`, `fs_resolve_path`, `fs_mkdir`, `fs_rmdir`, `fs_data_open_dir` 등.
 
 ### Phase 1 — 디렉터리 추상화 (일반 directory I/O) (2일)
 **목표**: 기존 root 한정 함수들이 root + 일반 cluster chain 위 디렉터리 둘 다 다루도록 재구성. 외부 동작은 회귀 0.
@@ -122,10 +122,10 @@
   - ☐ 역방향: 게스트에서 `mkdir`/파일 생성 → 호스트 `bxos_fat.py ls` 로 확인.
 
 ### Phase 7 — 문서 / 마무리 (0.5일)
-- ☐ [_doc/storage.md](storage.md) 갱신 — 디렉터리 cluster 레이아웃, `.`/`..` 의미, cwd 모델, 호스트 도구 path 사용법.
-- ☐ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 갱신 — `mkdir`/`rmdir`/`cd`/`pwd`, 기존 명령의 path 인자 설명, `pwd.he2` 추가.
-- ☐ [README.utf8.md](../README.utf8.md) / [SETUP-MAC.md](../SETUP-MAC.md) — `bxos_fat.py mkdir/rmdir` 예시 한 줄씩 추가.
-- ☐ work2.md / work2-handoff.md 체크박스 닫음.
+- ☑ [_doc/storage.md](storage.md) 갱신 — 디렉터리 cluster 레이아웃, `.`/`..` 의미, cwd 모델, 호스트 도구 path 사용법.
+- ☑ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 갱신 — `mkdir`/`rmdir`/`cd`/`pwd`, 기존 명령의 path 인자 설명, `pwd.he2` 추가.
+- ☑ [README.utf8.md](../README.utf8.md) / [SETUP-MAC.md](../SETUP-MAC.md) — `bxos_fat.py mkdir/rmdir` 예시 한 줄씩 추가.
+- ☑ work2.md / work2-handoff.md 체크박스 닫음.
 
 ## 4. 마일스톤 / 검증 시나리오
 

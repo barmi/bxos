@@ -48,12 +48,22 @@ cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
 | 이미지 | 위치 | 내용 |
 |---|---|---|
 | 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 23개 + 데모 데이터 8개 |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 24개 + 데모 데이터 8개 |
 
 앱 하나만 다시 빌드한 뒤 데이터 이미지에 부분 갱신하려면:
 
 ```bash
 cmake --build build/cmake --target install-tetris   # 예: tetris.he2 만 교체
+```
+
+호스트에서 데이터 이미지 안의 서브디렉터리와 파일을 직접 다룰 수도 있습니다.
+
+```bash
+python3 tools/modern/bxos_fat.py mkdir build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py cp HOST:build/cmake/he2/bin/tetris.he2 build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py rm build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py rmdir build/cmake/data.img:/sub   # 빈 디렉터리일 때만
 ```
 
 ## 디렉터리 구조

@@ -2,12 +2,12 @@
 
 옛 Windows 빌드 환경에서 만들어진 `bxos` (Haribote OS 한국어 변형) 을 현재의 Apple Silicon Mac 에서 빌드·부팅하기 위한 단계별 안내입니다.
 
-work1 작업 이후 빌드 시스템은 **CMake + NASM + i686-elf-gcc + Python** 으로 정리되었고, 디스크 이미지는 **부팅 FDD + 데이터 HDD** 두 갈래로 분리됩니다.
+work1/work2 작업 이후 빌드 시스템은 **CMake + NASM + i686-elf-gcc + Python** 으로 정리되었고, 디스크 이미지는 **부팅 FDD + 데이터 HDD** 두 갈래로 분리됩니다. 데이터 HDD 는 서브디렉터리와 `/` 기준 경로를 지원합니다.
 
 | 이미지 | 위치 | 내용 |
 |---|---|---|
 | 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 23개 + 데모 데이터 8개 |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 24개 + 데모 데이터 8개 |
 
 자세한 디스크/드라이브 구조는 [`_doc/storage.md`](_doc/storage.md), 콘솔 명령은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md) 참고.
 
@@ -143,6 +143,13 @@ fsck_msdos -n build/cmake/data.img
 
 # data.img 안 파일 목록
 python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/
+
+# data.img 안 서브디렉터리/파일 조작
+python3 tools/modern/bxos_fat.py mkdir build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py cp HOST:build/cmake/he2/bin/tetris.he2 build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py rm build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py rmdir build/cmake/data.img:/sub
 ```
 
 ---
@@ -193,7 +200,7 @@ CMake 가 `-Wno-implicit-function-declaration -Wno-int-conversion -Wno-pointer-s
 
 ## 부록 — 디렉터리 정리
 
-work1 작업 후 트리 구조:
+work1/work2 작업 후 트리 구조:
 
 ```
 bxos/
@@ -219,7 +226,7 @@ bxos/
 │       ├── hrbify.py             # 32B HRB 헤더 + 0x1B JMP 패치
 │       ├── makefont.py           # hankaku.txt → 폰트 바이너리
 │       ├── mkfat12.py            # FAT12/FAT16 이미지 생성
-│       ├── bxos_fat.py           # data.img 부분 갱신 (cp/rm/ls/create)
+│       ├── bxos_fat.py           # data.img 부분 갱신 (create/ls/cp/rm/mkdir/rmdir)
 │       ├── linker-bootpack.lds   # GNU ld 링커 스크립트
 │       ├── startup_kernel.s      # 커널 진입점 + 32B 헤더 자리
 │       ├── modern_libc.c         # sprintf/strcmp 등 freestanding 보조

@@ -1,6 +1,6 @@
 # BxOS 스토리지 — 드라이브 모델 / FAT16 레이아웃 / ATA 사용
 
-work1 작업으로 BxOS 의 디스크 구성이 단일 FDD 이미지에서 **부팅 FDD + 데이터 HDD** 두 갈래로 분리됐다. 이 문서는 게스트(BxOS) 와 호스트(QEMU/CMake) 양쪽에서 그 구조를 어떻게 인식하고 다루는지 정리한다.
+work1 작업으로 BxOS 의 디스크 구성이 단일 FDD 이미지에서 **부팅 FDD + 데이터 HDD** 두 갈래로 분리됐고, work2 작업으로 데이터 HDD 에 **서브디렉터리 / 다단계 경로 / 현재 작업 디렉터리(cwd)** 가 추가됐다. 이 문서는 게스트(BxOS) 와 호스트(QEMU/CMake) 양쪽에서 그 구조를 어떻게 인식하고 다루는지 정리한다.
 
 관련 코드:
 - 드라이버: [harib27f/haribote/ata.c](../harib27f/haribote/ata.c)
@@ -19,7 +19,7 @@ work1 작업으로 BxOS 의 디스크 구성이 단일 FDD 이미지에서 **부
 
 - 부팅 흐름은 그대로 유지된다. IPL 이 FDD 전체를 `ADR_DISKIMG` 로 메모리 로드 → `HariMain` 진입 → `nihongo.fnt` 만 메모리 이미지에서 읽는다. (file.c 의 `file_loadfile2()` 가 FDD 메모리 캐시 전용으로 남아 있음.)
 - HDD 는 부팅에 관여하지 않는다. `HariMain` 의 PIC 초기화 직후 `ata_init()` 으로 IDENTIFY 결과를 캐시하고, memman 초기화 직후 `fs_mount_data(0)` 으로 BPB/FAT/루트를 마운트한다.
-- 콘솔의 기본 드라이브는 `C:` (HDD). `dir`, 앱 검색, `type`, syscall `api_fopen` 등 사용자 경로 전부 data.img 만 본다.
+- 콘솔의 기본 드라이브는 `C:` (HDD). `dir`, 앱 검색, `type`, syscall `api_fopen` 등 사용자 경로 전부 data.img 만 본다. 드라이브 prefix 는 없고 `/` 가 data.img 루트다.
 - HDD 가 마운트되지 않으면 `g_data_mounted = 0` 상태로 남고, `dir` / 앱 실행은 모두 실패한다 (옛 ADR_DISKIMG 폴백은 없음).
 
 ### `run-qemu.sh` 의 자동 부착
@@ -69,18 +69,21 @@ LBA  0       1                129       161                       65535
 
 ### 쓰기 정책 (write-through)
 
-`fs_data_create` / `fs_data_write` / `fs_data_truncate` / `fs_data_unlink` 는 모두 동일한 절차:
+`fs_data_create_path` / `fs_file_write` / `fs_file_truncate` / `fs_file_unlink` 및 디렉터리 생성/삭제는 모두 동일한 절차:
 
-1. 메모리 캐시(`fat_cache`, `root_cache`) 갱신
-2. **즉시** 영향받은 섹터를 ATA 로 flush (`sync_fat_entry`, `sync_root_entry`, `write_cluster`)
+1. 메모리 캐시(`fat_cache`, `root_cache`) 또는 디렉터리 클러스터 갱신
+2. **즉시** 영향받은 섹터를 ATA 로 flush (`sync_fat_entry`, `dir_write_slot`, `write_cluster`)
 3. FAT 변경은 FAT1 + FAT2 같은 섹터 두 번 write
 
 캐시/지연 쓰기 없음. 부팅 후 디스크 상태 = 마지막 syscall 직후 상태.
 
-### 8.3 이름 정책
+### 경로 / 8.3 이름 정책
 
 - 호스트 도구(`mkfat12.py`, `bxos_fat.py`) 와 게스트 코드(`pack_83_name`) 모두 **단순 절단 + 대문자 변환**.
-- LFN 미지원. `mkdir` / 서브디렉터리도 미지원 (루트 한 단계만).
+- LFN 미지원. 컴포넌트 하나마다 FAT 8.3 이름으로 변환한다.
+- 경로 구분자는 `/`. `/foo`, `foo/bar`, `./foo`, `../foo` 를 지원한다. DOS 스타일 `C:/foo` prefix 는 없다.
+- `.`/`..` 는 표준 FAT 디렉터리 entry 로 저장한다. 서브디렉터리의 `..` first cluster 는 부모가 root 일 때 `0` 이다.
+- `mkdir` 는 부모 디렉터리가 이미 있어야 한다. `rmdir` 는 빈 디렉터리만 삭제한다.
 - 호스트에서 8자 초과 이름을 던지면 잘려서 충돌할 수 있음 — 의도적 단순화.
 
 ---
@@ -141,7 +144,7 @@ LBA0  oem='HARIBOTE'  sig=aa55
 | 도구 | 역할 |
 |---|---|
 | [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) | 빈 FAT12/FAT16 이미지 + 파일 한 번에 묶어 만들기. CMake 의 `kernel-img` / `data-img` 가 사용. |
-| [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py) | 기존 FAT16 이미지에 부분 갱신 — `create / ls / cp / rm`. `install-<app>` 헬퍼 타겟의 백엔드. |
+| [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py) | 기존 FAT16 이미지에 부분 갱신 — `create / ls / cp / rm / mkdir / rmdir`. `install-<app>` 헬퍼 타겟의 백엔드. |
 
 ### 자주 쓰는 호스트 명령
 
@@ -156,9 +159,12 @@ cmake --build build/cmake --target install-tetris
 python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/
 
 # 임의 파일 넣기/빼기
-python3 tools/modern/bxos_fat.py cp HOST:foo.he2 build/cmake/data.img:/foo.he2
-python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/foo.he2 HOST:/tmp/extracted.he2
-python3 tools/modern/bxos_fat.py rm build/cmake/data.img:/foo.he2
+python3 tools/modern/bxos_fat.py mkdir build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py cp HOST:build/cmake/he2/bin/tetris.he2 build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/sub
+python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/sub/tetris.he2 HOST:/tmp/tetris.he2
+python3 tools/modern/bxos_fat.py rm build/cmake/data.img:/sub/tetris.he2
+python3 tools/modern/bxos_fat.py rmdir build/cmake/data.img:/sub
 
 # 검증
 fsck_msdos -n build/cmake/data.img
@@ -170,10 +176,10 @@ macOS 네이티브 마운트는 [_doc/fat16_check.md](fat16_check.md) 참고.
 
 ## 5. 알려진 제약 / 범위 외
 
-work1 §6 와 동일:
+현재 범위 밖으로 남겨 둔 항목:
 
 - LFN 미지원 (8.3 만, 단순 절단)
-- 서브디렉터리 미지원 (`mkdir` 보류, 루트 한 단계)
+- `mkdir -p`, `rm -r`, `cp -r` 같은 recursive 동작 없음
 - ext2 등 다른 파일시스템 없음
 - 디스크 캐시 / 버퍼 풀 없음 (write-through)
 - 멀티 유저 / 권한 / 파일 잠금 없음
