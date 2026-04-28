@@ -41,11 +41,12 @@ set(BXOS_NAS2NASM "${BXOS_TOOLS_DIR}/nas2nasm.py")
 set(BXOS_HRBIFY   "${BXOS_TOOLS_DIR}/hrbify.py")
 set(BXOS_MAKEFONT "${BXOS_TOOLS_DIR}/makefont.py")
 set(BXOS_MKFAT12  "${BXOS_TOOLS_DIR}/mkfat12.py")
+set(BXOS_FAT_TOOL "${BXOS_TOOLS_DIR}/bxos_fat.py")
 set(BXOS_LDS      "${BXOS_TOOLS_DIR}/linker-bootpack.lds")
 
 foreach(_t IN ITEMS
         "${BXOS_NAS2NASM}" "${BXOS_HRBIFY}" "${BXOS_MAKEFONT}"
-        "${BXOS_MKFAT12}"  "${BXOS_LDS}")
+        "${BXOS_MKFAT12}" "${BXOS_FAT_TOOL}" "${BXOS_LDS}")
     if(NOT EXISTS "${_t}")
         message(FATAL_ERROR "missing tool: ${_t}")
     endif()
@@ -258,6 +259,7 @@ foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
     if(EXISTS "${_src}")
         he2_add_app(${_a} DIR "${BXOS_HARIB}/${_a}")
+        set("BXOS_HE2_OUT_${_a}" "${BXOS_HE2_BIN_DIR}/${_a}.he2")
     endif()
 endforeach()
 
@@ -271,6 +273,7 @@ foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
     if(EXISTS "${_src}")
         he2_add_app(${_a} DIR "${BXOS_HARIB}/${_a}" SUBSYSTEM WINDOW)
+        set("BXOS_HE2_OUT_${_a}" "${BXOS_HE2_BIN_DIR}/${_a}.he2")
     endif()
 endforeach()
 
@@ -331,12 +334,26 @@ add_custom_command(
 )
 
 # ─── 13) phony 타겟들 ────────────────────────────────────────────────
+set(_BXOS_HE2_APPS_ALL ${BXOS_HE2_APPS_BASIC} ${BXOS_HE2_APPS_WINDOW})
 add_custom_target(kernel     DEPENDS "${BXOS_BOOTPACK_HRB}")
 add_custom_target(sys        DEPENDS "${BXOS_HARIBOTE_SYS}")
 add_custom_target(kernel-img DEPENDS "${BXOS_HARIBOTE_IMG}")
 add_custom_target(data-img   DEPENDS "${BXOS_DATA_IMG}")
 add_custom_target(image      DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}")
 add_custom_target(bxos ALL   DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}")
+
+foreach(_a IN LISTS _BXOS_HE2_APPS_ALL)
+    if(DEFINED BXOS_HE2_OUT_${_a})
+        add_custom_target("install-${_a}"
+            COMMAND ${BXOS_PYTHON} "${BXOS_FAT_TOOL}" cp
+                    "HOST:${BXOS_HE2_OUT_${_a}}"
+                    "${BXOS_DATA_IMG}:/${_a}.he2"
+            DEPENDS "${BXOS_HE2_OUT_${_a}}" "${BXOS_FAT_TOOL}"
+            COMMENT "[bxos_fat] install ${_a}.he2 -> data.img"
+            VERBATIM
+        )
+    endif()
+endforeach()
 
 # QEMU 부팅 (편의용) — kernel + data 두 디스크 모두 부착.
 find_program(BXOS_QEMU NAMES qemu-system-i386)
@@ -353,7 +370,6 @@ endif()
 
 # ─── 14) info ────────────────────────────────────────────────────────
 # 리스트 변수는 ; 로 join 해서 한 인자로 묶어야 셸에 단어로 쪼개지지 않음.
-set(_BXOS_HE2_APPS_ALL ${BXOS_HE2_APPS_BASIC} ${BXOS_HE2_APPS_WINDOW})
 string(REPLACE ";" " " _BXOS_KC_PRINT      "${BXOS_KERNEL_C_NAMES}")
 string(REPLACE ";" " " _BXOS_HE2_APP_PRINT "${_BXOS_HE2_APPS_ALL}")
 add_custom_target(info

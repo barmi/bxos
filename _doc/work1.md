@@ -148,17 +148,24 @@
   - QEMU HMP `sendkey` 로 `cp a.he2 b.he2`, `rm a.he2`, `b` 실행 → `B.HE2` 가 원본 `A.HE2` 와 byte-for-byte 동일, `A.HE2` 삭제 확인, `fsck_msdos -n` 통과.
   - `mv type.he2 t2.he2` 실행 → `T2.HE2` 가 원본 `TYPE.HE2` 와 byte-for-byte 동일, `TYPE.HE2` 삭제 확인, `fsck_msdos -n` 통과.
 
-### Phase 7 — 호스트 측 디스크 이미지 편집 도구 (1.5일)
+### Phase 7 — 호스트 측 디스크 이미지 편집 도구 (완료 — 2026-04-28)
 **목표**: 앱을 다시 빌드했을 때, **전체 데이터 이미지를 재생성하지 않고도** 호스트에서 파일을 디스크 이미지에 넣고 빼기.
 
-- ☐ `tools/modern/fat16.py` (또는 `mkfat12.py` 를 확장한 `bxos_fat.py`):
+- ☑ `tools/modern/bxos_fat.py` 추가:
   - `bxos_fat.py create   data.img --size 32M`
   - `bxos_fat.py cp HOST:hello.he2 data.img:/hello.he2`
   - `bxos_fat.py rm data.img:/hello.he2`
   - `bxos_fat.py ls data.img:/`
-- ☐ CMake 에 `install-app <APP>` 류 헬퍼 타겟 추가:
+  - 추가로 검증 편의를 위해 `data.img:/file HOST:file` 추출과 같은 이미지 내부 복사도 지원.
+- ☑ CMake 에 `install-<APP>` 헬퍼 타겟 추가:
   - `cmake --build build/cmake --target install-tetris` → 빌드된 `tetris.he2` 를 `data.img` 에 복사.
-- ☐ macOS/Linux에서 동일하게 돌도록 외부 의존 없는 순수 Python 유지.
+  - `data-img` 전체 재생성을 의존하지 않고, 앱 산출물만 빌드한 뒤 기존 `data.img` 를 부분 갱신.
+- ☑ macOS/Linux에서 동일하게 돌도록 외부 의존 없는 순수 Python 유지.
+- ☑ 검증:
+  - `/tmp/bxos-fat-tool.img` 생성 → host `tetris.he2` 복사 → 이미지에서 다시 추출 → `cmp` 일치.
+  - `bxos_fat.py rm` 후 `fsck_msdos -n` 통과.
+  - `cmake --build build/cmake --target install-tetris` 성공.
+  - `data.img:/tetris.he2` 추출본이 `build/cmake/he2/bin/tetris.he2` 와 byte-for-byte 동일, `fsck_msdos -n build/cmake/data.img` 통과.
 
 ### Phase 8 — 문서화 / 마무리 (0.5일)
 - ☐ [_doc](_doc) 에 **드라이브 모델 / FAT16 레이아웃 / ATA 사용** 설명 문서 추가.

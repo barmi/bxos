@@ -10,7 +10,7 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 
 ## 2. 현재 위치 (2026-04-28 기준)
 
-- **Phase 0, 1, 2, 3, 4, 5, 6 완료**. 다음은 Phase 7 (호스트 측 디스크 이미지 편집 도구).
+- **Phase 0, 1, 2, 3, 4, 5, 6, 7 완료**. 다음은 Phase 8 (문서화 / 마무리).
 - HE2(.he2) 포맷이 새로 도입되어, 빌드 이미지에 **.hrb 는 더 이상 포함되지 않고 .he2 앱 23개만** 들어감.
 - 빌드 산출물이 **두 갈래로 분리**됨:
   - `build/cmake/haribote.img` — 1.44MB FAT12 부팅 FDD (`HARIBOTE.SYS` + `NIHONGO.FNT` 만)
@@ -22,6 +22,7 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
   - 콘솔 `touch`, `rm`, `echo <text> > <file>`, `mkfile <file> <bytes>` 로 파일 생성/쓰기/삭제 가능
   - 콘솔 `cp <src> <dst>`, `mv <src> <dst>` 로 파일 복사/이동 가능
   - 사용자 앱도 `api_fopen_w`, `api_fwrite`, `api_fdelete` 로 파일 생성/쓰기/삭제 가능
+  - 호스트에서도 `tools/modern/bxos_fat.py` 와 CMake `install-<app>` 타겟으로 `data.img` 를 부분 갱신 가능
 
 ## 3. Phase 0 / Phase 1 에서 실제로 바뀐 것
 
@@ -87,7 +88,13 @@ BxOS(haribote 계열 취미 OS) 에 **쓰기 가능한 디스크 파일시스템
 | [harib27f/haribote/console.c](../harib27f/haribote/console.c) | `cp <src> <dst>`, `mv <src> <dst>` 추가. `mv` 는 raw copy 후 unlink. |
 | [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) | `cp`/`mv` 명령 설명 추가. |
 
-**아직 손대지 않은 것** (의도적, Phase 7 이후 작업):
+**Phase 7** (호스트 측 디스크 이미지 편집 도구):
+| 파일 | 변경 |
+|---|---|
+| [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py) (신규) | FAT12/16 BPB 파싱, root `ls`, FAT16 `create`/`cp`/`rm`, host↔image 복사, 같은 이미지 내부 복사. |
+| [CMakeLists.txt](../CMakeLists.txt) | `BXOS_FAT_TOOL` 등록, 각 HE2 앱에 `install-<app>` 타겟 추가. `data-img` 전체 재생성 없이 앱 산출물만 기존 `data.img` 에 복사. |
+
+**아직 손대지 않은 것** (의도적, Phase 8 이후 cleanup):
 - file.c 의 FDD 경로(nihongo.fnt 로딩) 는 그대로 유지. ADR_DISKIMG 을 완전히 떼는 작업은 향후 cleanup.
 
 ## 4. 확정된 핵심 결정 (재확인용)
@@ -102,23 +109,20 @@ work1.md §2 표가 정본. 요약:
 - 게스트 드라이브: **`A:` = FDD, `C:` = HDD**, 콘솔 기본은 `C:` (Phase 3 도입)
 - 호스트 도구: **자체 Python** (외부 mtools 의존 없음)
 
-## 5. 다음 작업 (Phase 7 — 호스트 측 디스크 이미지 편집 도구)
+## 5. 다음 작업 (Phase 8 — 문서화 / 마무리)
 
-work1.md §3 Phase 7 그대로. 요지:
+work1.md §3 Phase 8 그대로. 요지:
 
-1. `tools/modern/bxos_fat.py` 또는 유사 도구 추가.
-   - `create data.img --size 32M`
-   - `ls data.img:/`
-   - `cp HOST:file.he2 data.img:/file.he2`
-   - `rm data.img:/file.he2`
-2. CMake 에 앱 부분 설치 타겟 추가.
-   - 예: `cmake --build build/cmake --target install-tetris`
-3. 외부 mtools 없이 순수 Python 유지.
+1. [_doc](../_doc) 에 드라이브 모델 / FAT16 레이아웃 / ATA 사용 설명 문서 추가.
+2. [README.utf8.md](../README.utf8.md) / [SETUP-MAC.md](../SETUP-MAC.md) 의 빌드/실행 섹션을 두 이미지 구조로 갱신.
+3. [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 최종 점검.
 
-**Phase 6 검증 기록**:
-- `cmake --build build/cmake` 성공.
-- `cp a.he2 b.he2`, `rm a.he2`, `b` 실행 → `B.HE2` 가 원본 `A.HE2` 와 byte-for-byte 동일, `A.HE2` 삭제, `fsck_msdos -n` 통과.
-- `mv type.he2 t2.he2` 실행 → `T2.HE2` 가 원본 `TYPE.HE2` 와 byte-for-byte 동일, `TYPE.HE2` 삭제, `fsck_msdos -n` 통과.
+**Phase 7 검증 기록**:
+- `python3 tools/modern/bxos_fat.py create /tmp/bxos-fat-tool.img --size 32M` 성공.
+- host `tetris.he2` → image copy → host extract 후 `cmp` 일치.
+- `bxos_fat.py rm` 후 `fsck_msdos -n` 통과.
+- `cmake -S . -B build/cmake && cmake --build build/cmake --target install-tetris` 성공.
+- `data.img:/tetris.he2` 추출본이 `build/cmake/he2/bin/tetris.he2` 와 byte-for-byte 동일, `fsck_msdos -n build/cmake/data.img` 통과.
 
 ## 6. 빠른 빌드/실행 치트시트
 
@@ -181,8 +185,8 @@ echo -e "info block\nquit" | qemu-system-i386 -m 32 -accel tcg -display none \
 
 | 영역 | 파일 | Phase 1~7 에서 할 일 |
 |---|---|---|
-| 호스트 이미지 빌더 | [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) | ☑ Phase 1 완료(FAT16 추가). Phase 7: `bxos_fat.py` 로 분화 (cp/rm/ls 부분 갱신용). |
-| 빌드 시스템 | [CMakeLists.txt](../CMakeLists.txt) | ☑ Phase 1 완료(타겟 분리). Phase 7: `install-app` 헬퍼. |
+| 호스트 이미지 빌더 | [tools/modern/mkfat12.py](../tools/modern/mkfat12.py), [tools/modern/bxos_fat.py](../tools/modern/bxos_fat.py) | ☑ Phase 7 완료. `bxos_fat.py` create/ls/cp/rm 지원. |
+| 빌드 시스템 | [CMakeLists.txt](../CMakeLists.txt) | ☑ Phase 7 완료. `install-<app>` 헬퍼 추가. |
 | 부팅 스크립트 | [run-qemu.sh](../run-qemu.sh) | ☑ Phase 0 완료. 추가 변경 불필요. |
 | 디스크 드라이버 | [harib27f/haribote/ata.c](../harib27f/haribote/ata.c) | ☑ Phase 2 완료. ATA PIO 28-bit LBA, IDENTIFY/READ/WRITE/FLUSH. |
 | 파일시스템 read | [harib27f/haribote/fs_fat.c](../harib27f/haribote/fs_fat.c) | ☑ Phase 3 완료. mount + read + tek 디컴프. FAT12/FAT16 자동 분기. |
