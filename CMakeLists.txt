@@ -274,56 +274,80 @@ foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
     endif()
 endforeach()
 
-# IMG 에 추가
-get_property(_he2_outs GLOBAL PROPERTY BXOS_HE2_APPS)
-foreach(_h IN LISTS _he2_outs)
-    _bxos_img_extra_append("${_h}")
-endforeach()
+# HE2 앱 산출물 — work1 Phase 1 부터는 IMG(부팅 FDD)가 아니라
+# 별도 데이터 디스크(data.img)에 들어간다.
+get_property(BXOS_HE2_OUTS GLOBAL PROPERTY BXOS_HE2_APPS)
 
-# ─── 12) haribote.img (FAT12 disk image) ─────────────────────────────
-get_property(BXOS_IMG_EXTRA_FILES GLOBAL PROPERTY BXOS_IMG_EXTRA_FILES)
-
+# ─── 12a) haribote.img — 부팅용 FDD (FAT12 1.44MB, 최소 구성) ────────
+#
+# work1 Phase 1: 데이터 디스크 분리.
+# - 부팅 FDD 에는 커널과 부팅 시 필요한 파일만 둔다 (현재는 nihongo.fnt 만).
+# - 모든 .he2 앱과 데이터 파일은 아래 12b 의 data.img(HDD)로 이동.
+# - 게스트가 아직 HDD 를 인식하지 못하므로 Phase 1 시점에는 앱이 실행되지 않음.
+#   부팅 자체만 확인하는 단계.
 set(BXOS_HARIBOTE_IMG "${BXOS_BUILD}/haribote.img")
-set(BXOS_IMG_FILES
+set(BXOS_KERNEL_IMG_FILES
     "${BXOS_HARIBOTE_SYS}"
+    "${BXOS_HARIB}/nihongo/nihongo.fnt"
+)
+add_custom_command(
+    OUTPUT  "${BXOS_HARIBOTE_IMG}"
+    COMMAND ${BXOS_PYTHON} "${BXOS_MKFAT12}"
+            --boot "${BXOS_IPL09_BIN}"
+            --out  "${BXOS_HARIBOTE_IMG}"
+            ${BXOS_KERNEL_IMG_FILES}
+    DEPENDS "${BXOS_IPL09_BIN}" "${BXOS_HARIBOTE_SYS}" ${BXOS_KERNEL_IMG_FILES}
+    COMMENT "[mkfat12] haribote.img (kernel FDD)"
+    VERBATIM
+    COMMAND_EXPAND_LISTS
+)
+
+# ─── 12b) data.img — 사용자 데이터 디스크 (FAT16 32MB HDD) ───────────
+#
+# 모든 HE2 앱 + 데모 데이터 파일이 들어감. ATA HDD 로 부착될 예정.
+set(BXOS_DATA_IMG "${BXOS_BUILD}/data.img")
+set(BXOS_DATA_IMG_FILES
+    ${BXOS_HE2_OUTS}
     "${BXOS_KSRC}/ipl09.nas"
     "${BXOS_HARIB}/make.bat"
-    ${BXOS_IMG_EXTRA_FILES}
     "${BXOS_HARIB}/euc.txt"
     "${BXOS_HARIB}/mmldata/kirakira.mml"
     "${BXOS_HARIB}/mmldata/daigo.mml"
     "${BXOS_HARIB}/mmldata/daiku.mml"
     "${BXOS_HARIB}/pictdata/fujisan.jpg"
     "${BXOS_HARIB}/pictdata/night.bmp"
-    "${BXOS_HARIB}/nihongo/nihongo.fnt"
 )
-
 add_custom_command(
-    OUTPUT  "${BXOS_HARIBOTE_IMG}"
+    OUTPUT  "${BXOS_DATA_IMG}"
     COMMAND ${BXOS_PYTHON} "${BXOS_MKFAT12}"
-            --boot "${BXOS_IPL09_BIN}"
-            --out  "${BXOS_HARIBOTE_IMG}"
-            ${BXOS_IMG_FILES}
-    DEPENDS "${BXOS_IPL09_BIN}" "${BXOS_HARIBOTE_SYS}" ${BXOS_IMG_FILES}
-    COMMENT "[mkfat12] haribote.img"
+            --fs fat16 --size 32M
+            --label BXOSDATA
+            --out  "${BXOS_DATA_IMG}"
+            ${BXOS_DATA_IMG_FILES}
+    DEPENDS ${BXOS_HE2_OUTS} ${BXOS_DATA_IMG_FILES}
+    COMMENT "[mkfat12] data.img (FAT16 32MB HDD)"
     VERBATIM
     COMMAND_EXPAND_LISTS
 )
 
 # ─── 13) phony 타겟들 ────────────────────────────────────────────────
-add_custom_target(kernel  DEPENDS "${BXOS_BOOTPACK_HRB}")
-add_custom_target(sys     DEPENDS "${BXOS_HARIBOTE_SYS}")
-add_custom_target(image   DEPENDS "${BXOS_HARIBOTE_IMG}")
-add_custom_target(bxos ALL DEPENDS "${BXOS_HARIBOTE_IMG}")
+add_custom_target(kernel     DEPENDS "${BXOS_BOOTPACK_HRB}")
+add_custom_target(sys        DEPENDS "${BXOS_HARIBOTE_SYS}")
+add_custom_target(kernel-img DEPENDS "${BXOS_HARIBOTE_IMG}")
+add_custom_target(data-img   DEPENDS "${BXOS_DATA_IMG}")
+add_custom_target(image      DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}")
+add_custom_target(bxos ALL   DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}")
 
-# QEMU 부팅 (편의용)
+# QEMU 부팅 (편의용) — kernel + data 두 디스크 모두 부착.
 find_program(BXOS_QEMU NAMES qemu-system-i386)
 if(BXOS_QEMU)
     add_custom_target(run
-        COMMAND ${BXOS_QEMU} -m 32 -fda "${BXOS_HARIBOTE_IMG}" -boot a
-        DEPENDS "${BXOS_HARIBOTE_IMG}"
+        COMMAND ${BXOS_QEMU} -m 32
+                -fda "${BXOS_HARIBOTE_IMG}" -boot a
+                -hda "${BXOS_DATA_IMG}"
+        DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}"
         USES_TERMINAL
-        COMMENT "qemu-system-i386 -fda haribote.img"
+        COMMENT "qemu-system-i386 -fda haribote.img -hda data.img"
     )
 endif()
 

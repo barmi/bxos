@@ -45,16 +45,16 @@
 - ☑ 데이터 디스크 기본 경로 컨벤션: **`build/cmake/data.img`** 로 확정 (2장 표 반영).
 - ☐ (다음 세션) Phase 1 착수.
 
-### Phase 1 — 빌드 구조 분리 (1일)
-**목표**: 코드는 그대로 두고, 빌드 산출물을 "커널 이미지 + 데이터 이미지" 두 개로 쪼갠다. 이 시점에는 데이터 이미지가 여전히 read-only로 메모리에만 올라가더라도 OK — **빌드 분리 자체가 선행 조건**.
-
-- ☐ `mkfat12.py` 에 `--fs fat16` 옵션 추가 (BPB/FAT 크기/엔트리 폭 분기).
-- ☐ CMake 타겟 정리:
-  - `kernel-img` : `haribote.sys` + IPL 만 들어간 최소 부팅 이미지 (FDD 유지)
-  - `data-img`   : 모든 `.hrb` / 데이터 파일이 들어간 32MB FAT16 HDD 이미지
-  - `all`        : 둘 다
-- ☐ `run-qemu.sh` 가 두 이미지를 함께 띄우도록 수정 (`-fda kernel.img -hda data.img`).
-- ☐ 게스트는 아직 HDD를 인식하지 않으므로, **이 페이즈는 부팅만 확인**하고 끝낸다.
+### Phase 1 — 빌드 구조 분리 (완료 — 2026-04-28)
+- ☑ [tools/modern/mkfat12.py](../tools/modern/mkfat12.py) 에 `--fs {fat12,fat16}` + `--size` 옵션 추가. `FsParams` 데이터클래스 도입으로 BPB/FAT 폭 분기 일원화. FAT12 회귀 OK.
+- ☑ CMake 타겟 정리:
+  - `kernel-img` : `build/cmake/haribote.img` (FAT12 1.44MB) — `HARIBOTE.SYS` + `NIHONGO.FNT` 만
+  - `data-img`   : `build/cmake/data.img` (FAT16 32MB) — HE2 앱 20개 + 데모 데이터 8개
+  - `image`, `bxos ALL` : 둘 다
+  - `run` : `-fda haribote.img -hda data.img` 둘 다 부착
+- ☑ `run-qemu.sh` 는 Phase 0 에서 이미 정비됨 (자동 부착 동작 확인).
+- ☑ QEMU monitor `info block` 으로 `floppy0` + `ide0-hd0` 둘 다 인식 확인.
+- ☑ 게스트는 아직 HDD 인식 못함 — 부팅 화면까지 도달하면 끝. 앱 실행은 Phase 3 이후.
 
 ### Phase 2 — ATA PIO 블록 드라이버 (2~3일)
 **목표**: 디스크 섹터 단위 읽기/쓰기를 커널이 할 수 있게 한다. FS는 다음 페이즈에서.
