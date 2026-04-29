@@ -381,3 +381,30 @@ int api_exec(const char *path, int flags) {
             : "=a"(r) : "d"(39), "b"(path), "c"(flags) : "memory");
     return r;
 }
+
+/* ─── 40: getevent — EBX=out, ECX=mode → EAX = 1/0/-1 ────────────── */
+int api_getevent(struct BX_EVENT *out, int mode) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(40), "b"(out), "c"(mode) : "memory");
+    return r;
+}
+
+/* ─── 41: resizewin — EBX=win, ECX=buf, ESI=w, EDI=h, EAX=col_inv */
+int api_resizewin(int win, char *new_buf, int new_w, int new_h, int col_inv) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r)
+            : "d"(41), "b"(win), "c"(new_buf), "S"(new_w), "D"(new_h),
+              "0"(col_inv)
+            : "memory");
+    return r;
+}
+
+/* ─── 42: set_winevent — EBX=win, ECX=flags → EAX = 0/-1 ─────────── */
+int api_set_winevent(int win, int flags) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(42), "b"(win), "c"(flags) : "memory");
+    return r;
+}

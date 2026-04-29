@@ -64,6 +64,8 @@ void HariMain(void)
 #define RZ_EDGE   4    /* 우/하단 엣지 폭(px) */
 #define RZ_MIN_W  64
 #define RZ_MIN_H  48
+	/* work4 Phase 2: app client mouse event 라우팅 — 이전 btn 상태 추적. */
+	int old_btn = 0;
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
 	unsigned char *nihongo, *hangul;
@@ -457,7 +459,15 @@ void HariMain(void)
 					} else {
 						/* 왼쪽 버튼을 누르지 않았다 */
 						if (rsht != 0) {
-							/* 리사이즈는 드래그 중 실시간 적용했고, 여기서는 모드만 종료한다. */
+							/* 리사이즈 드래그 종료. console/debug 처럼 라이브 리사이즈가
+							 * 적용된 창은 그대로, app window (APP_EVENTS) 는 마지막
+							 * 의도 크기 (new_rw, new_rh) 를 BX_EVENT_RESIZE 로 보낸다.  */
+							if ((rsht->flags & SHEET_FLAG_APP_EVENTS) != 0 &&
+									rsht->task != 0) {
+								bx_event_post(rsht->task, BX_EVENT_RESIZE,
+										(int) rsht, 0, 0, 0, 0,
+										new_rw, new_rh);
+							}
 							rsht = 0;
 							redge = 0;
 						}
@@ -467,6 +477,69 @@ void HariMain(void)
 							new_wx = 0x7fffffff;
 						}
 					}
+
+					/* ── work4 Phase 2: app client area mouse event 라우팅 ──
+					 * scrollbar/title-drag/resize-drag/window-move 모드가 아닐 때만
+					 * 발생. 좌표는 client-area 기준 (frame 3px + title 21px 빼고).      */
+					if (rsht == 0 && mmx < 0 &&
+							!dbg_get()->sw.sb_grab &&
+							!(key_win != 0 && key_win->scroll != 0 &&
+									key_win->scroll->sb_grab)) {
+						struct SHEET *app_sht = 0;
+						int app_x = 0, app_y = 0;
+						int sj, sx, sy;
+						for (sj = shtctl->top - 1; sj > 0; sj--) {
+							struct SHEET *s = shtctl->sheets[sj];
+							sx = mx - s->vx0;
+							sy = my - s->vy0;
+							if (0 <= sx && sx < s->bxsize &&
+									0 <= sy && sy < s->bysize) {
+								if (s->buf[sy * s->bxsize + sx] != s->col_inv) {
+									if ((s->flags & SHEET_FLAG_APP_EVENTS) != 0 &&
+											s->task != 0 &&
+											3 <= sx && sx < s->bxsize - 3 &&
+											21 <= sy && sy < s->bysize - 3) {
+										int on_close = (sx >= s->bxsize - 21 &&
+												sx <  s->bxsize -  5 &&
+												sy >= 5 && sy < 19);
+										int on_resize = ((s->flags & SHEET_FLAG_RESIZABLE) != 0) &&
+												((sx >= s->bxsize - RZ_EDGE) ||
+												 (sy >= s->bysize - RZ_EDGE));
+										if (!on_close && !on_resize) {
+											app_sht = s;
+											app_x = sx - 3;
+											app_y = sy - 21;
+										}
+									}
+									break;
+								}
+							}
+						}
+						if (app_sht != 0) {
+							int btn_dn = (~old_btn & mdec.btn) & 0x07;
+							int btn_up = (old_btn & ~mdec.btn) & 0x07;
+							if (btn_dn != 0) {
+								bx_event_post(app_sht->task,
+										BX_EVENT_MOUSE_DOWN,
+										(int) app_sht, app_x, app_y,
+										mdec.btn, 0, 0, 0);
+							}
+							if (btn_up != 0) {
+								bx_event_post(app_sht->task,
+										BX_EVENT_MOUSE_UP,
+										(int) app_sht, app_x, app_y,
+										mdec.btn, 0, 0, 0);
+							}
+							if (btn_dn == 0 && btn_up == 0 &&
+									(mdec.x != 0 || mdec.y != 0)) {
+								bx_event_post(app_sht->task,
+										BX_EVENT_MOUSE_MOVE,
+										(int) app_sht, app_x, app_y,
+										mdec.btn, 0, 0, 0);
+							}
+						}
+					}
+					old_btn = mdec.btn;
 				}
 			} else if (768 <= i && i <= 1023) {	/* 콘솔 종료 처리 */
 				close_console(shtctl->sheets0 + (i - 768));

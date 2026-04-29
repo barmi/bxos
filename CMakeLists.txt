@@ -274,6 +274,7 @@ set(BXOS_HE2_APPS_WINDOW
     star1 stars stars2 lines walk
     color color2 noodle
     tetris
+    evtest
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")

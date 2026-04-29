@@ -12,9 +12,9 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
 
 ## 2. 현재 위치 (2026-04-30 기준)
 
-- work4 는 **Phase 1 구현 완료, QEMU smoke 대기 → Phase 2 진입 직전** 단계다.
-- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 work4.md §3 “Phase 0” 마지막에 있다. Phase 1 구현 노트는 §3 Phase 1 마지막에 있다.
-- 이 handoff 문서는 다음 세션이 바로 Phase 2 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- work4 는 **Phase 0~2 구현 완료, QEMU smoke 대기 → Phase 3 explorer 본 구현 진입 직전** 단계다.
+- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 §3 Phase 0 마지막, Phase 1/2 구현 노트는 각 phase 끝에 있다.
+- 이 handoff 문서는 다음 세션이 바로 Phase 3 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
 - Phase 0 에서 잠근 핵심:
   - syscall 번호 32~39 (파일관리), 40~43 (윈도우 이벤트/리사이즈) 확정.
   - 사용자 구조체 `BX_DIRINFO`, `BX_EVENT` 필드 확정 (필드 추가는 가능, 의미 보존).
@@ -131,6 +131,7 @@ struct BX_EVENT {
 |---|---|---|
 | 0. 요구사항 / 인터페이스 확정 ☑ | 0.5d | 2-pane UI, mouse/resize, syscall 번호 확정 (2026-04-29 완료) |
 | 1. 커널 디렉터리 API / 파일관리 syscall ☑ | 2d | `api_opendir`~`api_exec` (edx 32~39), libbxos wrapper, lsdir 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
+| 2. 앱 윈도우 mouse / resize event API ☑ | 2d | `api_getevent`/`api_resizewin`/`api_set_winevent` (edx 40~42), `BX_EVENT` 큐 + fifo wakeup marker, evtest 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 1. 커널 디렉터리 API / 파일관리 syscall | 2d | `api_opendir`~`api_exec`, libbxos wrapper |
 | 2. 앱 윈도우 mouse / resize event API | 2d | `api_getevent`, `api_resizewin`, app client mouse event |
 | 3. 2-pane explorer 읽기 전용 MVP | 2d | toolbar/tree/list/status, keyboard+mouse selection |
@@ -182,21 +183,22 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
-Phase 0/1 은 완료되었으므로 다음 세션은 QEMU smoke 검증 후 Phase 2 로 진입한다.
+Phase 0/1/2 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 3 explorer MVP 로 진입한다.
 
 1. `git status --short` 로 현재 작업트리 확인.
-2. **Phase 1 QEMU smoke**: `./run-qemu.sh` → 콘솔에서
-   - `lsdir /` 가 root entries 를 끝까지 출력하는지 (file size, `<DIR>` 표시 포함).
-   - `lsdir /sub` (subdir 생성 후 진입) 가 정상 동작.
-   - 회귀: 기존 `dir /`, `mkdir /tmp4`, `rmdir /tmp4`, `cd /sub`, `pwd`, `type hangul.utf` 에 변화 없음.
-3. **Phase 2 진입 — 앱 윈도우 mouse / resize event API**:
-   - work4.md §3 Phase 2 의 "Resize 정책 설계 메모" 5단계 참조.
-   - [bootpack.h](../harib27f/haribote/bootpack.h) 에 `struct BX_EVENT` 와 type 상수, `BX_WIN_RESIZABLE` flag 추가.
-   - [console.c](../harib27f/haribote/console.c) `hrb_api` 에 edx 40 (`api_getevent`), 41 (`api_resizewin`), 42 (`api_set_winevent`), (필요 시) 43 (`api_capturemouse`) 추가.
-   - [bootpack.c](../harib27f/haribote/bootpack.c) 마우스 루프에서 client area 클릭/이동/더블클릭을 task FIFO 로 라우팅. title bar / close button / system resize edge 와 분리.
-   - app window resize 옵트인 토글: `api_openwin` 의 무조건 `SHEET_FLAG_RESIZABLE` clear 를 `set_winevent` flags 로 가변화.
-   - 검증 앱: 작은 evtest 앱(`api_getevent`/`api_resizewin` 호출)으로 mouse/resize 가 도달하는지 확인.
-4. Phase 2 가 끝나면 Phase 3 explorer 읽기 전용 UI 로 진입한다.
+2. **Phase 1/2 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
+   - Phase 1: `lsdir /` 가 root entries 끝까지 출력. `lsdir /sub` (mkdir /sub 후 진입) 정상. 회귀: `dir /`, `mkdir/rmdir`, `cd`, `pwd`, `type hangul.utf` 변화 없음.
+   - Phase 2: `start evtest` 후 client click → 점/박스 표시. drag → 점선. 우하단 모서리 drag-release → 새 크기로 frame 재배치. 회귀: tetris 키보드 입력, title bar drag, 콘솔 resize 동작 변화 없음.
+3. **Phase 3 진입 — explorer 2-pane 읽기 전용 MVP**:
+   - work4.md §3 Phase 3 참조.
+   - [harib27f/explorer/explorer.c](../harib27f/explorer/explorer.c) 신규 (HE2 window subsystem 앱).
+   - 시작 경로 처리: `api_cmdline` 인자 우선, 없으면 `api_getcwd`.
+   - `api_set_winevent(win, BX_WIN_EV_MOUSE | BX_WIN_EV_RESIZE)` 호출 후 `api_getevent` 단일 stream 으로 키/마우스/리사이즈 처리.
+   - `api_opendir/readdir/closedir` 로 entries 수집, 정렬 (디렉터리 우선 + 이름순).
+   - 2-pane 레이아웃: toolbar(고정 24px), 왼쪽 tree (30~35% 폭, 최소 96px), splitter (4~6px), 오른쪽 file list, 하단 status (16~20px).
+   - 키보드: ↑↓←→ Enter Backspace Tab r q. 마우스: tree/list click selection, double-click open (앱 내부 시간/좌표 판정).
+   - CMake `BXOS_HE2_APPS_WINDOW` 에 `explorer` 추가하면 `EXPLORER.HE2` 가 data.img 에 자동 포함.
+4. Phase 3 가 끝나면 Phase 4 (resize 대응 layout 함수 분리) 로 진입한다.
 
 ## 9. 함정으로 미리 알아둘 것
 

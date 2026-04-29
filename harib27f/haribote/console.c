@@ -35,6 +35,37 @@ static void task_reset_console(struct TASK *task);
 #define FH_MODE_READ	1
 #define FH_MODE_WRITE	2
 
+/* work4 Phase 2: BX_EVENT 한 개를 task 의 circular event 큐에 enqueue 한다.
+ *   - mouse drag 처럼 동일 좌표가 연속으로 들어오는 경우는 호출자가 판단하고
+ *     필요하면 producer 측에서 이전 MOUSE_MOVE 와 합쳐 넣어도 된다.
+ *   - 큐가 가득 찼으면 새 이벤트를 drop (가장 오래된 클릭 손실 방지).
+ *   - fifo32_put(BX_EVENT_FIFO_MARKER) 로 task 를 깨운다.                       */
+void bx_event_post(struct TASK *task, int type, int win, int x, int y,
+		int button, int key, int w, int h)
+{
+	int idx;
+	struct BX_EVENT *ev;
+	if (task == 0 || task->event_buf == 0 || task->event_size <= 0) {
+		return;
+	}
+	if (task->event_count >= task->event_size) {
+		return;	/* drop: 큐 full */
+	}
+	idx = (task->event_p + task->event_count) % task->event_size;
+	ev = &task->event_buf[idx];
+	ev->type   = type;
+	ev->win    = win;
+	ev->x      = x;
+	ev->y      = y;
+	ev->button = button;
+	ev->key    = key;
+	ev->w      = w;
+	ev->h      = h;
+	task->event_count++;
+	fifo32_put(&task->fifo, BX_EVENT_FIFO_MARKER);
+	return;
+}
+
 void console_task(struct SHEET *sheet, int memtotal)
 {
 	struct TASK *task = task_now();
@@ -43,6 +74,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 	struct CONSOLE cons;
 	struct FILEHANDLE fhandle[8];
 	struct DIRHANDLE dhandle[DIR_HANDLES_PER_TASK];
+	struct BX_EVENT event_buf[BX_EVENT_QUEUE_LEN];
 	char cmdline[CONS_CMDLINE_MAX];
 	char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX];
 	int cmd_len = 0, hist_count = 0, hist_pos = 0;
@@ -84,6 +116,10 @@ void console_task(struct SHEET *sheet, int memtotal)
 		dhandle[i].it.at_end = 1;
 	}
 	task->dhandle = dhandle;
+	task->event_buf = event_buf;
+	task->event_size = BX_EVENT_QUEUE_LEN;
+	task->event_count = 0;
+	task->event_p = 0;
 	task->fat = fat;
 	if (nihongo[4096] != 0xff) {	/* 일본어 폰트 파일을 읽어들일 수 있었는지?  */
 		task->langmode = 1;
@@ -1464,6 +1500,10 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 			}
 		}
 	}
+	if (task->event_buf != 0) {
+		task->event_count = 0;
+		task->event_p = 0;
+	}
 	timer_cancelall(&task->fifo);
 	memman_free_4k(memman, (int) q, total_sz);
 	task->langbyte1 = 0;
@@ -1537,6 +1577,10 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 						task->dhandle[i].in_use = 0;
 					}
 				}
+			}
+			if (task->event_buf != 0) {
+				task->event_count = 0;
+				task->event_p = 0;
 			}
 			timer_cancelall(&task->fifo);
 			memman_free_4k(memman, (int) q, segsiz);
@@ -1935,6 +1979,113 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 			reg[7] = fs_user_rename(task->cwd_clus,
 					(char *) ebx + ds_base,
 					(char *) ecx + ds_base);
+		}
+	} else if (edx == 40) {
+		// api_getevent(BX_EVENT *out, mode) → 1=event,0=none,-1=err
+		// mode==0 poll, mode==1 wait. 키보드 char 는 BX_EVENT_KEY 로 변환.
+		struct BX_EVENT *out = (struct BX_EVENT *) ((char *) ebx + ds_base);
+		int v;
+		reg[7] = -1;
+		if (ebx == 0 || task->event_buf == 0) {
+			return 0;
+		}
+		for (;;) {
+			io_cli();
+			/* (a) event 큐가 차 있으면 먼저 꺼낸다 */
+			if (task->event_count > 0) {
+				*out = task->event_buf[task->event_p];
+				task->event_p = (task->event_p + 1) % task->event_size;
+				task->event_count--;
+				io_sti();
+				reg[7] = 1;
+				return 0;
+			}
+			/* (b) fifo 에서 키 / 마커 / 시스템 신호 처리 */
+			if (fifo32_status(&task->fifo) == 0) {
+				if (ecx != 0) {
+					task_sleep(task);
+					/* loop and retry */
+				} else {
+					io_sti();
+					reg[7] = 0;
+					return 0;
+				}
+			} else {
+				v = fifo32_get(&task->fifo);
+				io_sti();
+				if (v == BX_EVENT_FIFO_MARKER) {
+					/* event 큐에 들어와 있을 것 — 다음 iteration 에 꺼낸다 */
+					continue;
+				}
+				if (v <= 1 && cons->sht != 0) {
+					/* 커서용 타이머 — 무시 (다음 콜백 재무장) */
+					timer_init(cons->timer, &task->fifo, 1);
+					timer_settime(cons->timer, 50);
+					continue;
+				}
+				if (v == 2 || v == 3) {
+					/* 커서 ON/OFF — app 에는 의미 없음 */
+					continue;
+				}
+				if (v == 4) {
+					/* 콘솔만을 닫음 — api_getkey 와 동일 처리 */
+					timer_cancel(cons->timer);
+					io_cli();
+					fifo32_put(sys_fifo,
+							cons->sht - shtctl->sheets0 + 2024);
+					cons->sht = 0;
+					io_sti();
+					continue;
+				}
+				if (v >= 256 && v < 256 + 0x200) {
+					/* 키보드 char → BX_EVENT_KEY */
+					out->type = BX_EVENT_KEY;
+					out->win = 0;
+					out->x = 0; out->y = 0;
+					out->button = 0;
+					out->key = v - 256;
+					out->w = 0; out->h = 0;
+					reg[7] = 1;
+					return 0;
+				}
+				/* 알 수 없는 값 — drop and continue */
+			}
+		}
+	} else if (edx == 41) {
+		// api_resizewin(win, new_buf, new_w, new_h, col_inv) → 0/-1
+		// 호출자가 새 buffer 를 미리 그려서 (frame, 배경 포함) 넘긴다.
+		// sheet_resize 가 buf/bxsize/bysize 를 교체하고 다시 그린다.
+		// 이전 buf 의 free 책임은 호출자 (앱) 에 있다.
+		struct SHEET *rsht = (struct SHEET *) (ebx & 0xfffffffe);
+		char *new_buf = (char *) ecx + ds_base;
+		reg[7] = -1;
+		if (rsht != 0 && (rsht->flags & SHEET_FLAG_USE) != 0 &&
+				rsht->task == task && esi > 0 && edi > 0) {
+			sheet_resize(rsht, (unsigned char *) new_buf, esi, edi);
+			rsht->col_inv = eax;
+			reg[7] = 0;
+		}
+	} else if (edx == 42) {
+		// api_set_winevent(win, flags) → 0/-1.
+		//   bit0(BX_WIN_EV_MOUSE)  → SHEET_FLAG_APP_EVENTS
+		//   bit1(BX_WIN_EV_RESIZE) → SHEET_FLAG_RESIZABLE
+		//   bit2(BX_WIN_EV_DBLCLK) → SHEET_FLAG_APP_DBLCLK
+		struct SHEET *rsht = (struct SHEET *) (ebx & 0xfffffffe);
+		reg[7] = -1;
+		if (rsht != 0 && (rsht->flags & SHEET_FLAG_USE) != 0 &&
+				rsht->task == task) {
+			rsht->flags &= ~(SHEET_FLAG_APP_EVENTS | SHEET_FLAG_RESIZABLE
+					| SHEET_FLAG_APP_DBLCLK);
+			if (ecx & BX_WIN_EV_MOUSE) {
+				rsht->flags |= SHEET_FLAG_APP_EVENTS;
+			}
+			if (ecx & BX_WIN_EV_RESIZE) {
+				rsht->flags |= SHEET_FLAG_RESIZABLE;
+			}
+			if (ecx & BX_WIN_EV_DBLCLK) {
+				rsht->flags |= SHEET_FLAG_APP_DBLCLK;
+			}
+			reg[7] = 0;
 		}
 	} else if (edx == 39) {
 		// api_exec(path, flags) → 0=launched, <0=error

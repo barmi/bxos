@@ -174,6 +174,10 @@ struct SCROLLWIN;
 #define SHEET_FLAG_HAS_CURSOR	0x20
 #define SHEET_FLAG_RESIZABLE	0x40	/* default true (sheet_alloc 에서 set) */
 #define SHEET_FLAG_SCROLLWIN	0x80
+/* work4 Phase 2: app 가 client area mouse 이벤트를 받겠다고 opt-in 한 창 */
+#define SHEET_FLAG_APP_EVENTS	0x100
+/* work4 Phase 2: app 가 더블클릭을 커널에서 합성받겠다고 opt-in 한 창 */
+#define SHEET_FLAG_APP_DBLCLK	0x200
 struct SHEET {
 	unsigned char *buf;
 	int bxsize, bysize, vx0, vy0, col_inv, height, flags;
@@ -224,6 +228,34 @@ void inthandler20(int *esp);
 int timer_cancel(struct TIMER *timer);
 void timer_cancelall(struct FIFO32 *fifo);
 
+/* work4 Phase 2: 사용자 앱 이벤트 구조체 / 상수.
+ *   - 모든 좌표는 client-area 기준 (title bar 와 frame 을 뺀 상대 좌표).
+ *   - button bit0=left, bit1=right, bit2=middle.                              */
+struct BX_EVENT {
+	int type;
+	int win;
+	int x, y;
+	int button;
+	int key;
+	int w, h;
+};
+#define BX_EVENT_KEY			1
+#define BX_EVENT_MOUSE_DOWN		2
+#define BX_EVENT_MOUSE_UP		3
+#define BX_EVENT_MOUSE_MOVE		4
+#define BX_EVENT_MOUSE_DBLCLK	5
+#define BX_EVENT_RESIZE			6
+
+/* api_set_winevent flags */
+#define BX_WIN_EV_MOUSE			0x01
+#define BX_WIN_EV_RESIZE		0x02
+#define BX_WIN_EV_DBLCLK		0x04
+
+/* fifo wakeup marker (large enough to not collide with key+256/4 등 기존 값) */
+#define BX_EVENT_FIFO_MARKER	0x10000
+
+#define BX_EVENT_QUEUE_LEN		32
+
 /* mtask.c */
 #define MAX_PATH	128
 #define FS_MAX_DEPTH	16
@@ -252,6 +284,8 @@ struct TASK {
 	int ds_base, cons_stack;
 	struct FILEHANDLE *fhandle;
 	struct DIRHANDLE *dhandle;     /* work4: 사용자 dir handle 슬롯 */
+	struct BX_EVENT *event_buf;    /* work4 Phase 2: app event 큐 (circular) */
+	int event_size, event_count, event_p;
 	int *fat;
 	char *cmdline;
 	unsigned char langmode, langbyte1, langbyte2, app_type;
@@ -391,6 +425,10 @@ void cmd_ncst(struct CONSOLE *cons, char *cmdline, int memtotal);
 void cmd_langmode(struct CONSOLE *cons, char *cmdline);
 int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline);
 int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax);
+/* work4 Phase 2: BX_EVENT 한 개를 task 의 event 큐에 push 하고 task 를 깨운다.
+ * 큐가 가득 찼으면 가장 오래된 항목을 폐기하지 않고 새 이벤트를 drop 한다.   */
+void bx_event_post(struct TASK *task, int type, int win, int x, int y,
+		int button, int key, int w, int h);
 int *inthandler0d(int *esp);
 int *inthandler0c(int *esp);
 void hrb_api_linewin(struct SHEET *sht, int x0, int y0, int x1, int y1, int col);
