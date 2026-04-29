@@ -43,6 +43,10 @@ set(BXOS_MAKEFONT "${BXOS_TOOLS_DIR}/makefont.py")
 set(BXOS_MKFAT12  "${BXOS_TOOLS_DIR}/mkfat12.py")
 set(BXOS_FAT_TOOL "${BXOS_TOOLS_DIR}/bxos_fat.py")
 set(BXOS_LDS      "${BXOS_TOOLS_DIR}/linker-bootpack.lds")
+set(BXOS_KERNEL_HEADERS
+    "${BXOS_KSRC}/bootpack.h"
+    "${BXOS_TOOLS_DIR}/euckr_map.h"
+)
 
 foreach(_t IN ITEMS
         "${BXOS_NAS2NASM}" "${BXOS_HRBIFY}" "${BXOS_MAKEFONT}"
@@ -81,7 +85,7 @@ function(_bxos_compile_c src obj)
                 -O2
                 ${_incflags}
                 -c -o "${obj}" "${src}"
-        DEPENDS "${src}"
+        DEPENDS "${src}" ${BXOS_KERNEL_HEADERS}
         COMMENT "[cc] ${src}"
         VERBATIM
         COMMAND_EXPAND_LISTS

@@ -97,6 +97,7 @@ KERNEL_C_SRCS := $(addprefix $(KSRC)/,$(addsuffix .c,$(KERNEL_C_NAMES)))
 KERNEL_OBJS   := $(addprefix $(BUILD)/,$(addsuffix .o,$(KERNEL_C_NAMES))) \
                  $(BUILD)/naskfunc.o $(BUILD)/hankaku.o \
                  $(BUILD)/modern_libc.o $(BUILD)/startup_kernel.o
+KERNEL_HEADERS := $(KSRC)/bootpack.h $(TOOLS_DIR)/euckr_map.h
 
 # 앱 .hrb 들 (이미 빌드된 원본을 그대로 사용)
 APP_HRBS := $(wildcard $(HARIB)/*/*.hrb)
@@ -160,10 +161,10 @@ $(BUILD)/naskfunc.o: $(KSRC)/naskfunc.nas | $(BUILD)
 	$(NASM) -f elf32 -o $@ $(BUILD)/naskfunc.nasm.nas
 
 # ─── *.c → ELF object ────────────────────────────────────────────────
-$(BUILD)/%.o: $(KSRC)/%.c | $(BUILD)
+$(BUILD)/%.o: $(KSRC)/%.c $(KERNEL_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD)/modern_libc.o: $(TOOLS_DIR)/modern_libc.c | $(BUILD)
+$(BUILD)/modern_libc.o: $(TOOLS_DIR)/modern_libc.c $(KERNEL_HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # ─── hankaku.txt → hankaku.bin → ELF object ──────────────────────────
