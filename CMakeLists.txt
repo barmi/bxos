@@ -259,6 +259,7 @@ set(BXOS_HE2_APPS_BASIC
     sosu sosu2 sosu3
     type touch echo fdel pwd beepdown
     chklang
+    lsdir
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")

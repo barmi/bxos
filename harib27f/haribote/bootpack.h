@@ -251,6 +251,7 @@ struct TASK {
 	struct CONSOLE *cons;
 	int ds_base, cons_stack;
 	struct FILEHANDLE *fhandle;
+	struct DIRHANDLE *dhandle;     /* work4: 사용자 dir handle 슬롯 */
 	int *fat;
 	char *cmdline;
 	unsigned char langmode, langbyte1, langbyte2, app_type;
@@ -478,6 +479,19 @@ struct DIR_ITER {
 	int sector_loaded;
 	int at_end;
 };
+/* 사용자 앱이 보는 디렉터리 엔트리 (work4 Phase 1). 커널 FILEINFO 의 일부를
+ * 노출용으로 압축한 것. attr=0x10 → 디렉터리.                                */
+struct BX_DIRINFO {
+	char         name[13];        /* "NAME.EXT" + NUL, 디렉터리는 name only */
+	unsigned char attr;           /* FAT attr (FILEINFO.type) */
+	unsigned int size;
+	unsigned int clustno;
+};
+#define DIR_HANDLES_PER_TASK	4
+struct DIRHANDLE {
+	int in_use;
+	struct DIR_ITER it;
+};
 extern struct FS_MOUNT g_data_mount;
 extern int g_data_mounted;
 int fs_mount_data(int drive);
@@ -509,12 +523,25 @@ int fs_data_write(struct FILEINFO *finfo, int pos, const void *buf, int n);
 int fs_data_truncate(struct FILEINFO *finfo, int size);
 int fs_data_unlink(struct FILEINFO *finfo);
 
+/* work4 Phase 1: 사용자 API 용 안전 래퍼.
+ *   - fs_user_opendir / readdir / closedir 는 DIR_ITER 를 직접 노출하지 않고
+ *     커널 측 DIRHANDLE 슬롯을 통해 호출된다.
+ *   - readdir 는 deleted entry, volume label, LFN slot 을 자동으로 skip 하고
+ *     `.` / `..` 도 사용자 앱에는 그대로 전달한다(트리 표시에 필요).
+ *   - 반환값 규칙: 1=entry 1개, 0=end, -1=error.                              */
+int fs_user_opendir(unsigned int start_clus, char *path, struct DIR_ITER *it);
+int fs_user_readdir(struct DIR_ITER *it, struct BX_DIRINFO *out);
+int fs_user_stat(unsigned int start_clus, char *path, struct BX_DIRINFO *out);
+int fs_user_rename(unsigned int start_clus, char *oldpath, char *newpath);
+void fs_dirinfo_from_finfo(const struct FILEINFO *src, struct BX_DIRINFO *dst);
+
 
 /* tek.c */
 int tek_getsize(unsigned char *p);
 int tek_decomp(unsigned char *p, char *q, int size);
 
 /* bootpack.c */
+extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: api_exec 용) */
 #define MAX_MENU		256
 #define MAX_MNLV		  8
 struct MNLV {

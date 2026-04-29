@@ -1463,3 +1463,191 @@ int fs_data_unlink(struct FILEINFO *finfo)
 {
 	return fs_unlink_common(finfo, 0);
 }
+
+/* ─── work4 Phase 1: 사용자 API 용 안전 래퍼 ──────────────────────────────── */
+
+/* 8.3 FILEINFO → "NAME.EXT" 형태의 NUL-terminated 13 byte 이름 + attr/size/clus.
+ * 디렉터리는 확장자 점을 붙이지 않는다. 이름에서 trailing space 는 잘라낸다. */
+void fs_dirinfo_from_finfo(const struct FILEINFO *src, struct BX_DIRINFO *dst)
+{
+	int i, n;
+	if (dst == 0) {
+		return;
+	}
+	for (i = 0; i < 13; i++) {
+		dst->name[i] = 0;
+	}
+	dst->attr = 0;
+	dst->size = 0;
+	dst->clustno = 0;
+	if (src == 0) {
+		return;
+	}
+	n = 0;
+	for (i = 0; i < 8 && src->name[i] != ' ' && src->name[i] != 0; i++) {
+		dst->name[n++] = (char) src->name[i];
+	}
+	if ((src->type & 0x10) == 0 && src->ext[0] != ' ' && src->ext[0] != 0) {
+		dst->name[n++] = '.';
+		for (i = 0; i < 3 && src->ext[i] != ' ' && src->ext[i] != 0; i++) {
+			dst->name[n++] = (char) src->ext[i];
+		}
+	}
+	dst->name[n] = 0;
+	dst->attr    = src->type;
+	dst->size    = src->size;
+	dst->clustno = src->clustno;
+	return;
+}
+
+/* path 가 디렉터리인지 확인하고 dir_iter 를 연다.                              */
+int fs_user_opendir(unsigned int start_clus, char *path, struct DIR_ITER *it)
+{
+	unsigned int parent_clus, target;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (it == 0 || path == 0) {
+		return -1;
+	}
+	/* 경로가 "/" 또는 "" 이면 root 로 직행. fs_resolve_path 는 "" 거부. */
+	if (path[0] == '/' && path[1] == 0) {
+		return dir_iter_open(it, 0);
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83,
+			&leaf, &slot);
+	if (r != 0) {
+		return -1;
+	}
+	if (leaf_name83[0] == 0) {
+		/* 경로 자체가 디렉터리 (trailing slash 또는 cwd) */
+		target = parent_clus;
+	} else {
+		if (leaf.name[0] == 0 || (leaf.type & 0x10) == 0) {
+			return -1;
+		}
+		target = leaf.clustno;
+	}
+	return dir_iter_open(it, target);
+}
+
+/* dir_iter 에서 다음 사용자 가시 entry 를 한 개 반환한다.
+ * deleted (0xE5), volume label (attr & 0x08), LFN slot (attr == 0x0F) 는 skip.
+ * `.` / `..` 는 그대로 노출 (explorer 트리에서 필요).                          */
+int fs_user_readdir(struct DIR_ITER *it, struct BX_DIRINFO *out)
+{
+	struct FILEINFO entry;
+	struct DIR_SLOT slot;
+	int r;
+
+	if (it == 0 || out == 0) {
+		return -1;
+	}
+	for (;;) {
+		r = dir_iter_next(it, &entry, &slot);
+		if (r < 0) {
+			return -1;
+		}
+		if (r == 0 || entry.name[0] == 0x00) {
+			return 0;
+		}
+		if (entry.name[0] == (char) 0xE5) {
+			continue;            /* deleted */
+		}
+		if (entry.type == 0x0F) {
+			continue;            /* LFN slot */
+		}
+		if ((entry.type & 0x08) != 0) {
+			continue;            /* volume label */
+		}
+		fs_dirinfo_from_finfo(&entry, out);
+		return 1;
+	}
+}
+
+/* 한 경로의 정보를 BX_DIRINFO 로 채운다. root("/") 는 "" + dir attr. */
+int fs_user_stat(unsigned int start_clus, char *path, struct BX_DIRINFO *out)
+{
+	unsigned int parent_clus;
+	unsigned char leaf_name83[11];
+	struct FILEINFO leaf;
+	struct DIR_SLOT slot;
+	int i, r;
+
+	if (path == 0 || out == 0) {
+		return -1;
+	}
+	if (path[0] == '/' && path[1] == 0) {
+		for (i = 0; i < 13; i++) out->name[i] = 0;
+		out->attr    = 0x10;
+		out->size    = 0;
+		out->clustno = 0;
+		return 0;
+	}
+	r = fs_resolve_path(start_clus, path, &parent_clus, leaf_name83,
+			&leaf, &slot);
+	if (r != 0) {
+		return -1;
+	}
+	if (leaf_name83[0] == 0 || leaf.name[0] == 0) {
+		return -1;
+	}
+	fs_dirinfo_from_finfo(&leaf, out);
+	return 0;
+}
+
+/* 같은 부모 디렉터리 안의 단순 rename. 다른 부모 디렉터리로의 move 는 거부.
+ * 디렉터리 rename 도 같은 부모 안이면 안전하므로 file/dir 모두 허용한다.
+ * Phase 1 의 ABI 안정화가 목표이고, cross-parent move 는 Phase 6 에서
+ * cmd_mv 의 copy+unlink 경로를 재사용하도록 다시 검토한다.                  */
+int fs_user_rename(unsigned int start_clus, char *oldpath, char *newpath)
+{
+	struct FS_MOUNT *m = &g_data_mount;
+	unsigned int parent_old, parent_new;
+	unsigned char name83_old[11], name83_new[11];
+	struct FILEINFO leaf_old, leaf_new, entry;
+	struct DIR_SLOT slot_old, slot_new;
+	int r, i;
+
+	if (!g_data_mounted || m->fs_type != 16) {
+		return -1;
+	}
+	if (oldpath == 0 || newpath == 0) {
+		return -1;
+	}
+	r = fs_resolve_path(start_clus, oldpath, &parent_old, name83_old,
+			&leaf_old, &slot_old);
+	if (r != 0 || name83_old[0] == 0 || leaf_old.name[0] == 0) {
+		return FS_RESOLVE_NOT_FOUND;
+	}
+	r = fs_resolve_path(start_clus, newpath, &parent_new, name83_new,
+			&leaf_new, &slot_new);
+	if (r != 0 || name83_new[0] == 0) {
+		return FS_RESOLVE_BAD_PATH;
+	}
+	if (parent_old != parent_new) {
+		/* cross-parent move 미지원 (Phase 1) */
+		return -2;
+	}
+	if (leaf_new.name[0] != 0) {
+		/* 대상이 이미 존재. 같은 슬롯이면 no-op, 그 외엔 거부. */
+		if (slot_new.lba == slot_old.lba && slot_new.offset == slot_old.offset) {
+			return 0;
+		}
+		return -3;
+	}
+	/* slot_old 의 엔트리를 읽어와(이미 leaf_old) 이름만 갈아끼우고 다시 쓴다.   */
+	entry = leaf_old;
+	for (i = 0; i < 8; i++) {
+		entry.name[i] = name83_new[i];
+	}
+	for (i = 0; i < 3; i++) {
+		entry.ext[i] = name83_new[8 + i];
+	}
+	if (dir_write_slot(&slot_old, &entry) != 0) {
+		return -4;
+	}
+	return 0;
+}

@@ -15,6 +15,8 @@ void close_taskmgr(void);
 void init_menu(struct MNLV *mnlv, struct MENU **menu);
 void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *title);
 
+unsigned int g_memtotal = 0;	/* HariMain memtest 결과 — work4 api_exec 등에서 참조 */
+
 void HariMain(void)
 {
 	struct BOOTINFO *binfo = (struct BOOTINFO *) ADR_BOOTINFO;
@@ -85,6 +87,7 @@ void HariMain(void)
 	ata_init();
 
 	memtotal = memtest(0x00400000, 0xbfffffff);
+	g_memtotal = memtotal;
 	memman_init(memman);
 	memman_free(memman, 0x00001000, 0x0009e000); /* 0x00001000 - 0x0009efff */
 	memman_free(memman, 0x00400000, memtotal - 0x00400000);

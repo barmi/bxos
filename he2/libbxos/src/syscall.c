@@ -320,3 +320,64 @@ int api_getcwd(char *buf, int maxsize) {
             : "=a"(r) : "d"(31), "b"(buf), "c"(maxsize) : "memory");
     return r;
 }
+
+/* ─── 32: opendir — EBX=path → EAX = handle (0=fail) ─────────────── */
+int api_opendir(const char *path) {
+    int h;
+    __asm__ volatile ("int $0x40"
+            : "=a"(h) : "d"(32), "b"(path) : "memory");
+    return h;
+}
+
+/* ─── 33: readdir — EBX=handle, ECX=out → EAX = 1/0/-1 ───────────── */
+int api_readdir(int handle, struct BX_DIRINFO *out) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(33), "b"(handle), "c"(out) : "memory");
+    return r;
+}
+
+/* ─── 34: closedir — EBX=handle ──────────────────────────────────── */
+void api_closedir(int handle) {
+    SYS_B(34, handle);
+}
+
+/* ─── 35: stat — EBX=path, ECX=out → EAX = 0/-1 ──────────────────── */
+int api_stat(const char *path, struct BX_DIRINFO *out) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(35), "b"(path), "c"(out) : "memory");
+    return r;
+}
+
+/* ─── 36: mkdir — EBX=path → EAX = 0/<0 ──────────────────────────── */
+int api_mkdir(const char *path) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(36), "b"(path) : "memory");
+    return r;
+}
+
+/* ─── 37: rmdir — EBX=path → EAX = 0/<0 ──────────────────────────── */
+int api_rmdir(const char *path) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(37), "b"(path) : "memory");
+    return r;
+}
+
+/* ─── 38: rename — EBX=oldpath, ECX=newpath → EAX = 0/<0 ─────────── */
+int api_rename(const char *oldpath, const char *newpath) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(38), "b"(oldpath), "c"(newpath) : "memory");
+    return r;
+}
+
+/* ─── 39: exec — EBX=path, ECX=flags → EAX = 0/<0 ────────────────── */
+int api_exec(const char *path, int flags) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(39), "b"(path), "c"(flags) : "memory");
+    return r;
+}

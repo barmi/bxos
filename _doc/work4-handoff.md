@@ -10,11 +10,11 @@ work1 (쓰기 가능 FAT16 + OS/앱 분리) → work2 (서브디렉터리 / cwd 
 
 BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색기 앱 `explorer.he2`** 를 추가한다. 왼쪽에는 디렉터리 트리, 오른쪽에는 파일 목록을 표시하고, 상단에는 메뉴/아이콘 바를 배치한다. 창 크기 변경 시 tree/list/status 영역이 비율에 맞게 재배치되어야 한다.
 
-## 2. 현재 위치 (2026-04-29 기준)
+## 2. 현재 위치 (2026-04-30 기준)
 
-- work4 는 **Phase 0 완료, Phase 1 진입 직전** 단계다. 아직 코드 구현은 시작하지 않았다.
-- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 work4.md §3 “Phase 0” 마지막에 있다.
-- 이 handoff 문서는 다음 세션이 바로 Phase 1 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- work4 는 **Phase 1 구현 완료, QEMU smoke 대기 → Phase 2 진입 직전** 단계다.
+- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 work4.md §3 “Phase 0” 마지막에 있다. Phase 1 구현 노트는 §3 Phase 1 마지막에 있다.
+- 이 handoff 문서는 다음 세션이 바로 Phase 2 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
 - Phase 0 에서 잠근 핵심:
   - syscall 번호 32~39 (파일관리), 40~43 (윈도우 이벤트/리사이즈) 확정.
   - 사용자 구조체 `BX_DIRINFO`, `BX_EVENT` 필드 확정 (필드 추가는 가능, 의미 보존).
@@ -130,6 +130,7 @@ struct BX_EVENT {
 | Phase | 분량 | 핵심 산출물 |
 |---|---|---|
 | 0. 요구사항 / 인터페이스 확정 ☑ | 0.5d | 2-pane UI, mouse/resize, syscall 번호 확정 (2026-04-29 완료) |
+| 1. 커널 디렉터리 API / 파일관리 syscall ☑ | 2d | `api_opendir`~`api_exec` (edx 32~39), libbxos wrapper, lsdir 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 1. 커널 디렉터리 API / 파일관리 syscall | 2d | `api_opendir`~`api_exec`, libbxos wrapper |
 | 2. 앱 윈도우 mouse / resize event API | 2d | `api_getevent`, `api_resizewin`, app client mouse event |
 | 3. 2-pane explorer 읽기 전용 MVP | 2d | toolbar/tree/list/status, keyboard+mouse selection |
@@ -181,16 +182,21 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
-Phase 0 는 완료되었으므로 다음 세션은 Phase 1 부터 시작한다.
+Phase 0/1 은 완료되었으므로 다음 세션은 QEMU smoke 검증 후 Phase 2 로 진입한다.
 
 1. `git status --short` 로 현재 작업트리 확인.
-2. [bootpack.h](../harib27f/haribote/bootpack.h) 에 `struct BX_DIRINFO`, dir handle 슬롯, event 구조체/prototype 추가.
-3. [console.c](../harib27f/haribote/console.c) `hrb_api` 에 edx 32~34 (`opendir/readdir/closedir`) 먼저 구현. 마지막 사용 번호는 31(`api_getcwd`).
-4. [fs_fat.c](../harib27f/haribote/fs_fat.c) `DIR_ITER` 를 사용자 API용 안전 래퍼로 감싸기. deleted entry / volume label / LFN slot 은 사용자에게 넘기지 않음.
-5. task 종료 시 dir handle 자동 close 보장.
-6. [he2/libbxos](../he2/libbxos/) wrapper 추가 후 임시 검증 앱 또는 콘솔 debug 명령으로 `api_opendir("/")` → `api_readdir()` end-to-end 확인.
-7. 이후 edx 35~39 (`stat`/`mkdir`/`rmdir`/`rename`/`exec`) 순서로 추가.
-8. Phase 2 에서 app client mouse event 와 resize event 를 확인하는 작은 검증 앱을 먼저 만든 뒤, Phase 3 의 explorer 읽기 전용 UI 로 진입한다.
+2. **Phase 1 QEMU smoke**: `./run-qemu.sh` → 콘솔에서
+   - `lsdir /` 가 root entries 를 끝까지 출력하는지 (file size, `<DIR>` 표시 포함).
+   - `lsdir /sub` (subdir 생성 후 진입) 가 정상 동작.
+   - 회귀: 기존 `dir /`, `mkdir /tmp4`, `rmdir /tmp4`, `cd /sub`, `pwd`, `type hangul.utf` 에 변화 없음.
+3. **Phase 2 진입 — 앱 윈도우 mouse / resize event API**:
+   - work4.md §3 Phase 2 의 "Resize 정책 설계 메모" 5단계 참조.
+   - [bootpack.h](../harib27f/haribote/bootpack.h) 에 `struct BX_EVENT` 와 type 상수, `BX_WIN_RESIZABLE` flag 추가.
+   - [console.c](../harib27f/haribote/console.c) `hrb_api` 에 edx 40 (`api_getevent`), 41 (`api_resizewin`), 42 (`api_set_winevent`), (필요 시) 43 (`api_capturemouse`) 추가.
+   - [bootpack.c](../harib27f/haribote/bootpack.c) 마우스 루프에서 client area 클릭/이동/더블클릭을 task FIFO 로 라우팅. title bar / close button / system resize edge 와 분리.
+   - app window resize 옵트인 토글: `api_openwin` 의 무조건 `SHEET_FLAG_RESIZABLE` clear 를 `set_winevent` flags 로 가변화.
+   - 검증 앱: 작은 evtest 앱(`api_getevent`/`api_resizewin` 호출)으로 mouse/resize 가 도달하는지 확인.
+4. Phase 2 가 끝나면 Phase 3 explorer 읽기 전용 UI 로 진입한다.
 
 ## 9. 함정으로 미리 알아둘 것
 

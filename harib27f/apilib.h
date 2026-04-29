@@ -29,3 +29,17 @@ int api_fdelete(char *fname);
 int api_cmdline(char *buf, int maxsize);
 int api_getlang(void);
 int api_getcwd(char *buf, int maxsize);
+struct BX_DIRINFO {
+	char         name[13];
+	unsigned char attr;
+	unsigned int  size;
+	unsigned int  clustno;
+};
+int api_opendir(const char *path);
+int api_readdir(int handle, struct BX_DIRINFO *out);
+void api_closedir(int handle);
+int api_stat(const char *path, struct BX_DIRINFO *out);
+int api_mkdir(const char *path);
+int api_rmdir(const char *path);
+int api_rename(const char *oldpath, const char *newpath);
+int api_exec(const char *path, int flags);

@@ -107,32 +107,39 @@
 | `api_exec` cwd 정책 | 탐색기 현재 경로 상속 |
 | Phase 2 에서 결정 보류 | (a) double-click 판정 위치(커널 vs 앱), (b) `api_capturemouse` 도입 여부, (c) `api_rename` 의 디렉터리 지원 여부 |
 
-### Phase 1 — 커널 디렉터리 API / 사용자 파일관리 syscall (2일)
+### Phase 1 — 커널 디렉터리 API / 사용자 파일관리 syscall (2일) — ☑ 구현 완료 (2026-04-30)
 **목표**: `explorer.he2` 가 디렉터리를 읽고 파일관리 명령을 요청할 수 있는 최소 ABI를 만든다.
 
-- ☐ [bootpack.h](../harib27f/haribote/bootpack.h) 에 사용자 노출용 구조체 추가:
-  - `struct BX_DIRINFO { char name[13]; unsigned char attr; unsigned int size; unsigned int clustno; };`
-  - `struct DIRHANDLE` 또는 task 내부 dir handle 슬롯.
-- ☐ [fs_fat.c](../harib27f/haribote/fs_fat.c) 의 `DIR_ITER` 를 사용자 API가 안전하게 사용할 수 있는 래퍼로 감싼다.
-- ☐ [console.c](../harib27f/haribote/console.c) `hrb_api` 에 파일관리 syscall 추가:
-  - `edx=32 api_opendir(path)` → handle 또는 0.
-  - `edx=33 api_readdir(handle, BX_DIRINFO *out)` → 1=entry, 0=end, -1=error.
-  - `edx=34 api_closedir(handle)`.
-  - `edx=35 api_stat(path, BX_DIRINFO *out)`.
-  - `edx=36 api_mkdir(path)`.
-  - `edx=37 api_rmdir(path)`.
-  - `edx=38 api_rename(oldpath, newpath)` 또는 `api_move`.
-  - `edx=39 api_exec(path, flags)`.
-- ☐ task 종료 시 열려 있는 dir handle 을 정리한다.
-- ☐ [he2/libbxos/include/bxos.h](../he2/libbxos/include/bxos.h) 와 [he2/libbxos/src/syscall.c](../he2/libbxos/src/syscall.c) 에 wrapper 추가.
-- ☐ legacy [harib27f/apilib.h](../harib27f/apilib.h) 에도 선언을 맞춘다. NASM wrapper 는 필요 여부를 Phase 1 에서 결정한다.
+- ☑ [bootpack.h](../harib27f/haribote/bootpack.h) 에 사용자 노출용 구조체 추가:
+  - ☑ `struct BX_DIRINFO { char name[13]; unsigned char attr; unsigned int size; unsigned int clustno; };`
+  - ☑ `struct DIRHANDLE { int in_use; struct DIR_ITER it; }` + `DIR_HANDLES_PER_TASK=4` + `task->dhandle` slot pointer.
+- ☑ [fs_fat.c](../harib27f/haribote/fs_fat.c) 의 `DIR_ITER` 를 사용자 API가 안전하게 사용할 수 있는 래퍼로 감싼다 → `fs_user_opendir/readdir/stat/rename` + `fs_dirinfo_from_finfo`. deleted/0xE5, LFN 0x0F, volume label 0x08 은 readdir 에서 자동 skip.
+- ☑ [console.c](../harib27f/haribote/console.c) `hrb_api` 에 파일관리 syscall 추가:
+  - ☑ `edx=32 api_opendir(path)` → DIRHANDLE* 또는 0.
+  - ☑ `edx=33 api_readdir(handle, BX_DIRINFO *out)` → 1=entry, 0=end, -1=error.
+  - ☑ `edx=34 api_closedir(handle)`.
+  - ☑ `edx=35 api_stat(path, BX_DIRINFO *out)` (root "/" 는 dir attr 만 채워 0 반환).
+  - ☑ `edx=36 api_mkdir(path)` → fs_mkdir 위임.
+  - ☑ `edx=37 api_rmdir(path)` → fs_rmdir 위임.
+  - ☑ `edx=38 api_rename(oldpath, newpath)` → 같은 부모 in-place rename(file/dir 둘 다); cross-parent move 는 -2 반환 (Phase 6 에서 다시 검토).
+  - ☑ `edx=39 api_exec(path, flags)` → 새 console task 를 spawn 하고 호출자의 cwd 를 상속, fifo 에 path+Enter 를 주입.
+- ☑ task 종료 시 열려 있는 dir handle 을 정리한다 — `load_and_run_he2` 와 legacy `cmd_app` 양쪽 cleanup 에 dir handle close 추가.
+- ☑ [he2/libbxos/include/bxos.h](../he2/libbxos/include/bxos.h) 와 [he2/libbxos/src/syscall.c](../he2/libbxos/src/syscall.c) 에 wrapper 추가 (`api_opendir`~`api_exec`).
+- ☑ legacy [harib27f/apilib.h](../harib27f/apilib.h) 에 선언 맞춤. **NASM wrapper 는 도입하지 않음** — explorer/lsdir 등 dir/exec 를 호출하는 앱은 모두 HE2 빌드라 libbxos C wrapper 만으로 충분. 향후 legacy `harib27f/apilib/api032.nas..api039.nas` 가 필요해지면 그때 추가.
 
-**확인할 사항**
-- ☐ `cmake --build build/cmake --target kernel` 통과.
-- ☐ 기존 `dir /`, `mkdir /tmp`, `rmdir /tmp`, `pwd`, `type hangul.utf` 회귀 없음.
-- ☐ 임시 검증 앱 또는 콘솔 debug 명령으로 `api_opendir("/")` → `api_readdir()` 가 root entries 를 끝까지 반환한다.
-- ☐ `api_closedir()` 후 handle 재사용 가능.
-- ☐ 잘못된 path, 파일에 대한 opendir, 잘못된 handle 이 panic 없이 에러를 반환한다.
+**검증/확인**
+- ☑ `cmake --build build/cmake --target kernel` 통과.
+- ☑ `cmake --build build/cmake` clean build 통과.
+- ☑ `fsck_msdos -n build/cmake/haribote.img` / `data.img` clean.
+- ☑ 검증 앱 [harib27f/lsdir/lsdir.c](../harib27f/lsdir/lsdir.c) 추가 — `lsdir [path]` 가 `api_opendir/readdir/closedir` end-to-end 를 검증하고 entry 수와 size/`<DIR>` 표시까지 출력한다. CMake `BXOS_HE2_APPS_BASIC` 에 등록되어 `data.img` 에 자동 포함.
+- ☐ QEMU smoke (사용자 인터랙션 필요): `./run-qemu.sh` → `lsdir /`, `lsdir /sub`, `mkdir /tmp4`, `rmdir /tmp4`, 콘솔 회귀(`dir /`, `cd /sub`, `pwd`, `type hangul.utf`).
+- ☑ 잘못된 path / 파일에 대한 opendir / 잘못된 handle: 코드 경로상 모두 -1 또는 0 반환 (DIRHANDLE pointer 범위 검사로 panic 방지).
+- ☑ `api_closedir()` 후 handle 재사용 가능 — `in_use=0` 으로 reset 후 opendir 가 다시 잡음.
+
+**Phase 1 구현 노트**
+- `g_memtotal` 글로벌을 [bootpack.h](../harib27f/haribote/bootpack.h)/[bootpack.c](../harib27f/haribote/bootpack.c) 에 추가해 `api_exec` 가 `open_constask(0, g_memtotal)` 을 호출할 수 있게 한다. HariMain 의 `memtest` 직후 캐시.
+- DIRHANDLE 슬롯은 console_task 의 stack 에 놓고 `task->dhandle` 에 연결한다 (FILEHANDLE 와 동일한 패턴, MAX=4).
+- `api_rename` 의 cross-parent move 와 디렉터리 move 는 Phase 6 에서 cmd_mv 의 copy+unlink 경로를 재사용해 검토.
 
 ### Phase 2 — 앱 윈도우 mouse / resize event API (2일)
 **목표**: 탐색기 앱이 마우스와 창 크기 변경을 직접 처리할 수 있게 한다.

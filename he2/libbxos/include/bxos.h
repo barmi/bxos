@@ -64,6 +64,22 @@ static inline int bx_getcwd(char *buf, int maxsize) {
     return api_getcwd(buf, maxsize);
 }
 
+/* ---- file management (work4 Phase 1) ------------------------------------- */
+struct BX_DIRINFO {
+    char         name[13];   /* "NAME.EXT" + NUL, dir = name only */
+    unsigned char attr;       /* FAT attr; 0x10 = directory */
+    unsigned int  size;
+    unsigned int  clustno;
+};
+int   api_opendir(const char *path);                          /* → handle/0 */
+int   api_readdir(int handle, struct BX_DIRINFO *out);        /* 1/0/-1     */
+void  api_closedir(int handle);
+int   api_stat(const char *path, struct BX_DIRINFO *out);     /* 0/-1       */
+int   api_mkdir(const char *path);                            /* 0/<0       */
+int   api_rmdir(const char *path);                            /* 0/<0       */
+int   api_rename(const char *oldpath, const char *newpath);   /* 0/<0       */
+int   api_exec(const char *path, int flags);                  /* 0/<0       */
+
 /* ---- memory layout exported by linker (linker-he2.lds) ------------------ */
 extern char _he2_image_end[];   /* end of file image (= bss start)          */
 extern char _he2_bss_end[];     /* end of bss        (= heap start)         */

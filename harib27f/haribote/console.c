@@ -42,6 +42,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 	int i, *fat = (int *) memman_alloc_4k(memman, 4 * 2880);
 	struct CONSOLE cons;
 	struct FILEHANDLE fhandle[8];
+	struct DIRHANDLE dhandle[DIR_HANDLES_PER_TASK];
 	char cmdline[CONS_CMDLINE_MAX];
 	char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX];
 	int cmd_len = 0, hist_count = 0, hist_pos = 0;
@@ -78,6 +79,11 @@ void console_task(struct SHEET *sheet, int memtotal)
 		fhandle[i].file.finfo.name[0] = 0;
 	}
 	task->fhandle = fhandle;
+	for (i = 0; i < DIR_HANDLES_PER_TASK; i++) {
+		dhandle[i].in_use = 0;
+		dhandle[i].it.at_end = 1;
+	}
+	task->dhandle = dhandle;
 	task->fat = fat;
 	if (nihongo[4096] != 0xff) {	/* 일본어 폰트 파일을 읽어들일 수 있었는지?  */
 		task->langmode = 1;
@@ -1450,6 +1456,14 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 	for (i = 0; i < 8; i++) {
 		filehandle_close(memman, &task->fhandle[i]);
 	}
+	if (task->dhandle != 0) {
+		for (i = 0; i < DIR_HANDLES_PER_TASK; i++) {
+			if (task->dhandle[i].in_use) {
+				dir_iter_close(&task->dhandle[i].it);
+				task->dhandle[i].in_use = 0;
+			}
+		}
+	}
 	timer_cancelall(&task->fifo);
 	memman_free_4k(memman, (int) q, total_sz);
 	task->langbyte1 = 0;
@@ -1515,6 +1529,14 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 			}
 			for (i = 0; i < 8; i++) {	/* 클로우즈 하지 않는 파일을 클로우즈 */
 				filehandle_close(memman, &task->fhandle[i]);
+			}
+			if (task->dhandle != 0) {
+				for (i = 0; i < DIR_HANDLES_PER_TASK; i++) {
+					if (task->dhandle[i].in_use) {
+						dir_iter_close(&task->dhandle[i].it);
+						task->dhandle[i].in_use = 0;
+					}
+				}
 			}
 			timer_cancelall(&task->fifo);
 			memman_free_4k(memman, (int) q, segsiz);
@@ -1841,6 +1863,102 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 			}
 			dst[i] = 0;
 			reg[7] = i;
+		}
+	} else if (edx == 32) {
+		// api_opendir(path) → handle (DIRHANDLE*) or 0
+		struct DIRHANDLE *dh = 0;
+		reg[7] = 0;
+		if (task->dhandle != 0) {
+			for (i = 0; i < DIR_HANDLES_PER_TASK; i++) {
+				if (!task->dhandle[i].in_use) {
+					dh = &task->dhandle[i];
+					break;
+				}
+			}
+			if (dh != 0) {
+				if (fs_user_opendir(task->cwd_clus,
+						(char *) ebx + ds_base, &dh->it) == 0) {
+					dh->in_use = 1;
+					reg[7] = (int) dh;
+				}
+			}
+		}
+	} else if (edx == 33) {
+		// api_readdir(handle, BX_DIRINFO*) → 1=entry,0=end,-1=err
+		struct DIRHANDLE *dh = (struct DIRHANDLE *) ebx;
+		struct BX_DIRINFO *out = (struct BX_DIRINFO *) ((char *) ecx + ds_base);
+		reg[7] = -1;
+		if (dh != 0 && task->dhandle != 0 &&
+				dh >= &task->dhandle[0] &&
+				dh <  &task->dhandle[DIR_HANDLES_PER_TASK] &&
+				dh->in_use && ecx != 0) {
+			reg[7] = fs_user_readdir(&dh->it, out);
+		}
+	} else if (edx == 34) {
+		// api_closedir(handle)
+		struct DIRHANDLE *dh = (struct DIRHANDLE *) ebx;
+		if (dh != 0 && task->dhandle != 0 &&
+				dh >= &task->dhandle[0] &&
+				dh <  &task->dhandle[DIR_HANDLES_PER_TASK] &&
+				dh->in_use) {
+			dir_iter_close(&dh->it);
+			dh->in_use = 0;
+		}
+	} else if (edx == 35) {
+		// api_stat(path, BX_DIRINFO*) → 0/-1
+		struct BX_DIRINFO *out = (struct BX_DIRINFO *) ((char *) ecx + ds_base);
+		if (ebx == 0 || ecx == 0) {
+			reg[7] = -1;
+		} else {
+			reg[7] = fs_user_stat(task->cwd_clus,
+					(char *) ebx + ds_base, out);
+		}
+	} else if (edx == 36) {
+		// api_mkdir(path) → 0/<0
+		if (ebx == 0) {
+			reg[7] = -1;
+		} else {
+			reg[7] = fs_mkdir(task->cwd_clus, (char *) ebx + ds_base);
+		}
+	} else if (edx == 37) {
+		// api_rmdir(path) → 0/<0
+		if (ebx == 0) {
+			reg[7] = -1;
+		} else {
+			reg[7] = fs_rmdir(task->cwd_clus, (char *) ebx + ds_base);
+		}
+	} else if (edx == 38) {
+		// api_rename(oldpath, newpath) → 0/<0
+		if (ebx == 0 || ecx == 0) {
+			reg[7] = -1;
+		} else {
+			reg[7] = fs_user_rename(task->cwd_clus,
+					(char *) ebx + ds_base,
+					(char *) ecx + ds_base);
+		}
+	} else if (edx == 39) {
+		// api_exec(path, flags) → 0=launched, <0=error
+		// 호출자의 cwd 를 상속하는 새 console task 를 spawn 하고
+		// 파일명을 cmdline 으로 주입한다.
+		char *path = (char *) ebx + ds_base;
+		struct FS_FILE efile;
+		struct TASK *etask;
+		struct FIFO32 *efifo;
+		int j;
+		reg[7] = -1;
+		if (ebx != 0 && fs_data_open_path(task->cwd_clus, path, &efile) == 0) {
+			etask = open_constask(0, g_memtotal);
+			if (etask != 0) {
+				etask->cwd_clus = task->cwd_clus;
+				strcpy(etask->cwd_path,
+						task->cwd_path[0] != 0 ? task->cwd_path : "/");
+				efifo = &etask->fifo;
+				for (j = 0; path[j] != 0; j++) {
+					fifo32_put(efifo, path[j] + 256);
+				}
+				fifo32_put(efifo, 10 + 256);   /* Enter */
+				reg[7] = 0;
+			}
 		}
 	}
 	return 0;
