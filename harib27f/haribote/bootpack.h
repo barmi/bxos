@@ -1,3 +1,12 @@
+/*
+ * 저주소 메모리 슬롯 맵 (4바이트 단위 포인터 / 작은 구조)
+ *   0x0fe0  hangul.fnt 시작 주소 (work3 Phase 2 도입, 미적재 시 0)
+ *   0x0fe4  shtctl 포인터
+ *   0x0fe8  nihongo.fnt 시작 주소
+ *   0x0fec  메인 fifo 포인터
+ *   0x0ff0  BOOTINFO (16 바이트)
+ */
+
 /* asmhead.nas */
 struct BOOTINFO { /* 0x0ff0-0x0fff */
 	char cyls; /* boot sector는 어디까지 디스크를 읽었는가  */

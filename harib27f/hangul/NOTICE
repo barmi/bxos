@@ -1,0 +1,42 @@
+work3 한글 폰트 자산 안내 (Phase 0 — 2026-04-29)
+=================================================
+
+이 디렉터리는 BXOS 의 한글 표시(EUC-KR / UTF-8) 지원에 쓰이는 폰트 입력
+및 빌드 산출물을 보관한다. 실제 BDF 입력 / 생성된 hangul.fnt 는 Phase 1
+시점에 추가된다.
+
+[1] 폰트 소스 (계획)
+- 1차 후보: GNU Unifont (https://unifoundry.com/unifont/)
+  - U+AC00..U+D7A3 의 Hangul Syllables 11172 음절 전체 커버.
+  - 16x16 픽셀 비트맵 BDF — 본 OS 의 16x16 셀에 정확히 정합.
+  - 라이선스: GNU GPLv2+ with font-embedding exception, **또는** SIL OFL 1.1.
+    BXOS 임베드 시 OFL 1.1 인용을 채택한다 (GPL 전염성 회피).
+- 대안 후보: Neo둥근모 (Neodgm) 또는 Galmuri (모두 SIL OFL 1.1).
+  Unifont 누락/품질 이슈가 있을 때만 검토.
+
+[2] 라이선스 의무 (요약, 정본 아님)
+SIL Open Font License 1.1 채택 시:
+- 폰트 자체 또는 파생 비트맵을 재배포할 때 본 NOTICE 와 OFL 본문(LICENSE.fonts)
+  을 함께 동봉해야 함.
+- 폰트 단독 판매 금지 (소프트웨어 동봉은 허용).
+- "Reserved Font Name" 변경 금지 — 따라서 가공 산출물(hangul.fnt) 의
+  내부 메타에 원본 폰트 이름을 그대로 쓰지 않는다 (단순 비트맵 추출이므로
+  파생작 이름은 "BXOS hangul bitmap").
+
+정본은 Phase 1 에서 LICENSE.fonts 로 별도 동봉되는 OFL 1.1 본문이다.
+
+[3] 빌드 산출물 (Phase 1 이후)
+- harib27f/hangul/hangul.fnt   생성된 폰트 바이너리 (361600 bytes)
+                                레이아웃: 0..4095 ASCII (hankaku 동일) +
+                                          4096.. 32B/음절, idx = cp - 0xAC00.
+- harib27f/hangul/hangul.euc   검증용 EUC-KR 텍스트.
+- harib27f/hangul/hangul.utf8  검증용 UTF-8 텍스트.
+- tools/modern/euckr_map.h     EUC-KR → Unicode (94*94 unsigned short) 헤더.
+- tools/modern/makehangulfont.py  생성 도구.
+
+[4] 의사결정 로그
+- 폰트 소스: Unifont (OFL 부분) 1차. (Phase 0 결정.)
+- 인덱싱: Unicode syllable index. EUC-KR 은 매핑 테이블 경유. (Phase 0 결정.)
+- 폰트 크기: 약 353KB. 부팅 FDD 1.44MB 에 여유 충분. (Phase 0 결정.)
+- 메모리 슬롯: 0x0fe0 = hangul 폰트 시작 주소. (Phase 0 결정.)
+- TASK.langbyte2 추가: UTF-8 3바이트 디코딩 상태. (Phase 0 결정.)

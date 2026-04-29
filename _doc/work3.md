@@ -51,11 +51,11 @@
 체크박스(☐)는 PR 경계를 표시한다.
 
 ### Phase 0 — 결정 / 인터페이스 확정 (0.5일)
-- ☐ 2장 결정 표 잠금. 본 문서 + work3-handoff.md 에 반영.
-- ☐ 폰트 소스 라이선스 확정 — **GNU Unifont** (U+AC00..U+D7A3 11172 음절 전체 커버) 1차 후보, 또는 Neo둥근모 + 누락 음절 보충. NOTICE/LICENSE 파일을 `harib27f/hangul/` 에 함께 둠. (재배포 가능하고 OS 이미지에 임베드해도 무방한 라이선스만.)
-- ☐ 새 메모리 슬롯 `0x0fe0` (4 바이트, `hangul` 폰트 시작 주소) 예약. [bootpack.h](../harib27f/haribote/bootpack.h) 상단 주석에 메모리 맵 한 줄 기록.
-- ☐ `struct TASK` 의 `langbyte2` 필드 자리 잡기 ([bootpack.h](../harib27f/haribote/bootpack.h#L247)) — 현 `langmode, langbyte1, app_type` 옆에 1바이트 추가 (정렬/패킹 영향 확인).
-- ☐ `langmode 3` (EUC-KR) / `langmode 4` (UTF-8) 의미 고정 — 둘 다 한글 음절(U+AC00..U+D7A3)만, Jamo/Hanja/UTF-8 의 다른 영역은 fallback.
+- ☑ 2장 결정 표 잠금. 본 문서 + work3-handoff.md 에 반영. (UTF-8 추가 요구 반영 끝.)
+- ☑ 폰트 소스 라이선스 확정 — **GNU Unifont 의 OFL 1.1 부분** 1차 채택. GPL 전염성 회피 위해 OFL 인용. 대안(Neo둥근모/Galmuri) 도 SIL OFL — Unifont 품질 이슈 시 교체 가능. [harib27f/hangul/NOTICE](../harib27f/hangul/NOTICE) 작성. 정본 OFL 본문(`LICENSE.fonts`) 은 Phase 1 에서 BDF 와 함께 동봉.
+- ☑ 새 메모리 슬롯 `0x0fe0` 예약 — grep 결과 미사용 확인 (현재 0x0fe4/8/c, 0x0ff0 만 사용). [bootpack.h](../harib27f/haribote/bootpack.h) 상단에 메모리 맵 주석 블록 추가.
+- ☑ `struct TASK` 의 `langbyte2` 자리 확정 — 현재 `unsigned char langmode, langbyte1, app_type;` (3 byte) 다음에 1 byte 추가 시 자연 정렬 유지 (`name[16]` 가 1-byte 정렬). NASM/외부 offset 참조 없음 확인 (TASK 는 C 전용). 실제 필드 추가는 Phase 4 에서 코드와 함께.
+- ☑ `langmode 3` (EUC-KR) / `langmode 4` (UTF-8) 의미 고정 — 둘 다 한글 음절(U+AC00..U+D7A3)만, Jamo/Hanja/UTF-8 의 다른 영역은 hankaku fallback. 잘못된 시퀀스도 reset 후 fallback (graphic.c 단에서 보호).
 
 ### Phase 1 — 폰트 빌드 도구 + 매핑 테이블 (2일)
 **목표**: 호스트에서 BDF 한 개로부터 `hangul.fnt` (Unicode-indexed 11172 음절) + `euckr_map.h` (EUC-KR → Unicode 16-bit 테이블) 를 결정론적으로 생성.
