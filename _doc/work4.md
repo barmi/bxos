@@ -68,24 +68,44 @@
 
 체크박스(☐)는 PR 또는 커밋 단위로 끊을 수 있는 자연스러운 경계를 표시한다.
 
-### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일)
-- ☐ 본 문서와 [work4-handoff.md](work4-handoff.md) 를 정본으로 두고, MVP 범위를 잠근다.
-- ☐ 탐색기 MVP 기능을 다음으로 확정한다:
-  - ☐ 2-pane UI: 왼쪽 tree, 오른쪽 file list.
-  - ☐ 상단 toolbar 배치.
-  - ☐ 키보드 + 마우스 선택/열기.
-  - ☐ 창 resize 에 따른 레이아웃 재배치.
-  - ☐ 파일 preview.
-  - ☐ `.he2` 실행.
-  - ☐ mkdir, rmdir, rename/move, file delete.
-- ☐ 신규 파일관리 syscall 번호와 사용자 구조체 이름을 확정한다.
-- ☐ 신규 윈도우 이벤트/리사이즈 syscall 번호와 event 구조체를 확정한다.
-- ☐ recursive copy/delete, LFN, 다중 선택, toolbar 전체 기능 구현은 범위 밖으로 명시한다.
+### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일) — ☑ 완료 (2026-04-29)
+- ☑ 본 문서와 [work4-handoff.md](work4-handoff.md) 를 정본으로 두고, MVP 범위를 잠근다.
+- ☑ 탐색기 MVP 기능을 다음으로 확정한다:
+  - ☑ 2-pane UI: 왼쪽 tree, 오른쪽 file list.
+  - ☑ 상단 toolbar 배치.
+  - ☑ 키보드 + 마우스 선택/열기.
+  - ☑ 창 resize 에 따른 레이아웃 재배치.
+  - ☑ 파일 preview.
+  - ☑ `.he2` 실행.
+  - ☑ mkdir, rmdir, rename/move, file delete.
+- ☑ 신규 파일관리 syscall 번호와 사용자 구조체 이름을 확정한다. → **edx 32~39 + `struct BX_DIRINFO`** (§2 표 / §4 handoff 와 동일).
+- ☑ 신규 윈도우 이벤트/리사이즈 syscall 번호와 event 구조체를 확정한다. → **edx 40~43 + `struct BX_EVENT`** (§2 표 / §4 handoff 와 동일). edx=43(`api_capturemouse`) 는 Phase 2 에서 splitter drag 구현 시 필요 여부 재검토.
+- ☑ recursive copy/delete, LFN, 다중 선택, toolbar 전체 기능 구현은 범위 밖으로 명시한다. (§6)
 
 **확인할 사항**
-- ☐ work4.md / work4-handoff.md 에 같은 syscall 번호, 같은 UI 구조, 같은 MVP 범위가 적혀 있다.
-- ☐ 기존 work1~3 문서와 충돌하는 결정이 없다.
-- ☐ 현재 커널의 app window resize 제한을 어떻게 풀지 Phase 2 의 설계 메모에 적었다.
+- ☑ work4.md / work4-handoff.md 에 같은 syscall 번호, 같은 UI 구조, 같은 MVP 범위가 적혀 있다.
+- ☑ 기존 work1~3 문서와 충돌하는 결정이 없다.
+  - 단, [work2.md](work2.md) §161 의 “`api_mkdir`/`api_rmdir` 는 도입하지 않는다 — 콘솔 built-in 으로 충분” 결정을 **work4 에서 의도적으로 뒤집는다**. 이유: explorer 가 사용자 앱에서 디렉터리 생성/삭제를 트리거해야 하므로 콘솔 명령만으로는 부족. 신규 syscall 추가는 work2 결정의 확장이지 폐기가 아니다 — 콘솔 built-in 은 그대로 유지된다.
+  - work2 path resolution 규칙(상대/절대, `.`/`..`, MAX_PATH=128B) 과 work3 EUC-KR/UTF-8 출력 규칙은 그대로 유지한다. explorer 는 path 인자에 work2 규칙을 그대로 따르고, preview 는 현재 `langmode` 를 변경하지 않는다.
+- ☑ 현재 커널의 app window resize 제한을 어떻게 풀지 Phase 2 의 설계 메모에 적었다. → 아래 Phase 2 §“Resize 정책 설계 메모” 참조.
+
+**Phase 0 잠금 결정 요약**
+
+아래는 Phase 1 이후 변경 시 work4.md / work4-handoff.md 두 문서 모두 갱신해야 하는 항목이다.
+
+| 잠금 항목 | 값 |
+|---|---|
+| 사용자 파일관리 syscall | edx 32~39 (`opendir`/`readdir`/`closedir`/`stat`/`mkdir`/`rmdir`/`rename`/`exec`) |
+| 사용자 dir entry 구조체 | `struct BX_DIRINFO { char name[13]; unsigned char attr; unsigned int size; unsigned int clustno; }` |
+| 사용자 윈도우 이벤트 syscall | edx 40~43 (`getevent`/`resizewin`/`set_winevent`/`capturemouse`) |
+| 사용자 event 구조체 | `struct BX_EVENT { int type, win, x, y, button, key, w, h; }` (필드 추가는 가능, 기존 필드 의미는 보존) |
+| event type 상수 | `BX_EVENT_KEY`, `BX_EVENT_MOUSE_DOWN`, `BX_EVENT_MOUSE_UP`, `BX_EVENT_MOUSE_MOVE`, `BX_EVENT_MOUSE_DBLCLK`, `BX_EVENT_RESIZE` |
+| explorer 콘솔명/파일명 | `explorer` / `EXPLORER.HE2` |
+| 기본/최소 창 크기 | 기본 420×280, 최소 320×200 |
+| tree 폭 정책 | 30~35% 비율, 최소 96px, splitter drag 가능 |
+| Enter/double-click 분기 | dir → 진입, `.HE2` → `api_exec`, 그 외 → preview |
+| `api_exec` cwd 정책 | 탐색기 현재 경로 상속 |
+| Phase 2 에서 결정 보류 | (a) double-click 판정 위치(커널 vs 앱), (b) `api_capturemouse` 도입 여부, (c) `api_rename` 의 디렉터리 지원 여부 |
 
 ### Phase 1 — 커널 디렉터리 API / 사용자 파일관리 syscall (2일)
 **목표**: `explorer.he2` 가 디렉터리를 읽고 파일관리 명령을 요청할 수 있는 최소 ABI를 만든다.
@@ -116,6 +136,25 @@
 
 ### Phase 2 — 앱 윈도우 mouse / resize event API (2일)
 **목표**: 탐색기 앱이 마우스와 창 크기 변경을 직접 처리할 수 있게 한다.
+
+**Resize 정책 설계 메모 (Phase 0 에서 확정)**
+
+현재 [console.c](../harib27f/haribote/console.c) `hrb_api` 의 `edx == 5` (`api_openwin`) 에서
+
+```c
+sht->flags |= 0x10;                       /* app-created window */
+sht->flags &= ~SHEET_FLAG_RESIZABLE;      /* 앱 buffer 고정크기 → 리사이즈 금지 */
+```
+
+로 모든 앱 창의 resizable flag 를 무조건 끈다. 앱 buffer 가 사용자 메모리이므로 커널이 임의로 늘릴 수 없기 때문이다. work4 에서는 이 제한을 다음 절차로 푼다.
+
+1. **opt-in API**: 신규 `api_set_winevent(win, flags)` (edx=42) 의 flags bitmask 에 `BX_WIN_RESIZABLE` 비트를 둔다. 앱이 명시적으로 요청한 창만 `SHEET_FLAG_RESIZABLE` 가 켜진다. 기본은 기존과 동일(불가). → tetris/winhelo3 등 기존 앱은 영향 없음.
+2. **resize 트리거**: 사용자가 resize edge 를 드래그하면 커널은 새 client w/h 를 계산해 `BX_EVENT_RESIZE { w, h }` 만 task FIFO 로 전달한다. 이 시점에서는 sheet buffer 를 교체하지 않고 sheet 의 시각적 영역도 늘리지 않는다(드래그 outline 만 표시).
+3. **buffer 교체**: 앱이 새 크기에 맞는 buffer 를 `api_malloc` 으로 확보한 뒤 `api_resizewin(win, new_buf, new_w, new_h, col_inv)` (edx=41) 을 호출한다. 커널은 sheet 의 `buf`/`bxsize`/`bysize` 를 교체하고 새 영역을 inv-color 로 초기화한 뒤 sheet 를 refresh 한다. 이전 buffer 는 앱이 `api_free` 한다(이중 해제 방지: 커널은 buffer 소유권을 가지지 않는다).
+4. **시스템 동작 보존**: title bar drag, close button, system 측 resize edge 처리(outline drag) 는 그대로 시스템이 담당한다. 앱은 client area 의 mouse event 와 resize 결과만 받는다.
+5. **실패 처리**: `api_resizewin` 호출 전에 다른 resize event 가 들어오면 마지막 값으로 합쳐진다(coalesce). 앱이 응답하지 않아도 sheet 는 옛 크기로 그대로 보인다.
+
+이 메모의 세부 인자/필드는 Phase 2 구현 중 확정한다. 잠금 항목은 위 Phase 0 표의 “Phase 2 에서 결정 보류” 항목을 참고.
 
 - ☐ 앱용 event 구조체를 정의한다:
   - `BX_EVENT_KEY`

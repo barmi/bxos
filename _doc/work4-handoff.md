@@ -12,9 +12,16 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
 
 ## 2. 현재 위치 (2026-04-29 기준)
 
-- work4 는 **계획 수립 단계**다. 아직 코드 구현은 시작하지 않았다.
-- [_doc/work4.md](work4.md) 가 정본 계획 문서다.
-- 이 handoff 문서는 다음 세션이 바로 Phase 0/1 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- work4 는 **Phase 0 완료, Phase 1 진입 직전** 단계다. 아직 코드 구현은 시작하지 않았다.
+- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 work4.md §3 “Phase 0” 마지막에 있다.
+- 이 handoff 문서는 다음 세션이 바로 Phase 1 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- Phase 0 에서 잠근 핵심:
+  - syscall 번호 32~39 (파일관리), 40~43 (윈도우 이벤트/리사이즈) 확정.
+  - 사용자 구조체 `BX_DIRINFO`, `BX_EVENT` 필드 확정 (필드 추가는 가능, 의미 보존).
+  - explorer MVP 범위, 기본/최소 창 크기, tree 폭 정책, Enter/double-click 분기, `api_exec` cwd 상속 정책 확정.
+  - work2 §161 의 “`api_mkdir`/`api_rmdir` 미도입” 결정을 의도적으로 뒤집음(콘솔 built-in 은 유지하면서 사용자 syscall 만 추가).
+  - app window resize opt-in 정책(`api_set_winevent` flags + 앱 buffer 교체 절차) 을 work4.md Phase 2 머리에 메모로 기록.
+  - 보류: double-click 판정 위치(커널 vs 앱), `api_capturemouse` 도입 여부, `api_rename` 의 디렉터리 지원 여부.
 - 현재 코드 상태에서 가능한 것:
   - 콘솔에서 `dir`, `cd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `type` 가능.
   - HE2 앱에서 파일 read/write/delete 가능.
@@ -122,7 +129,7 @@ struct BX_EVENT {
 
 | Phase | 분량 | 핵심 산출물 |
 |---|---|---|
-| 0. 요구사항 / 인터페이스 확정 | 0.5d | 2-pane UI, mouse/resize, syscall 번호 확정 |
+| 0. 요구사항 / 인터페이스 확정 ☑ | 0.5d | 2-pane UI, mouse/resize, syscall 번호 확정 (2026-04-29 완료) |
 | 1. 커널 디렉터리 API / 파일관리 syscall | 2d | `api_opendir`~`api_exec`, libbxos wrapper |
 | 2. 앱 윈도우 mouse / resize event API | 2d | `api_getevent`, `api_resizewin`, app client mouse event |
 | 3. 2-pane explorer 읽기 전용 MVP | 2d | toolbar/tree/list/status, keyboard+mouse selection |
@@ -174,13 +181,16 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
+Phase 0 는 완료되었으므로 다음 세션은 Phase 1 부터 시작한다.
+
 1. `git status --short` 로 현재 작업트리 확인.
-2. [work4.md](work4.md) §2 의 syscall 번호, `BX_DIRINFO`, `BX_EVENT` 구조체를 최종 확정.
-3. [bootpack.h](../harib27f/haribote/bootpack.h) 에 dir handle 구조체와 event 구조체/prototype 추가.
-4. [console.c](../harib27f/haribote/console.c) `hrb_api` 에 32~34 (`opendir/readdir/closedir`) 먼저 구현.
-5. [he2/libbxos](../he2/libbxos/) wrapper 추가.
-6. app client mouse event 와 resize event 를 확인하는 작은 검증 앱을 Phase 2 에서 먼저 만든다.
-7. 그 다음 `explorer` Phase 3 의 toolbar/tree/list 읽기 전용 UI를 구현한다.
+2. [bootpack.h](../harib27f/haribote/bootpack.h) 에 `struct BX_DIRINFO`, dir handle 슬롯, event 구조체/prototype 추가.
+3. [console.c](../harib27f/haribote/console.c) `hrb_api` 에 edx 32~34 (`opendir/readdir/closedir`) 먼저 구현. 마지막 사용 번호는 31(`api_getcwd`).
+4. [fs_fat.c](../harib27f/haribote/fs_fat.c) `DIR_ITER` 를 사용자 API용 안전 래퍼로 감싸기. deleted entry / volume label / LFN slot 은 사용자에게 넘기지 않음.
+5. task 종료 시 dir handle 자동 close 보장.
+6. [he2/libbxos](../he2/libbxos/) wrapper 추가 후 임시 검증 앱 또는 콘솔 debug 명령으로 `api_opendir("/")` → `api_readdir()` end-to-end 확인.
+7. 이후 edx 35~39 (`stat`/`mkdir`/`rmdir`/`rename`/`exec`) 순서로 추가.
+8. Phase 2 에서 app client mouse event 와 resize event 를 확인하는 작은 검증 앱을 먼저 만든 뒤, Phase 3 의 explorer 읽기 전용 UI 로 진입한다.
 
 ## 9. 함정으로 미리 알아둘 것
 
