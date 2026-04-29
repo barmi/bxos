@@ -99,13 +99,14 @@ def parse_bdf(path: Path) -> dict[int, bytes]:
 
 
 def _bdf_to_glyph(rows: list[int], w: int, h: int, xoff: int, yoff: int) -> bytes:
-    """Render BDF rows into a 16x16 glyph (32 bytes, row-major, 2 bytes per row)."""
+    """Render BDF rows into a 16x16 glyph (32 bytes).
+
+    Layout matches the kernel's putfonts8_asc rendering of full-width glyphs:
+    bytes  0..15 = left  half (16 rows of cols 0..7,  one byte per row),
+    bytes 16..31 = right half (16 rows of cols 8..15, one byte per row).
+    putfont8(font) draws the left half, putfont8(font + 16) draws the right.
+    """
     cell = bytearray(GLYPH_BYTES)
-    # Convention: BDF stores rows top-to-bottom (after standard interpretation
-    # of BITMAP). 16x16 cell rows are also top-to-bottom; glyph byte 0..1 is row 0.
-    # When BBX h < 16 we top-align (yoff is "rows from baseline", but for Unifont
-    # 16x16 grid this is effectively top-aligned -- we keep top alignment for
-    # simplicity; any deviation would only matter for non-16x16 fonts).
     for i, row in enumerate(rows[:16]):
         # row is already MSB-aligned to 16 bits. Apply x offset by shifting.
         if xoff > 0:
@@ -113,8 +114,8 @@ def _bdf_to_glyph(rows: list[int], w: int, h: int, xoff: int, yoff: int) -> byte
         elif xoff < 0:
             row <<= -xoff
         row &= 0xFFFF
-        cell[i * 2 + 0] = (row >> 8) & 0xFF   # left  byte (cols 0..7)
-        cell[i * 2 + 1] = row & 0xFF          # right byte (cols 8..15)
+        cell[i]      = (row >> 8) & 0xFF   # left  half row i (cols 0..7)
+        cell[16 + i] = row & 0xFF          # right half row i (cols 8..15)
     return bytes(cell)
 
 
