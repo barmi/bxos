@@ -1,6 +1,7 @@
 /* 그래픽 처리 관계 */
 
 #include "bootpack.h"
+#include "../../tools/modern/euckr_map.h"
 
 void init_palette(void)
 {
@@ -162,6 +163,86 @@ void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s
 				font = nihongo + 256 * 16 + (k * 94 + t) * 32;
 				putfont8(vram, xsize, x - 8, y, c, font     );	/* 왼쪽 반 */
 				putfont8(vram, xsize, x    , y, c, font + 16);	/* 오른쪽 반 */
+			}
+			x += 8;
+		}
+	}
+	if (task->langmode == 3) {
+		char *hangul = (char *) *((int *) 0x0fe0);
+		for (; *s != 0x00; s++) {
+			if (hangul == 0) {
+				putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				x += 8;
+				continue;
+			}
+			if (task->langbyte1 == 0) {
+				if (0xa1 <= *s && *s <= 0xfe) {
+					task->langbyte1 = *s;
+				} else {
+					putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				}
+			} else {
+				int lead = task->langbyte1;
+				int trail = *s;
+				int idx;
+				task->langbyte1 = 0;
+				if (0xa1 <= lead && lead <= 0xfe && 0xa1 <= trail && trail <= 0xfe) {
+					idx = g_euckr_to_uhs[(lead - 0xa1) * 94 + (trail - 0xa1)];
+					if (idx != 0xffff) {
+						font = hangul + 4096 + (idx - 0xac00) * 32;
+						putfont8(vram, xsize, x - 8, y, c, font     );	/* 왼쪽 반 */
+						putfont8(vram, xsize, x    , y, c, font + 16);	/* 오른쪽 반 */
+					} else {
+						putfont8(vram, xsize, x - 8, y, c, hankaku + lead * 16);
+						putfont8(vram, xsize, x    , y, c, hankaku + trail * 16);
+					}
+				} else {
+					putfont8(vram, xsize, x - 8, y, c, hankaku + lead * 16);
+					putfont8(vram, xsize, x    , y, c, hankaku + trail * 16);
+				}
+			}
+			x += 8;
+		}
+	}
+	if (task->langmode == 4) {
+		char *hangul = (char *) *((int *) 0x0fe0);
+		for (; *s != 0x00; s++) {
+			if (hangul == 0) {
+				putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				x += 8;
+				continue;
+			}
+			if (task->langbyte1 == 0) {
+				if (*s < 0x80) {
+					putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				} else if (0xea <= (unsigned char)*s && (unsigned char)*s <= 0xed) {
+					task->langbyte1 = *s;
+				} else {
+					putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				}
+			} else if (task->langbyte2 == 0) {
+				if (0x80 <= (unsigned char)*s && (unsigned char)*s <= 0xbf) {
+					task->langbyte2 = *s;
+					x -= 8;
+				} else {
+					task->langbyte1 = 0;
+					putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				}
+			} else {
+				if (0x80 <= (unsigned char)*s && (unsigned char)*s <= 0xbf) {
+					int cp = ((task->langbyte1 & 0x0f) << 12) | ((task->langbyte2 & 0x3f) << 6) | (*s & 0x3f);
+					if (0xac00 <= cp && cp <= 0xd7a3) {
+						char *font = hangul + 4096 + (cp - 0xac00) * 32;
+						putfont8(vram, xsize, x - 8, y, c, font     );	/* 왼쪽 반 */
+						putfont8(vram, xsize, x    , y, c, font + 16);	/* 오른쪽 반 */
+					} else {
+						putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+					}
+				} else {
+					putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+				}
+				task->langbyte1 = 0;
+				task->langbyte2 = 0;
 			}
 			x += 8;
 		}

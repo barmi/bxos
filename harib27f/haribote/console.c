@@ -82,6 +82,7 @@ void console_task(struct SHEET *sheet, int memtotal)
 		task->langmode = 0;
 	}
 	task->langbyte1 = 0;
+	task->langbyte2 = 0;
 
 	/* prompt 표시 */
 	cons_putchar(&cons, '>', 1);
@@ -278,6 +279,7 @@ static void cons_history_add(char history[CONS_HISTORY_MAX][CONS_CMDLINE_MAX],
 
 void cons_putchar(struct CONSOLE *cons, int chr, char move)
 {
+	struct TASK *task = task_now();
 	char s[2];
 	int W = cons_text_w(cons);
 	int H = cons_text_h(cons);
@@ -316,10 +318,14 @@ void cons_putchar(struct CONSOLE *cons, int chr, char move)
 			putfonts8_asc_sht(cons->sht, cons->cur_x, cons->cur_y, COL8_FFFFFF, COL8_000000, s, 1);
 		}
 		if (move != 0) {
-			/* move가 0일 때는 커서를 진행시키지 않는다 */
-			cons->cur_x += 8;
-			if (cons->cur_x >= 8 + W) {
-				cons_newline(cons);
+			if (task->langmode == 4 && task->langbyte1 != 0 && task->langbyte2 == 0) {
+				/* skip cursor advance for mid byte to make total advance 16px */
+			} else {
+				/* move가 0일 때는 커서를 진행시키지 않는다 */
+				cons->cur_x += 8;
+				if (cons->cur_x >= 8 + W) {
+					cons_newline(cons);
+				}
 			}
 		}
 	}
@@ -358,7 +364,7 @@ void cons_newline(struct CONSOLE *cons)
 		}
 	}
 	cons->cur_x = 8;
-	if (task->langmode == 1 && task->langbyte1 != 0) {
+	if (task->langmode >= 1 && task->langmode <= 4 && task->langbyte1 != 0) {
 		cons->cur_x = 16;
 	}
 	return;
@@ -1211,8 +1217,14 @@ void cmd_langmode(struct CONSOLE *cons, char *cmdline)
 {
 	struct TASK *task = task_now();
 	unsigned char mode = cmdline[9] - '0';
-	if (mode <= 2) {
-		task->langmode = mode;
+	if (mode <= 4) {
+		if ((mode == 3 || mode == 4) && *((int *) 0x0fe0) == 0) {
+			cons_putstr0(cons, "hangul font not loaded.\n");
+		} else {
+			task->langmode = mode;
+			task->langbyte1 = 0;
+			task->langbyte2 = 0;
+		}
 	} else {
 		cons_putstr0(cons, "mode number error.\n");
 	}
@@ -1433,6 +1445,7 @@ static int load_and_run_he2(struct CONSOLE *cons, struct TASK *task,
 	timer_cancelall(&task->fifo);
 	memman_free_4k(memman, (int) q, total_sz);
 	task->langbyte1 = 0;
+	task->langbyte2 = 0;
 	return 1;
 }
 
@@ -1498,6 +1511,7 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 			timer_cancelall(&task->fifo);
 			memman_free_4k(memman, (int) q, segsiz);
 			task->langbyte1 = 0;
+			task->langbyte2 = 0;
 		} else {
 			cons_putstr0(cons, "exec format error (need .he2 or .hrb).\n");
 		}

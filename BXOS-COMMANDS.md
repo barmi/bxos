@@ -32,6 +32,8 @@
 | `langmode 0` | ASCII 모드로 전환합니다. |
 | `langmode 1` | 일본어 EUC 계열 모드로 전환합니다. |
 | `langmode 2` | 일본어 Shift-JIS 계열 모드로 전환합니다. |
+| `langmode 3` | 한국어 EUC-KR 모드로 전환합니다. |
+| `langmode 4` | 한국어 UTF-8 모드로 전환합니다. |
 
 ### 경로 예시
 
@@ -61,6 +63,8 @@ hello3
 winhelo
 tetris
 type euc.txt
+chklang
+type hangul.utf8
 ```
 
 파일 목록은 `dir` 로 확인할 수 있습니다. 앱 실행 시 `Bad command or file name.` 이 나오면 파일명이 틀렸거나 이미지에 해당 파일이 없는 것입니다.
@@ -85,6 +89,8 @@ type euc.txt
 | `echo.he2 <문자열> > <경로>` | 사용자 API 경유로 문자열과 줄바꿈을 파일에 저장합니다. 내장 `echo`와 구분하려면 `.he2`를 붙여 실행합니다. |
 | `fdel <경로>` | 사용자 API 경유로 파일을 삭제합니다. |
 | `pwd.he2` | 사용자 API 경유로 앱이 상속받은 현재 작업 디렉터리를 출력합니다. |
+| `chklang` | 현재 언어 모드(ASCII, 일본어, 한국어 등)를 출력합니다. |
+| `khello` | UTF-8 으로 인코딩된 정적 한글 인사말을 표시합니다 (사용 시 langmode 4 권장). |
 
 > 옛 HRB 앱(`calc`, `tview`, `mmlplay`, `gview`, `invader`, `bball`, `notrec`, `iroha`, `chklang` 등) 은 현재 데이터 디스크에 포함되지 않습니다. work1 작업으로 이미지에 들어가는 앱이 HE2 포맷으로 한정됐고, 이 앱들은 아직 HE2 로 마이그레이션되지 않았습니다.
 
@@ -92,7 +98,9 @@ type euc.txt
 
 | 파일 | 용도 |
 |---|---|
-| `euc.txt` | 텍스트/언어 모드 테스트용 파일입니다. `type euc.txt` 로 읽어볼 수 있습니다. |
+| `euc.txt` | 일본어 EUC 텍스트 파일입니다. |
+| `hangul.euc` | EUC-KR 한글 텍스트 파일입니다. `langmode 3` 후 `type hangul.euc` 로 확인합니다. |
+| `hangul.utf8` | UTF-8 한글 텍스트 파일입니다. `langmode 4` 후 `type hangul.utf8` 로 확인합니다. |
 | `kirakira.mml`, `daigo.mml`, `daiku.mml` | MML 음악 데이터 (현재 재생 앱은 미포함). |
 | `fujisan.jpg`, `night.bmp` | 이미지 파일 (현재 뷰어 앱은 미포함). |
 | `ipl09.nas`, `make.bat` | 빌드 시점 자료 — `cp` / `type` 동작 검증용으로 들어 있습니다. |

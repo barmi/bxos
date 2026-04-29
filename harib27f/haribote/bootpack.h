@@ -253,7 +253,7 @@ struct TASK {
 	struct FILEHANDLE *fhandle;
 	int *fat;
 	char *cmdline;
-	unsigned char langmode, langbyte1, app_type;
+	unsigned char langmode, langbyte1, langbyte2, app_type;
 	char name[16];
 	unsigned int time;
 	unsigned int cwd_clus;

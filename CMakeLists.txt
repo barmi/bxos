@@ -251,7 +251,7 @@ bxos_libbxos()
 
 # 마이그레이션 대상 앱들 — 일단 출력/창/입력 기본만.
 set(BXOS_HE2_APPS_BASIC
-    a hello3 hello4 hello5
+    a hello3 hello4 hello5 khello
     sosu sosu2 sosu3
     type touch echo fdel pwd beepdown
 )
@@ -315,6 +315,8 @@ set(BXOS_DATA_IMG_FILES
     "${BXOS_KSRC}/ipl09.nas"
     "${BXOS_HARIB}/make.bat"
     "${BXOS_HARIB}/euc.txt"
+    "${BXOS_HARIB}/hangul.euc"
+    "${BXOS_HARIB}/hangul.utf8"
     "${BXOS_HARIB}/mmldata/kirakira.mml"
     "${BXOS_HARIB}/mmldata/daigo.mml"
     "${BXOS_HARIB}/mmldata/daiku.mml"

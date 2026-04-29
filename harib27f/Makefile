@@ -21,7 +21,7 @@ haribote.img : haribote/ipl09.bin haribote/haribote.sys Makefile \
 		lines/lines.hrb walk/walk.hrb noodle/noodle.hrb \
 		beepdown/beepdown.hrb color/color.hrb color2/color2.hrb \
 		sosu/sosu.hrb sosu2/sosu2.hrb sosu3/sosu3.hrb \
-		type/type.hrb iroha/iroha.hrb chklang/chklang.hrb \
+		type/type.hrb iroha/iroha.hrb chklang/chklang.hrb khello/khello.hrb \
 		notrec/notrec.hrb bball/bball.hrb invader/invader.hrb \
 		calc/calc.hrb tview/tview.hrb mmlplay/mmlplay.hrb gview/gview.hrb
 	$(EDIMG)   imgin:../z_tools/fdimg0at.tek \
@@ -51,7 +51,10 @@ haribote.img : haribote/ipl09.bin haribote/haribote.sys Makefile \
 		copy from:type/type.hrb to:@: \
 		copy from:iroha/iroha.hrb to:@: \
 		copy from:chklang/chklang.hrb to:@: \
+		copy from:khello/khello.hrb to:@: \
 		copy from:euc.txt to:@: \
+		copy from:hangul.euc to:@: \
+		copy from:hangul.utf8 to:@: \
 		copy from:notrec/notrec.hrb to:@: \
 		copy from:bball/bball.hrb to:@: \
 		copy from:invader/invader.hrb to:@: \
@@ -103,6 +106,7 @@ full :
 	$(MAKE) -C type
 	$(MAKE) -C iroha
 	$(MAKE) -C chklang
+	$(MAKE) -C khello
 	$(MAKE) -C notrec
 	$(MAKE) -C bball
 	$(MAKE) -C invader
@@ -157,6 +161,7 @@ clean_full :
 	$(MAKE) -C type			clean
 	$(MAKE) -C iroha		clean
 	$(MAKE) -C chklang		clean
+	$(MAKE) -C khello		clean
 	$(MAKE) -C notrec		clean
 	$(MAKE) -C bball		clean
 	$(MAKE) -C invader		clean
@@ -190,6 +195,7 @@ src_only_full :
 	$(MAKE) -C type			src_only
 	$(MAKE) -C iroha		src_only
 	$(MAKE) -C chklang		src_only
+	$(MAKE) -C khello		src_only
 	$(MAKE) -C notrec		src_only
 	$(MAKE) -C bball		src_only
 	$(MAKE) -C invader		src_only
