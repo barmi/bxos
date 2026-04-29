@@ -292,7 +292,6 @@ set(BXOS_HARIBOTE_IMG "${BXOS_BUILD}/haribote.img")
 set(BXOS_KERNEL_IMG_FILES
     "${BXOS_HARIBOTE_SYS}"
     "${BXOS_HARIB}/nihongo/nihongo.fnt"
-    "${BXOS_HARIB}/hangul/hangul.fnt"
 )
 add_custom_command(
     OUTPUT  "${BXOS_HARIBOTE_IMG}"
@@ -317,6 +316,7 @@ set(BXOS_DATA_IMG_FILES
     "${BXOS_HARIB}/euc.txt"
     "${BXOS_HARIB}/hangul.euc"
     "${BXOS_HARIB}/hangul.utf8"
+    "${BXOS_HARIB}/hangul/hangul.fnt"
     "${BXOS_HARIB}/mmldata/kirakira.mml"
     "${BXOS_HARIB}/mmldata/daigo.mml"
     "${BXOS_HARIB}/mmldata/daiku.mml"

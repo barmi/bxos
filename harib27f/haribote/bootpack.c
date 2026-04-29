@@ -132,12 +132,16 @@ void HariMain(void)
 	}
 	*((int *) 0x0fe8) = (int) nihongo;
 
-	finfo = file_search("hangul.fnt", (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+	/* hangul.fnt 는 ~353KB 라 부팅 FDD(IPL의 CYLS 한도) 에 끝까지 적재되지
+	 * 않는다. 따라서 데이터 디스크(data.img)에 두고 ATA 경로로 읽는다. */
+	finfo = fs_data_search("hangul.fnt");
 	if (finfo != 0) {
 		i = finfo->size;
-		hangul = file_loadfile2(finfo->clustno, &i, fat);
-		for (i = 0; i < 16 * 256; i++) {
-			hangul[i] = hankaku[i];
+		hangul = (unsigned char *) fs_data_loadfile(finfo->clustno, &i);
+		if (hangul != 0) {
+			for (i = 0; i < 16 * 256; i++) {
+				hangul[i] = hankaku[i];
+			}
 		}
 	} else {
 		hangul = 0;
