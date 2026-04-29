@@ -1,0 +1,343 @@
+# work4 — 파일 탐색기 애플리케이션 계획
+
+## 1. 배경 / 목표
+
+### 현재 상태 (work3 종료 시점)
+- 데이터 디스크는 FAT16 32MB `data.img` 로 분리되어 있고, BxOS 내부에서 파일/디렉터리 생성, 삭제, 복사, 이동, cwd 기반 경로 해석이 가능하다.
+- 콘솔 명령은 `dir`, `cd`, `pwd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `touch`, `echo > file`, `mkfile`, `type` 를 제공한다.
+- 사용자 앱 API는 파일 read/write/delete 와 `api_getcwd` 까지 제공한다.
+  - 읽기: `api_fopen`, `api_fread`, `api_fseek`, `api_fsize`, `api_fclose`
+  - 쓰기/삭제: `api_fopen_w`, `api_fwrite`, `api_fdelete`
+  - cwd: `api_getcwd`
+- 하지만 사용자 앱이 디렉터리를 직접 열람할 API가 없다. `explorer.he2` 같은 앱은 현재 상태만으로는 파일 목록을 그릴 수 없다.
+- 사용자 앱이 다른 앱을 실행하는 API도 없다. 탐색기에서 `.he2` 를 선택해 실행하려면 커널 쪽 실행 syscall 이 필요하다.
+- 앱 윈도우에는 키보드 입력은 전달되지만, 앱별 마우스 클릭/더블클릭/드래그 이벤트 API는 아직 없다. 마우스는 현재 창 포커스/이동/닫기 같은 시스템 동작에만 쓰인다.
+- 앱 윈도우는 `api_openwin()` 에서 앱 버퍼 크기를 고정으로 연결한다. 현재 커널은 앱 윈도우의 resize flag 를 꺼 두므로, 앱이 창 크기 변경을 받아 레이아웃을 다시 그리는 경로가 없다.
+
+### 이번 작업의 목표
+1. **파일 탐색기 앱 `explorer.he2`** 를 추가한다.
+   - 왼쪽: 디렉터리 트리.
+   - 오른쪽: 선택 디렉터리의 파일 목록.
+   - 상단: 메뉴/아이콘 바. 이번 work4 에서는 배치와 표시만 하고 실제 기능 연결은 최소화한다.
+   - 하단: status bar.
+2. **키보드와 마우스 모두로 동작**하게 한다.
+   - 키보드: 이동, 열기, 상위 이동, 새로고침, 파일관리 단축키.
+   - 마우스: 트리/파일 목록 선택, 더블클릭 열기, splitter 드래그, toolbar 버튼 hover/press 표현.
+3. **창 크기 조절에 반응하는 레이아웃**을 만든다.
+   - 창이 커지면 트리/목록 영역이 비율에 맞게 확장된다.
+   - 창이 작아지면 최소 폭/높이를 지키고, 텍스트를 줄여 겹침을 방지한다.
+4. 탐색기에 필요한 **사용자 공간 파일관리 API** 를 추가한다.
+   - 디렉터리 열기/읽기/닫기.
+   - stat, mkdir, rmdir, rename/move.
+   - 앱 실행.
+5. 탐색기에 필요한 **앱 윈도우 이벤트/리사이즈 API** 를 추가한다.
+   - 앱별 mouse down/up/move/double-click 이벤트.
+   - 앱 윈도우 resize 허용.
+   - resize event 전달 및 앱 버퍼 교체/재연결.
+6. 기존 콘솔/FS 동작을 회귀시키지 않고, 콘솔 명령과 탐색기가 같은 FAT16 경로 규칙을 공유한다.
+
+## 2. 설계 결정 사항 (계획안 — 2026-04-29)
+
+| 항목 | 결정 | 비고 |
+|---|---|---|
+| 앱 이름 | `explorer.he2` | 콘솔에서는 `explorer` 로 실행. 인자 없으면 현재 cwd, 인자 있으면 해당 경로에서 시작. |
+| 앱 종류 | HE2 window subsystem | `he2_add_app(explorer ... SUBSYSTEM WINDOW)` 로 빌드. |
+| UI 구조 | 2-pane explorer | 상단 toolbar, 왼쪽 tree, 오른쪽 file list, 하단 status. |
+| 상단 메뉴/아이콘 바 | 배치만 선구현 | Back/Up/Refresh/New/Delete/Rename 같은 슬롯을 둔다. 기능 연결은 work4 에서 가능한 것만. |
+| 기본 창 크기 | 약 420×280 px | 640×480 화면에서 기본 콘솔/디버그 창과 같이 써도 부담 없는 크기. |
+| 최소 창 크기 | 약 320×200 px | 이보다 작아지면 resize clamp. toolbar/status/list text 가 겹치지 않아야 함. |
+| 리사이즈 모델 | 앱 윈도우 resizable + resize event | 커널이 app window resize 를 허용하고, 앱이 새 크기에 맞는 buffer 를 할당해 다시 연결한다. |
+| 레이아웃 규칙 | toolbar/status 고정 높이, 중앙 영역 가변 | 왼쪽 tree 는 전체 폭의 30~35%, 최소 96px. 오른쪽 list 는 나머지. splitter 드래그로 비율 조정. |
+| 입력 모델 | 키보드 + 마우스 | 키보드만으로 모든 기능 가능해야 하고, 마우스는 선택/열기/드래그/toolbar 조작을 제공. |
+| 마우스 동작 | single click select, double click open | tree 노드 클릭 시 해당 디렉터리 선택, file list 더블클릭 시 열기. |
+| 키보드 동작 | ↑/↓/←/→, Enter, Backspace, Tab, `r`, `n`, `m`, `d`, `q`, `?` | Tab 으로 tree/list focus 전환. |
+| 파일 목록 컬럼 | 이름, 종류, 크기 | FAT 8.3 이름을 `NAME.EXT` 형태로 표시. 디렉터리는 `<DIR>`. |
+| 트리 표시 | lazy depth tree | root 부터 시작하고, 펼친 디렉터리만 하위 목록을 읽는다. 깊이 표시용 indent. |
+| 정렬 | 디렉터리 먼저, 그다음 파일, 이름 오름차순 | 사용자 공간에서 정렬. |
+| 경로 모델 | 기존 work2 규칙 유지 | `/` 절대, 상대 경로, `.`/`..`, 8.3 이름. 드라이브 prefix 없음. |
+| Enter/double-click 동작 | 디렉터리면 진입, `.HE2` 면 실행, 그 외 파일이면 preview | 실행은 신규 `api_exec` 사용. |
+| 파일 preview | 1차는 text/raw viewer 내장 | 최대 N KB 를 읽어 동일 창 preview mode 에 표시. 바이너리는 hex/size 안내. |
+| 파일 생성/삭제 | 1차는 `mkdir`, `rmdir`, file delete, rename/move | 파일 복사와 recursive 작업은 후속. |
+| 디렉터리 API | handle 기반 `api_opendir`, `api_readdir`, `api_closedir` | task 별 dir handle 배열을 둔다. |
+| 사용자 dir entry 구조 | `struct BX_DIRINFO` | `name[13]`, `attr`, `size`, `cluster` 정도만 앱에 노출. FAT 내부 구조체 직접 노출 금지. |
+| 파일관리 syscall 번호 | 32~39 예약 | 31=`api_getcwd` 다음부터 연속 배치. |
+| 윈도우 이벤트 syscall 번호 | 40~43 예약 | event poll/wait, resize buffer 교체, mouse capture 등. 세부는 Phase 2 에서 확정. |
+| 언어/인코딩 | 파일명 UI는 ASCII 8.3 기준 | 한글 파일명/LFN은 범위 밖. 본문 preview 는 현재 `langmode` 에 맡김. |
+
+## 3. 작업 단계
+
+체크박스(☐)는 PR 또는 커밋 단위로 끊을 수 있는 자연스러운 경계를 표시한다.
+
+### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일)
+- ☐ 본 문서와 [work4-handoff.md](work4-handoff.md) 를 정본으로 두고, MVP 범위를 잠근다.
+- ☐ 탐색기 MVP 기능을 다음으로 확정한다:
+  - ☐ 2-pane UI: 왼쪽 tree, 오른쪽 file list.
+  - ☐ 상단 toolbar 배치.
+  - ☐ 키보드 + 마우스 선택/열기.
+  - ☐ 창 resize 에 따른 레이아웃 재배치.
+  - ☐ 파일 preview.
+  - ☐ `.he2` 실행.
+  - ☐ mkdir, rmdir, rename/move, file delete.
+- ☐ 신규 파일관리 syscall 번호와 사용자 구조체 이름을 확정한다.
+- ☐ 신규 윈도우 이벤트/리사이즈 syscall 번호와 event 구조체를 확정한다.
+- ☐ recursive copy/delete, LFN, 다중 선택, toolbar 전체 기능 구현은 범위 밖으로 명시한다.
+
+**확인할 사항**
+- ☐ work4.md / work4-handoff.md 에 같은 syscall 번호, 같은 UI 구조, 같은 MVP 범위가 적혀 있다.
+- ☐ 기존 work1~3 문서와 충돌하는 결정이 없다.
+- ☐ 현재 커널의 app window resize 제한을 어떻게 풀지 Phase 2 의 설계 메모에 적었다.
+
+### Phase 1 — 커널 디렉터리 API / 사용자 파일관리 syscall (2일)
+**목표**: `explorer.he2` 가 디렉터리를 읽고 파일관리 명령을 요청할 수 있는 최소 ABI를 만든다.
+
+- ☐ [bootpack.h](../harib27f/haribote/bootpack.h) 에 사용자 노출용 구조체 추가:
+  - `struct BX_DIRINFO { char name[13]; unsigned char attr; unsigned int size; unsigned int clustno; };`
+  - `struct DIRHANDLE` 또는 task 내부 dir handle 슬롯.
+- ☐ [fs_fat.c](../harib27f/haribote/fs_fat.c) 의 `DIR_ITER` 를 사용자 API가 안전하게 사용할 수 있는 래퍼로 감싼다.
+- ☐ [console.c](../harib27f/haribote/console.c) `hrb_api` 에 파일관리 syscall 추가:
+  - `edx=32 api_opendir(path)` → handle 또는 0.
+  - `edx=33 api_readdir(handle, BX_DIRINFO *out)` → 1=entry, 0=end, -1=error.
+  - `edx=34 api_closedir(handle)`.
+  - `edx=35 api_stat(path, BX_DIRINFO *out)`.
+  - `edx=36 api_mkdir(path)`.
+  - `edx=37 api_rmdir(path)`.
+  - `edx=38 api_rename(oldpath, newpath)` 또는 `api_move`.
+  - `edx=39 api_exec(path, flags)`.
+- ☐ task 종료 시 열려 있는 dir handle 을 정리한다.
+- ☐ [he2/libbxos/include/bxos.h](../he2/libbxos/include/bxos.h) 와 [he2/libbxos/src/syscall.c](../he2/libbxos/src/syscall.c) 에 wrapper 추가.
+- ☐ legacy [harib27f/apilib.h](../harib27f/apilib.h) 에도 선언을 맞춘다. NASM wrapper 는 필요 여부를 Phase 1 에서 결정한다.
+
+**확인할 사항**
+- ☐ `cmake --build build/cmake --target kernel` 통과.
+- ☐ 기존 `dir /`, `mkdir /tmp`, `rmdir /tmp`, `pwd`, `type hangul.utf` 회귀 없음.
+- ☐ 임시 검증 앱 또는 콘솔 debug 명령으로 `api_opendir("/")` → `api_readdir()` 가 root entries 를 끝까지 반환한다.
+- ☐ `api_closedir()` 후 handle 재사용 가능.
+- ☐ 잘못된 path, 파일에 대한 opendir, 잘못된 handle 이 panic 없이 에러를 반환한다.
+
+### Phase 2 — 앱 윈도우 mouse / resize event API (2일)
+**목표**: 탐색기 앱이 마우스와 창 크기 변경을 직접 처리할 수 있게 한다.
+
+- ☐ 앱용 event 구조체를 정의한다:
+  - `BX_EVENT_KEY`
+  - `BX_EVENT_MOUSE_DOWN`
+  - `BX_EVENT_MOUSE_UP`
+  - `BX_EVENT_MOUSE_MOVE`
+  - `BX_EVENT_MOUSE_DBLCLK`
+  - `BX_EVENT_RESIZE`
+- ☐ [bootpack.c](../harib27f/haribote/bootpack.c) 의 마우스 처리에서 app window 내부 클릭/이동 이벤트를 해당 task FIFO 로 전달한다.
+- ☐ 기존 창 이동/닫기/리사이즈 시스템 동작과 앱 이벤트 전달 우선순위를 정한다.
+  - title bar / border / close button 은 시스템이 처리.
+  - client area 는 앱에 mouse event 전달.
+- ☐ app window resize 허용:
+  - 현재 `api_openwin` 에서 app window 의 resizable flag 를 끄는 정책을 옵션화한다.
+  - explorer 같은 앱은 resizable 을 요청할 수 있게 한다.
+- ☐ resize event 전달:
+  - 커널이 새 client/window 크기를 앱에 알린다.
+  - 앱은 새 buffer 를 할당하고 `api_resizewin` 또는 동등 syscall 로 sheet buffer 를 교체한다.
+- ☐ [he2/libbxos](../he2/libbxos/) 에 event/resize wrapper 추가.
+  - 예: `api_getevent(struct BX_EVENT *ev, int mode)`.
+  - 예: `api_resizewin(win, buf, w, h, col_inv)`.
+
+**확인할 사항**
+- ☐ 작은 검증 앱에서 client area 클릭 좌표가 앱에 전달된다.
+- ☐ double-click 이 single-click 두 번과 구분되어 전달된다. 어렵다면 double-click 판정은 explorer 앱 내부에서 시간/좌표로 처리하도록 결정한다.
+- ☐ app window 우하단/edge resize 후 앱이 resize event 를 받고 새 크기로 redraw 한다.
+- ☐ title bar drag, close button, 기존 콘솔/디버그 resize 동작이 회귀하지 않는다.
+- ☐ `api_getkey` 기존 앱(tetris 등)의 키 입력이 회귀하지 않는다.
+
+### Phase 3 — `explorer.he2` 2-pane 읽기 전용 MVP (2일)
+**목표**: 트리와 파일 목록을 볼 수 있고 키보드/마우스로 디렉터리를 이동할 수 있는 첫 번째 창 앱을 만든다.
+
+- ☐ [harib27f/explorer/explorer.c](../harib27f/explorer/explorer.c) 신규 추가.
+- ☐ CMake 에 `explorer` 를 HE2 window 앱으로 등록하고 `data.img` 에 포함한다.
+- ☐ 앱 시작 시 `api_cmdline()` 으로 시작 경로를 파싱한다. 인자가 없으면 `api_getcwd()` 결과를 사용한다.
+- ☐ `api_opendir`/`api_readdir` 로 현재 경로의 entries 를 읽어 앱 내부 배열에 저장한다.
+- ☐ tree model:
+  - ☐ root node 생성.
+  - ☐ 펼친 디렉터리만 lazy load.
+  - ☐ 현재 경로까지 자동 expand.
+- ☐ file list model:
+  - ☐ 현재 tree selection 의 entries 를 표시.
+  - ☐ 디렉터리 우선 + 이름순 정렬.
+- ☐ 2-pane UI를 그린다:
+  - ☐ 제목: `Explorer`
+  - ☐ 상단 toolbar placeholder icon slots.
+  - ☐ 왼쪽 tree.
+  - ☐ splitter.
+  - ☐ 오른쪽 file list: 선택 행 highlight, `<DIR>`/size 표시.
+  - ☐ 하단 status: entry count, selected item, error message.
+- ☐ 키보드 이동:
+  - ☐ ↑/↓ selection 이동.
+  - ☐ ←/Backspace parent 또는 collapse.
+  - ☐ → expand/open.
+  - ☐ Enter 디렉터리 진입.
+  - ☐ Tab tree/list focus 전환.
+  - ☐ `r` reload.
+  - ☐ `q` 종료.
+- ☐ 마우스 이동:
+  - ☐ tree/file list click selection.
+  - ☐ double-click open.
+  - ☐ splitter drag 로 tree/list 비율 조정.
+
+**확인할 사항**
+- ☐ `cmake --build build/cmake --target explorer` 또는 전체 빌드 통과.
+- ☐ `cmake --build build/cmake --target data-img` 후 `bxos_fat.py ls build/cmake/data.img:/` 에 `EXPLORER.HE2` 가 보인다.
+- ☐ QEMU 에서 `explorer` 실행 시 왼쪽 tree 와 오른쪽 root 목록이 보인다.
+- ☐ `mkdir /sub`, `touch /sub/a.txt` 후 `explorer /sub` 에서 tree 경로와 file list 가 맞게 보인다.
+- ☐ 키보드와 마우스 어느 쪽으로도 selection 과 directory open 이 가능하다.
+
+### Phase 4 — 리사이즈 대응 레이아웃 (1.5일)
+**목표**: 창 크기 변경 시 toolbar/tree/list/status 가 비율에 맞게 재배치되고 텍스트가 겹치지 않게 한다.
+
+- ☐ layout 함수 분리:
+  - ☐ 입력: window/client width, height, tree ratio.
+  - ☐ 출력: toolbar rect, tree rect, splitter rect, list rect, status rect.
+- ☐ resize event 수신 시:
+  - ☐ 새 buffer 할당.
+  - ☐ `api_resizewin` 로 buffer 교체.
+  - ☐ layout 재계산.
+  - ☐ 전체 redraw.
+- ☐ tree width 는 비율 기반으로 계산하되 최소/최대 폭 clamp.
+- ☐ 목록 행 수는 창 높이에 따라 재계산한다.
+- ☐ path/status/list text 는 column 폭에 맞게 잘라 표시한다.
+- ☐ splitter drag 로 변경한 tree ratio 가 resize 후에도 유지된다.
+
+**확인할 사항**
+- ☐ QEMU 에서 explorer 창을 크게/작게 조절해도 toolbar/tree/list/status 가 겹치지 않는다.
+- ☐ 최소 크기에서 list row, status message, toolbar icon slot 이 화면 밖으로 깨지지 않는다.
+- ☐ 큰 크기에서 file list 표시 행 수가 늘어난다.
+- ☐ resize 를 20회 이상 반복해도 앱이 멈추거나 오래된 buffer 를 참조하지 않는다.
+
+### Phase 5 — 파일 열기 / 앱 실행 / preview (1.5일)
+**목표**: 탐색기에서 선택한 항목을 “열 수” 있게 한다.
+
+- ☐ Enter 또는 double-click 동작을 확장한다:
+  - ☐ 디렉터리: 진입.
+  - ☐ `.HE2`: `api_exec(selected_path, 0)` 로 실행.
+  - ☐ 그 외 파일: preview mode 진입.
+- ☐ preview mode:
+  - ☐ 작은 텍스트 파일은 앱 창 안에서 표시.
+  - ☐ 너무 큰 파일은 앞부분만 읽고 status 에 truncation 표시.
+  - ☐ 바이너리로 보이는 파일은 size/cluster 정보와 첫 N bytes hex 를 표시.
+  - ☐ ESC 또는 Backspace 로 목록 복귀.
+- ☐ toolbar placeholder 중 Back/Up/Refresh 정도는 동작 연결 여부를 결정한다. 기능이 연결되지 않은 icon slot 은 눌림 표현만 하거나 disabled 로 표시한다.
+- ☐ `.he2` 실행 실패 시 status 에 에러 표시.
+- ☐ 실행 앱이 현재 탐색기 경로를 cwd 로 상속받는지 확인한다.
+
+**확인할 사항**
+- ☐ QEMU 에서 `explorer` → `TETRIS.HE2` 선택 → Enter 또는 double-click 으로 tetris 실행.
+- ☐ `explorer /sub` 에서 앱 실행 시 `pwd.he2` 또는 검증 앱이 `/sub` 를 cwd 로 본다.
+- ☐ `HANGUL.UTF` preview 가 현재 `langmode 4` 에서 깨지지 않고 표시된다.
+- ☐ 바이너리 파일 preview 가 화면을 망가뜨리지 않는다.
+
+### Phase 6 — 파일관리 동작 (2일)
+**목표**: 콘솔 명령으로 하던 기본 파일관리를 탐색기에서도 수행한다.
+
+- ☐ `n` 또는 toolbar New: 새 디렉터리 만들기.
+  - ☐ 앱 내부 line input UI 로 8.3 이름 입력.
+  - ☐ `api_mkdir(current_path/name)` 호출.
+- ☐ `d` 또는 toolbar Delete: 선택 항목 삭제.
+  - ☐ 파일이면 `api_fdelete`.
+  - ☐ 디렉터리면 `api_rmdir` (비어 있지 않으면 실패 메시지).
+  - ☐ 삭제 전 짧은 confirm prompt.
+- ☐ `m` 또는 toolbar Rename: rename/move.
+  - ☐ 새 이름 또는 경로 입력.
+  - ☐ `api_rename`/`api_move` 호출.
+- ☐ 동작 후 tree/file list reload 및 selection 보정.
+- ☐ root 의 `.`/`..` 또는 없는 선택에 대한 방어 처리.
+
+**확인할 사항**
+- ☐ 탐색기에서 `n` 으로 `/EXPTEST` 생성 → 콘솔 `dir /` 에서 보인다.
+- ☐ 탐색기에서 파일 삭제 → 호스트 `bxos_fat.py ls` 에서 사라지고 `fsck_msdos -n build/cmake/data.img` 통과.
+- ☐ 비어 있지 않은 디렉터리 삭제는 실패하고 목록이 손상되지 않는다.
+- ☐ rename 후 파일 내용이 byte-for-byte 유지된다.
+- ☐ QEMU 재부팅 후 탐색기에서 변경 결과가 유지된다.
+
+### Phase 7 — UI polish / 오류 처리 / 성능 정리 (1일)
+- ☐ 긴 목록 스크롤:
+  - ☐ selection 이 화면 밖으로 나가면 list offset 갱신.
+  - ☐ mouse wheel 이 없으므로 scrollbar 또는 keyboard paging 대체를 둔다.
+- ☐ path/status 가 너무 길면 앞부분 또는 가운데를 `...` 로 줄인다.
+- ☐ toolbar icon slot 크기/간격을 고정하고 hover/pressed/disabled 상태를 구분한다.
+- ☐ status message timeout 또는 다음 입력 시 clear.
+- ☐ 색상 규칙 정리:
+  - ☐ tree selection, list selection, directory, executable, general file 을 구분.
+  - ☐ 너무 화려하지 않은 16색 팔레트 사용.
+- ☐ out-of-memory, handle 부족, path 초과, invalid 8.3 입력을 사용자에게 명확히 표시.
+- ☐ code style 을 기존 앱들(`tetris`, `winhelo3`) 과 맞춘다.
+
+**확인할 사항**
+- ☐ root 에 25개 이상 파일이 있어도 스크롤과 선택이 안정적이다.
+- ☐ path 길이가 128 근처여도 UI 텍스트가 겹치지 않는다.
+- ☐ `api_opendir` handle leak 없이 반복 reload 가능.
+- ☐ 30회 이상 디렉터리 이동/refresh 후에도 앱이 멈추지 않는다.
+- ☐ 마우스 조작과 키보드 조작을 섞어도 focus/selection 이 어긋나지 않는다.
+
+### Phase 8 — 문서 / 회귀 검증 / 마무리 (1일)
+- ☐ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 `explorer` 사용법 추가.
+- ☐ [README.utf8.md](../README.utf8.md) 빠른 시작 앱 목록 갱신.
+- ☐ [SETUP-MAC.md](../SETUP-MAC.md) 에 explorer 빌드/실행/검증 한 단락 추가.
+- ☐ [he2/README.md](../he2/README.md) 또는 [he2/docs/HE2-FORMAT.md](../he2/docs/HE2-FORMAT.md) 에 새 syscall/event API 표 추가 여부 확인.
+- ☐ work4.md / work4-handoff.md 체크박스 갱신.
+
+**확인할 사항**
+- ☐ clean build: `cmake --build build/cmake` 통과.
+- ☐ `fsck_msdos -n build/cmake/haribote.img` / `fsck_msdos -n build/cmake/data.img` 통과.
+- ☐ QEMU smoke:
+  - ☐ `explorer` 실행.
+  - ☐ tree/list 표시.
+  - ☐ 키보드/마우스 selection.
+  - ☐ 디렉터리 진입/상위 이동.
+  - ☐ 창 resize 후 레이아웃 재배치.
+  - ☐ 텍스트 preview.
+  - ☐ `.he2` 실행.
+  - ☐ mkdir/delete/rename 후 재부팅 유지.
+- ☐ 기존 콘솔 명령 `dir`, `cd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `type`, `langmode 3/4` 회귀 없음.
+- ☐ 기존 HE2 window 앱(`tetris`, `winhelo3`, `lines`) 의 키보드 입력/창 닫기 동작 회귀 없음.
+
+## 4. 마일스톤 / 검증 시나리오
+
+| 끝난 시점 | 검증 |
+|---|---|
+| Phase 1 | 사용자 앱에서 `/` 를 opendir/readdir 할 수 있고, 기존 콘솔 명령이 그대로 동작한다. |
+| Phase 2 | 검증 앱이 mouse click/move 와 resize event 를 받고 redraw 할 수 있다. |
+| Phase 3 | `explorer` 창이 뜨고 toolbar/tree/list/status 가 보이며, 키보드/마우스로 root/subdir 목록 이동이 가능하다. |
+| Phase 4 | explorer 창 크기 변경 시 tree/list/status 가 비율에 맞게 재배치된다. |
+| Phase 5 | 탐색기에서 `.he2` 실행과 텍스트 preview 가 가능하다. |
+| Phase 6 | 탐색기에서 mkdir/delete/rename 이 가능하고, 호스트 `fsck_msdos` 가 통과한다. |
+| Phase 7 | 긴 목록, 긴 path, 반복 refresh, 마우스/키보드 혼합 조작에서 UI/handle 이 안정적이다. |
+| Phase 8 | 문서와 빌드 산출물이 최신 상태이며, 기존 work1~3 기능이 회귀하지 않는다. |
+
+## 5. 위험 요소 / 함정
+
+- **사용자 앱 디렉터리 열람 API 부재** — explorer 를 먼저 만들 수 없다. Phase 1 이 선행되어야 한다.
+- **앱 mouse event ABI** — 시스템이 처리할 영역(title bar, resize edge, close button) 과 앱 client area 이벤트를 명확히 나누지 않으면 창 이동/닫기와 앱 클릭이 서로 방해한다.
+- **앱 window resize 구조** — 앱 버퍼는 사용자 메모리이므로 커널이 임의로 늘릴 수 없다. resize event 후 앱이 새 buffer 를 제공하고 sheet buffer 를 교체하는 절차가 필요하다.
+- **TASK 리소스 누수** — dir handle, event state, resize buffer 교체 중 기존 buffer 정리를 앱/커널 어디가 맡는지 명확해야 한다.
+- **`api_exec` cwd 상속** — 탐색기에서 실행한 앱이 선택 파일의 디렉터리 또는 탐색기 현재 경로 중 무엇을 cwd 로 볼지 명확해야 한다. 이번 계획은 “탐색기 현재 경로 상속” 으로 고정.
+- **tree lazy load 일관성** — 디렉터리 삭제/rename 후 tree node cache 가 stale 해질 수 있다. 파일관리 동작 후 해당 subtree 를 reload 한다.
+- **splitter drag 와 resize 충돌** — 사용자가 splitter 를 조절한 비율은 창 resize 후에도 보존하되 최소/최대 폭 clamp 를 적용한다.
+- **실행과 파일 preview 의 구분** — `.he2` 확장자 생략 실행과 실제 파일명 표시 규칙이 섞이면 혼란스럽다. 탐색기는 실제 파일명 기준으로 `.HE2` 만 실행한다.
+- **rename/move 일관성** — 콘솔 `mv` 는 copy+unlink 기반이다. 같은 디렉터리 rename 을 직접 slot update 로 최적화할지, 기존 raw copy 경로를 쓸지 Phase 1 에서 결정해야 한다.
+- **삭제 confirm UI** — 실수 삭제가 쉬우므로 최소한 `y` confirm 은 필요하다.
+- **8.3 입력 검증** — 앱 UI에서 긴 이름을 받아도 결국 FAT 8.3 단순 절단이 된다. silent truncation 은 위험하므로 앱에서 미리 경고하거나 거부한다.
+- **바이너리 preview** — 임의 바이너리를 문자열로 찍으면 제어문자 때문에 화면이 깨질 수 있다. printable ASCII + hex fallback 이 필요하다.
+- **메모리 사용량** — tree nodes, entries 배열, preview buffer, resize buffer 를 1MB 기본 HE2 heap 안에서 제한한다.
+- **동시 변경** — 콘솔이나 다른 앱이 같은 디렉터리를 바꿀 수 있다. 탐색기는 `r` refresh 와 실패 시 reload 로 대응한다.
+
+## 6. 범위 외 (이번 작업에서 안 하는 것)
+
+- 긴 파일명(LFN), 한글 파일명, CP949 파일명.
+- 다중 선택.
+- recursive copy/delete (`cp -r`, `rm -r`).
+- 파일 복사 progress UI.
+- toolbar 전체 기능 완성. work4 에서는 배치와 일부 기본 기능 연결까지만.
+- 이미지 썸네일, 아이콘 리소스, MIME 판별.
+- 파일 내용 편집기.
+- 디스크 용량 막대 / free cluster 표시.
+- 여러 드라이브 prefix (`A:/`, `C:/`).
+- 권한, 숨김 파일 정책, timestamp 표시.
+
+## 7. 예상 일정
+
+총 **12~14 작업일** (한 사람 풀타임 기준). Phase 1 의 파일관리 ABI와 Phase 2 의 app mouse/resize ABI가 가장 중요하다. 2-pane UI와 리사이즈 대응까지 포함되므로 기존 키보드-only 계획보다 3~4일 정도 늘어난다.
