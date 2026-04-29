@@ -14,12 +14,18 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
 
 - **Phase 0 (결정 / 인터페이스 확정) 완료**:
   - 결정 표 잠금 (UTF-8 한글영역 U+AC00..U+D7A3 포함 확정).
-  - 폰트 소스 라이선스 확정 — GNU Unifont 의 SIL OFL 1.1 부분 채택. [harib27f/hangul/NOTICE](../harib27f/hangul/NOTICE) 작성. OFL 본문 (`LICENSE.fonts`) 은 Phase 1 BDF 동봉 시 추가.
+  - 폰트 소스 라이선스 확정 — GNU Unifont 의 SIL OFL 1.1 부분 채택. [NOTICE](../harib27f/hangul/NOTICE) 작성.
   - 메모리 슬롯 `0x0fe0` 예약 — grep 으로 미사용 검증, [bootpack.h](../harib27f/haribote/bootpack.h) 상단에 메모리 맵 주석 블록 추가 (0x0fe0/0fe4/0fe8/0fec/0ff0).
   - `struct TASK` 의 `langbyte2` 자리 확정 — `langmode, langbyte1, app_type` 다음 1바이트 자리. NASM/외부 offset 참조 없음. 실제 필드 추가는 Phase 4 코드와 함께.
   - `langmode 3 = EUC-KR`, `langmode 4 = UTF-8` 의미 고정. 둘 다 U+AC00..U+D7A3 한글만, 그 외는 hankaku fallback.
-- **Phase 1 진입 대기** — `tools/modern/makehangulfont.py` 작성, Unifont BDF 입력 → `hangul.fnt` (361600B) + `tools/modern/euckr_map.h` 결정론적 생성.
-- 다음 세션에서 OFL 1.1 본문 다운로드 → [harib27f/hangul/LICENSE.fonts](../harib27f/hangul/LICENSE.fonts) 동봉 + Unifont BDF 다운로드 → [harib27f/hangul/unifont.bdf](../harib27f/hangul/unifont.bdf) (또는 한글 영역만 추출본) 으로 시작.
+- **Phase 1 (폰트 빌드 도구 + 매핑 테이블) 완료**:
+  - [tools/modern/makehangulfont.py](../tools/modern/makehangulfont.py) 신설 — Unifont BDF + hankaku.bin 입력 → `hangul.fnt` + `euckr_map.h` 결정론적 생성. EUC-KR 매핑은 Python 표준 `euc_kr` 코덱 경유 (외부 매핑 파일 의존 없음).
+  - [harib27f/hangul/unifont-hangul.bdf](../harib27f/hangul/unifont-hangul.bdf) — Unifont 15.1.05 의 U+AC00..U+D7A3 추출본 (1.9MB, 11172 음절).
+  - [harib27f/hangul/LICENSE.fonts](../harib27f/hangul/LICENSE.fonts) — SIL OFL 1.1 본문 + Unifont 저작권.
+  - [harib27f/hangul/hangul.fnt](../harib27f/hangul/hangul.fnt) — 생성된 폰트 (361600 B = 4096 ASCII + 11172×32 한글).
+  - [tools/modern/euckr_map.h](../tools/modern/euckr_map.h) — 생성된 매핑 헤더 (8836 entries, 2350 valid Hangul mappings).
+  - 검증: U+AC00 ("가") 글리프 BDF 와 byte-identical, EUC-KR 0xB0A1→0xAC00 / 0xC8FE→0xD79D / 0xA1A1→0xFFFF 모두 확인, ASCII 영역이 hankaku.bin 동일, 두 번 실행 결과 md5 동일.
+- **Phase 2 진입 대기** — bootpack.c 의 `hangul.fnt` 로드 + `0x0fe0` 슬롯 + CMake/Makefile.modern 통합.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -44,7 +50,7 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
 | Phase | 분량 | 핵심 산출물 |
 |---|---|---|
 | 0. 결정 / 인터페이스 | 0.5d | 본 문서 + work3.md, NOTICE, bootpack.h 메모리 맵 주석 (☑ 완료) |
-| 1. 폰트 빌드 도구 + 매핑 | 2d | `makehangulfont.py`, `harib27f/hangul/hangul.fnt`, `tools/modern/euckr_map.h`, BDF 원본/NOTICE |
+| 1. 폰트 빌드 도구 + 매핑 | 2d | `makehangulfont.py`, `unifont-hangul.bdf`, `hangul.fnt`, `euckr_map.h`, `LICENSE.fonts` (☑ 완료) |
 | 2. 커널 폰트 로딩 | 1d | bootpack.c 의 `hangul.fnt` 로드 + `0x0fe0` 슬롯, `g_euckr_to_uhs` include, CMake/Makefile.modern 통합 |
 | 3. `langmode 3` (EUC-KR) 렌더링 | 1d | graphic.c 의 EUC-KR 분기 (Unicode 매핑 경유), `cmd_langmode`/`cons_putchar` 확장 |
 | 4. `langmode 4` (UTF-8) 렌더링 | 1.5d | TASK 의 `langbyte2` 추가, graphic.c 의 3바이트 UTF-8 디코더 + 한글 영역 추출 |
@@ -122,6 +128,6 @@ work3.md §5 가 정본. 강조:
 
 다음 PR/세션 단위 제안:
 
-> "Phase 1 진입: GNU Unifont BDF 다운로드 후 `harib27f/hangul/unifont.bdf` + `harib27f/hangul/LICENSE.fonts` (OFL 1.1 본문) 배치. `tools/modern/makehangulfont.py` 작성 — U+AC00..U+D7A3 11172 음절을 16×16 비트맵으로 추출해 `harib27f/hangul/hangul.fnt` (361600B) 생성, 동시에 KSX1001 매핑으로 `tools/modern/euckr_map.h` (`g_euckr_to_uhs[94*94]`) 생성. 단위 검증: U+AC00 ('가') 슬롯 32바이트가 BDF 비트와 일치, EUC-KR `0xB0A1` → Unicode `0xAC00` 매핑, 두 번 실행 byte-identical."
+> "Phase 2 진입: 커널 부트시 `hangul.fnt` 로딩. [bootpack.c](../harib27f/haribote/bootpack.c) 의 `nihongo.fnt` 로딩 직후에 동일 패턴으로 `file_search('hangul.fnt')` + `file_loadfile2`, ASCII 영역(0..4095) 은 `hankaku[]` 로 강제 덮어쓰기, 결과 포인터를 `*((int *) 0x0fe0)` 에 박는다. 미적재 시 0. 빌드 통합: [CMakeLists.txt](../CMakeLists.txt) `BXOS_KERNEL_IMG_FILES` 에 `harib27f/hangul/hangul.fnt` 추가, [tools/modern/Makefile.modern](../tools/modern/Makefile.modern) 도 동일. `cmake --build build/cmake` 통과 + QEMU 부팅 회귀 0 확인."
 
-이후 Phase 2 (커널 로딩) → Phase 3 (EUC-KR 렌더) → Phase 4 (UTF-8 디코더) → Phase 5 (검증 자산) → Phase 6 (호스트 도구) → Phase 7 (문서) 순서로 진행.
+이후 Phase 3 (EUC-KR 렌더) → Phase 4 (UTF-8 디코더) → Phase 5 (검증 자산) → Phase 6 (호스트 도구) → Phase 7 (문서) 순서로 진행.

@@ -60,19 +60,22 @@
 ### Phase 1 — 폰트 빌드 도구 + 매핑 테이블 (2일)
 **목표**: 호스트에서 BDF 한 개로부터 `hangul.fnt` (Unicode-indexed 11172 음절) + `euckr_map.h` (EUC-KR → Unicode 16-bit 테이블) 를 결정론적으로 생성.
 
-- ☐ [tools/modern/makehangulfont.py](../tools/modern/makehangulfont.py) 신설.
-  - 입력: `--bdf <unifont.bdf>`, `--out-fnt hangul.fnt`, `--out-map euckr_map.h`, 선택 `--ascii-from <hankaku.bin 또는 nihongo.fnt>`.
-  - U+AC00..U+D7A3 의 11172 음절 각각을 16×16 비트맵으로 raster — BDF 의 직접 비트. 16바이트(왼쪽) + 16바이트(오른쪽) = 32바이트 글리프, `idx = cp - 0xAC00` 위치에 기록.
-  - BDF 에 누락된 음절은 32바이트 0xff 로 채움 (tofu).
-  - ASCII 영역(0..4095): hankaku 폰트 그대로 복사.
-  - **EUC-KR → Unicode 매핑** 생성: KS X 1001 표준 매핑(`KSX1001.TXT` 또는 `EASTASIA.TXT` 의 일부)을 내장 또는 입력 받아, 94×94 의 `unsigned short` 배열을 `tools/modern/euckr_map.h` 에 C 헤더로 직렬화 — `static const unsigned short g_euckr_to_uhs[94*94] = { ... };`. 매핑 없는 슬롯 = `0xFFFF`.
-- ☐ [harib27f/hangul/](../harib27f/hangul/) 디렉터리 + 라이선스 / NOTICE / 원본 BDF 보관.
-- ☐ 결과 `harib27f/hangul/hangul.fnt` + `tools/modern/euckr_map.h` 를 git 에 추가 (재현 가능한 build 입력).
-- ☐ 검증:
-  - ☐ Python 단위 검증: U+AC00 ("가") slot 의 32 바이트가 BDF 의 해당 글리프와 일치. U+D7A3 ("힣") 도 마찬가지.
-  - ☐ EUC-KR 매핑 검증: `g_euckr_to_uhs[(0xB0-0xA1)*94 + (0xA1-0xA1)] == 0xAC00` ("가").
-  - ☐ `wc -c hangul.fnt` = 361600. `xxd hangul.fnt | head` 의 0..4095 영역이 hankaku 와 동일.
-  - ☐ 같은 입력으로 두 번 실행 → 두 결과 byte-identical.
+- ☑ [tools/modern/makehangulfont.py](../tools/modern/makehangulfont.py) 신설.
+  - 입력: `--bdf <unifont-hangul.bdf>`, `--ascii <hankaku.bin>`, `--out-fnt hangul.fnt`, `--out-map euckr_map.h`.
+  - U+AC00..U+D7A3 의 11172 음절을 16×16 비트맵으로 추출 — BDF 의 BBX/BITMAP 직접 해석. 16비트 행 단위 (`>> 8` 왼쪽 / `& 0xFF` 오른쪽) 로 32바이트 글리프, `idx = cp - 0xAC00` 위치에 기록.
+  - BDF 누락 음절은 32바이트 `0xFF` 로 채움 (tofu) — Unifont 는 모두 가지므로 정상 입력에서 발생 안 함.
+  - ASCII 영역(0..4095): `hankaku.bin` (4096 bytes) 그대로 복사.
+  - **EUC-KR → Unicode 매핑** 생성: Python `bytes([lead,trail]).decode('euc_kr')` 로 (lead, trail ∈ 0xA1..0xFE) 96×96 격자 디코드 → U+AC00..U+D7A3 범위만 매핑, 그 외 0xFFFF. 결과를 `static const unsigned short g_euckr_to_uhs[8836]` C 헤더로 직렬화.
+- ☑ [harib27f/hangul/](../harib27f/hangul/) 디렉터리에 라이선스 / NOTICE / 원본 BDF 배치.
+  - [unifont-hangul.bdf](../harib27f/hangul/unifont-hangul.bdf) — Unifont 15.1.05 의 U+AC00..U+D7A3 추출본 (1.9MB, 11172 음절).
+  - [LICENSE.fonts](../harib27f/hangul/LICENSE.fonts) — SIL OFL 1.1 본문 + Unifont 저작권 명시.
+  - [NOTICE](../harib27f/hangul/NOTICE) — Phase 0 에서 작성.
+- ☑ 결과 [hangul.fnt](../harib27f/hangul/hangul.fnt) (361600 B) + [tools/modern/euckr_map.h](../tools/modern/euckr_map.h) (72 KB) 생성, git 추가.
+- ☑ 검증:
+  - ☑ U+AC00 ("가") slot 의 32 바이트가 BDF 의 해당 BITMAP 행 16개와 byte-identical (`0000000000043f8400840084008400870104010402040c043004000400040004`).
+  - ☑ EUC-KR 매핑: `g_euckr_to_uhs[(0xB0-0xA1)*94 + (0xA1-0xA1)] == 0xAC00`, `[B0A2]==AC01`, `[C8FE]==D79D`, `[A1A1]==0xFFFF`. 총 매핑 수 = 2350 (KS X 1001 한글 표준 일치).
+  - ☑ `wc -c hangul.fnt` = 361600 (= 4096 + 32×11172). 0..4095 영역이 `build/cmake/hankaku.bin` 과 동일.
+  - ☑ 같은 입력으로 두 번 실행 → `hangul.fnt`, `euckr_map.h` 둘 다 md5 동일 (결정론).
 
 ### Phase 2 — 커널 폰트 로딩 (1일)
 **목표**: 부트시 `hangul.fnt` 를 읽어 별도 버퍼에 두고 0x0fe0 에 포인터 박기. 없으면 NULL.
