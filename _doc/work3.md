@@ -80,18 +80,18 @@
 ### Phase 2 — 커널 폰트 로딩 (1일)
 **목표**: 부트시 `hangul.fnt` 를 읽어 별도 버퍼에 두고 0x0fe0 에 포인터 박기. 없으면 NULL.
 
-- ☐ [bootpack.c](../harib27f/haribote/bootpack.c#L111) 의 nihongo 로딩 직후 동일 패턴으로 `hangul.fnt` 로딩 블록 추가:
+- ☑ [bootpack.c](../harib27f/haribote/bootpack.c#L111) 의 nihongo 로딩 직후 동일 패턴으로 `hangul.fnt` 로딩 블록 추가:
   - `file_search("hangul.fnt", root_finfo, 224)` — 부팅 FDD root.
   - 있으면 `file_loadfile2` 로 읽고 ASCII 영역(0..4095) 은 `hankaku[]` 로 강제 덮어쓰기 (nihongo 와 같은 안전장치).
   - 없으면 `*((int *) 0x0fe0) = 0` — fallback 없음(폰트 미적재).
-- ☐ [bootpack.h](../harib27f/haribote/bootpack.h) 메모리 맵 주석 갱신: "0x0fe0 = hangul font ptr (0 if absent)".
-- ☐ 빌드 통합:
-  - ☐ [CMakeLists.txt](../CMakeLists.txt#L292) 의 `BXOS_KERNEL_IMG_FILES` 에 `${BXOS_HARIB}/hangul/hangul.fnt` 추가. `hangul.fnt` 를 `makehangulfont.py` 로 생성하는 `add_custom_command` 도 추가 (입력: BDF, 출력: `harib27f/hangul/hangul.fnt`). 단순화를 위해 1차에서는 `hangul.fnt` 를 source-controlled 로 두고 CMake 는 의존성으로만 잡음.
-  - ☐ [tools/modern/Makefile.modern](../tools/modern/Makefile.modern#L222) 에도 `$(HARIB)/hangul/hangul.fnt` 한 줄 추가.
-- ☐ 검증:
-  - ☐ `cmake --build build/cmake --target kernel` / 전체 빌드 통과.
-  - ☐ QEMU 부팅 후 `langmode 3` 미적용 상태에서 모든 기존 동작 회귀 0 (한글 미적재 영향 없음 확인).
-  - ☐ `bxos_fat.py ls build/cmake/haribote.img:/` 결과에 `HANGUL.FNT` 보임.
+- ☑ [bootpack.h](../harib27f/haribote/bootpack.h) 메모리 맵 주석 갱신: "0x0fe0 = hangul font ptr (0 if absent)".
+- ☑ 빌드 통합:
+  - ☑ [CMakeLists.txt](../CMakeLists.txt#L292) 의 `BXOS_KERNEL_IMG_FILES` 에 `${BXOS_HARIB}/hangul/hangul.fnt` 추가. `hangul.fnt` 는 source-controlled 로 두고 CMake 는 의존성으로 잡음.
+  - ☑ [tools/modern/Makefile.modern](../tools/modern/Makefile.modern#L222) 에도 `$(HARIB)/hangul/hangul.fnt` 한 줄 추가.
+- ☑ 검증:
+  - ☑ `cmake --build build/cmake --target kernel` / 전체 빌드 통과.
+  - ☑ QEMU headless smoke (`QEMU_EXTRA='-display none -no-reboot' ./run-qemu.sh --no-data`, 5초 유지 후 종료) 통과.
+  - ☑ `bxos_fat.py ls build/cmake/haribote.img:/` 결과에 `HANGUL.FNT` 보임.
 
 ### Phase 3 — `langmode 3` (EUC-KR) 렌더링 (1일)
 **목표**: `putfonts8_asc()` 에 EUC-KR 분기 추가. 기존 1/2 분기 패턴 그대로, 단 글리프 인덱스는 Unicode syllable 변환 경유.

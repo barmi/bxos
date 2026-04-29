@@ -111,7 +111,8 @@ IMG_FILES := $(KSRC)/ipl09.nas $(HARIB)/make.bat \
              $(HARIB)/mmldata/daiku.mml \
              $(HARIB)/pictdata/fujisan.jpg \
              $(HARIB)/pictdata/night.bmp \
-             $(HARIB)/nihongo/nihongo.fnt
+             $(HARIB)/nihongo/nihongo.fnt \
+             $(HARIB)/hangul/hangul.fnt
 
 # ─── 기본 타겟 ───────────────────────────────────────────────────────
 .PHONY: all clean info kernel ipl09.bin asmhead.bin naskfunc.o bootpack.o \
@@ -207,7 +208,7 @@ $(BUILD)/haribote.sys: $(BUILD)/asmhead.bin $(BUILD)/bootpack.hrb
 	@echo "[ok] $@: $$(stat -f%z $@ 2>/dev/null || stat -c%s $@) bytes"
 
 # ─── 디스크 이미지 ───────────────────────────────────────────────────
-$(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(BUILD)/haribote.sys $(APP_HRBS)
+$(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(IMG_FILES)
 	$(MKFAT12) --boot $(BUILD)/ipl09.bin --out $@ \
 	    $(BUILD)/haribote.sys \
 	    $(KSRC)/ipl09.nas \
@@ -219,7 +220,8 @@ $(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(BUILD)/haribote.sys $(APP_HRBS)
 	    $(HARIB)/mmldata/daiku.mml \
 	    $(HARIB)/pictdata/fujisan.jpg \
 	    $(HARIB)/pictdata/night.bmp \
-	    $(HARIB)/nihongo/nihongo.fnt
+	    $(HARIB)/nihongo/nihongo.fnt \
+	    $(HARIB)/hangul/hangul.fnt
 	@echo
 	@echo "[ok] $@ 생성 완료. 다음 명령으로 부팅:"
 	@echo "    qemu-system-i386 -m 32 -fda $@ -boot a"

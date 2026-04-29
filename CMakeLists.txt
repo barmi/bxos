@@ -284,7 +284,7 @@ get_property(BXOS_HE2_OUTS GLOBAL PROPERTY BXOS_HE2_APPS)
 # ─── 12a) haribote.img — 부팅용 FDD (FAT12 1.44MB, 최소 구성) ────────
 #
 # work1 Phase 1: 데이터 디스크 분리.
-# - 부팅 FDD 에는 커널과 부팅 시 필요한 파일만 둔다 (현재는 nihongo.fnt 만).
+# - 부팅 FDD 에는 커널과 부팅 시 필요한 파일만 둔다 (폰트 파일 등).
 # - 모든 .he2 앱과 데이터 파일은 아래 12b 의 data.img(HDD)로 이동.
 # - 게스트가 아직 HDD 를 인식하지 못하므로 Phase 1 시점에는 앱이 실행되지 않음.
 #   부팅 자체만 확인하는 단계.
@@ -292,6 +292,7 @@ set(BXOS_HARIBOTE_IMG "${BXOS_BUILD}/haribote.img")
 set(BXOS_KERNEL_IMG_FILES
     "${BXOS_HARIBOTE_SYS}"
     "${BXOS_HARIB}/nihongo/nihongo.fnt"
+    "${BXOS_HARIB}/hangul/hangul.fnt"
 )
 add_custom_command(
     OUTPUT  "${BXOS_HARIBOTE_IMG}"

@@ -64,7 +64,7 @@ void HariMain(void)
 #define RZ_MIN_H  48
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
-	unsigned char *nihongo;
+	unsigned char *nihongo, *hangul;
 	struct FILEINFO *finfo;
 	extern char hankaku[4096];
 
@@ -108,8 +108,8 @@ void HariMain(void)
 	sheet_setbuf(sht_back, buf_back, binfo->scrnx, binfo->scrny, -1); /* 투명색없음 */
 	init_screen8(buf_back, binfo->scrnx, binfo->scrny);
 
-	/* nihongo.fnt의 read
-	 * console_task() 는 시작 직후 0x0fe8 폰트 포인터를 읽는다.
+	/* nihongo.fnt / hangul.fnt의 read
+	 * console_task() 는 시작 직후 폰트 포인터를 읽는다.
 	 * 콘솔 태스크를 띄우기 전에 반드시 초기화해 둔다. */
 	fat = (int *) memman_alloc_4k(memman, 4 * 2880);
 	file_readfat(fat, (unsigned char *) (ADR_DISKIMG + 0x000200));
@@ -131,6 +131,18 @@ void HariMain(void)
 		}
 	}
 	*((int *) 0x0fe8) = (int) nihongo;
+
+	finfo = file_search("hangul.fnt", (struct FILEINFO *) (ADR_DISKIMG + 0x002600), 224);
+	if (finfo != 0) {
+		i = finfo->size;
+		hangul = file_loadfile2(finfo->clustno, &i, fat);
+		for (i = 0; i < 16 * 256; i++) {
+			hangul[i] = hankaku[i];
+		}
+	} else {
+		hangul = 0;
+	}
+	*((int *) 0x0fe0) = (int) hangul;
 	memman_free_4k(memman, (int) fat, 4 * 2880);
 
 	/* sht_cons */
