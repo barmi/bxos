@@ -258,6 +258,7 @@ set(BXOS_HE2_APPS_BASIC
     a hello3 hello4 hello5 khello
     sosu sosu2 sosu3
     type touch echo fdel pwd beepdown
+    chklang
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_BASIC)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
@@ -319,7 +320,7 @@ set(BXOS_DATA_IMG_FILES
     "${BXOS_HARIB}/make.bat"
     "${BXOS_HARIB}/euc.txt"
     "${BXOS_HARIB}/hangul.euc"
-    "${BXOS_HARIB}/hangul.utf8"
+    "${BXOS_HARIB}/hangul.utf"
     "${BXOS_HARIB}/hangul/hangul.fnt"
     "${BXOS_HARIB}/mmldata/kirakira.mml"
     "${BXOS_HARIB}/mmldata/daigo.mml"
@@ -369,6 +370,7 @@ if(BXOS_QEMU)
         COMMAND ${BXOS_QEMU} -m 32
                 -fda "${BXOS_HARIBOTE_IMG}" -boot a
                 -hda "${BXOS_DATA_IMG}"
+                -display cocoa,zoom-to-fit=on
         DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}"
         USES_TERMINAL
         COMMENT "qemu-system-i386 -fda haribote.img -hda data.img"

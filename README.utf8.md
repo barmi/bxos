@@ -47,14 +47,14 @@ cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
 
 | 이미지 | 위치 | 내용 |
 |---|---|---|
-| 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` + `HANGUL.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 25개 + 데모 데이터 10개 |
+| 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 25개 + 데이터 파일 11개 |
 
 ### 한글 표시 (EUC-KR / UTF-8)
 
-부팅 시 `HANGUL.FNT` 폰트가 0x0fe0 번지에 로드되어 한글 출력을 지원합니다.
+부팅 후 `data.img` 의 `HANGUL.FNT` 폰트가 ATA 경로로 로드되어 0x0fe0 번지에 등록되고, 한글 출력을 지원합니다.
 * **EUC-KR 모드**: 콘솔에서 `langmode 3` 입력. `type hangul.euc` 로 확인.
-* **UTF-8 모드**: 콘솔에서 `langmode 4` 입력. `type hangul.utf8` 또는 `khello.he2` 로 확인.
+* **UTF-8 모드**: 콘솔에서 `langmode 4` 입력. `type hangul.utf` 또는 `khello.he2` 로 확인.
 * 기존 일본어 환경(`langmode 1` 또는 `2`)도 유지됩니다.
 
 앱 하나만 다시 빌드한 뒤 데이터 이미지에 부분 갱신하려면:

@@ -102,23 +102,30 @@ KERNEL_HEADERS := $(KSRC)/bootpack.h $(TOOLS_DIR)/euckr_map.h
 # 앱 .hrb 들 (이미 빌드된 원본을 그대로 사용)
 APP_HRBS := $(wildcard $(HARIB)/*/*.hrb)
 
-# 디스크 이미지에 들어갈 파일들 (원본 Makefile 의 wbinimg/copy 를 모사)
-IMG_FILES := $(KSRC)/ipl09.nas $(HARIB)/make.bat \
-             $(BUILD)/haribote.sys \
-             $(APP_HRBS) \
-             $(HARIB)/euc.txt \
-             $(HARIB)/mmldata/kirakira.mml \
-             $(HARIB)/mmldata/daigo.mml \
-             $(HARIB)/mmldata/daiku.mml \
-             $(HARIB)/pictdata/fujisan.jpg \
-             $(HARIB)/pictdata/night.bmp \
-             $(HARIB)/nihongo/nihongo.fnt \
-             $(HARIB)/hangul/hangul.fnt
+# 디스크 이미지에 들어갈 파일들.
+# 부팅 FDD 는 IPL 이 CYLS=20 만큼만 메모리에 올리므로 큰 hangul.fnt 를 넣지
+# 않는다. 한글 폰트와 사용자 파일은 CMake 경로처럼 별도 data.img 에 둔다.
+KERNEL_IMG_FILES := $(BUILD)/haribote.sys \
+                    $(HARIB)/nihongo/nihongo.fnt
+DATA_IMG_FILES := $(APP_HRBS) \
+                  $(KSRC)/ipl09.nas \
+                  $(HARIB)/make.bat \
+                  $(HARIB)/euc.txt \
+                  $(HARIB)/hangul.euc \
+                  $(HARIB)/hangul.utf \
+                  $(HARIB)/hangul/hangul.fnt \
+                  $(HARIB)/mmldata/kirakira.mml \
+                  $(HARIB)/mmldata/daigo.mml \
+                  $(HARIB)/mmldata/daiku.mml \
+                  $(HARIB)/pictdata/fujisan.jpg \
+                  $(HARIB)/pictdata/night.bmp
 
 # ─── 기본 타겟 ───────────────────────────────────────────────────────
-.PHONY: all clean info kernel ipl09.bin asmhead.bin naskfunc.o bootpack.o \
-        bootpack.elf bootpack.hrb haribote.sys haribote.img
-all: $(BUILD)/haribote.img
+.PHONY: all clean info kernel image data-img ipl09.bin asmhead.bin naskfunc.o bootpack.o \
+        bootpack.elf bootpack.hrb haribote.sys haribote.img data.img
+all: image
+image: $(BUILD)/haribote.img $(BUILD)/data.img
+data-img: $(BUILD)/data.img
 
 info:
 	@echo "PROJ_ROOT  = $(PROJ_ROOT)"
@@ -139,6 +146,7 @@ bootpack.elf: $(BUILD)/bootpack.elf
 bootpack.hrb: $(BUILD)/bootpack.hrb
 haribote.sys: $(BUILD)/haribote.sys
 haribote.img: $(BUILD)/haribote.img
+data.img: $(BUILD)/data.img
 
 # ─── 빌드 디렉터리 ────────────────────────────────────────────────────
 $(BUILD):
@@ -209,23 +217,17 @@ $(BUILD)/haribote.sys: $(BUILD)/asmhead.bin $(BUILD)/bootpack.hrb
 	@echo "[ok] $@: $$(stat -f%z $@ 2>/dev/null || stat -c%s $@) bytes"
 
 # ─── 디스크 이미지 ───────────────────────────────────────────────────
-$(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(IMG_FILES)
+$(BUILD)/haribote.img: $(BUILD)/ipl09.bin $(KERNEL_IMG_FILES)
 	$(MKFAT12) --boot $(BUILD)/ipl09.bin --out $@ \
-	    $(BUILD)/haribote.sys \
-	    $(KSRC)/ipl09.nas \
-	    $(HARIB)/make.bat \
-	    $(APP_HRBS) \
-	    $(HARIB)/euc.txt \
-	    $(HARIB)/mmldata/kirakira.mml \
-	    $(HARIB)/mmldata/daigo.mml \
-	    $(HARIB)/mmldata/daiku.mml \
-	    $(HARIB)/pictdata/fujisan.jpg \
-	    $(HARIB)/pictdata/night.bmp \
-	    $(HARIB)/nihongo/nihongo.fnt \
-	    $(HARIB)/hangul/hangul.fnt
+	    $(KERNEL_IMG_FILES)
 	@echo
 	@echo "[ok] $@ 생성 완료. 다음 명령으로 부팅:"
-	@echo "    qemu-system-i386 -m 32 -fda $@ -boot a"
+	@echo "    qemu-system-i386 -m 32 -fda $@ -boot a -hda $(BUILD)/data.img"
+
+$(BUILD)/data.img: $(DATA_IMG_FILES) | $(BUILD)
+	$(MKFAT12) --fs fat16 --size 32M --label BXOSDATA --out $@ \
+	    $(DATA_IMG_FILES)
+	@echo "[ok] $@ 생성 완료."
 
 clean:
 	rm -rf $(BUILD)

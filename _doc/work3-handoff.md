@@ -26,10 +26,13 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
   - [tools/modern/euckr_map.h](../tools/modern/euckr_map.h) — 생성된 매핑 헤더 (8836 entries, 2350 valid Hangul mappings).
   - 검증: U+AC00 ("가") 글리프 BDF 와 byte-identical, EUC-KR 0xB0A1→0xAC00 / 0xC8FE→0xD79D / 0xA1A1→0xFFFF 모두 확인, ASCII 영역이 hankaku.bin 동일, 두 번 실행 결과 md5 동일.
 - **Phase 2 (커널 폰트 로딩) 완료**:
-  - [bootpack.c](../harib27f/haribote/bootpack.c) 의 `nihongo.fnt` 로딩 직후 `hangul.fnt` 로딩 추가. 적재 성공 시 ASCII 영역(0..4095)을 `hankaku[]` 로 강제 덮어쓰고 `*((int *) 0x0fe0)` 에 포인터 저장, 미적재 시 0 저장.
-  - [CMakeLists.txt](../CMakeLists.txt) `BXOS_KERNEL_IMG_FILES` 와 [tools/modern/Makefile.modern](../tools/modern/Makefile.modern) 이미지 파일 목록에 `harib27f/hangul/hangul.fnt` 추가.
-  - 검증: `cmake --build build/cmake --target kernel` 통과, `cmake --build build/cmake` 통과, `bxos_fat.py ls build/cmake/haribote.img:/` 에 `HANGUL.FNT` 표시, headless QEMU smoke 5초 유지 확인.
-- **Phase 3 진입 대기** — `graphic.c` 의 EUC-KR 렌더링 분기 + `g_euckr_to_uhs` include + `cmd_langmode`/`cons_putchar` 확장.
+  - [bootpack.c](../harib27f/haribote/bootpack.c) 의 `nihongo.fnt` 로딩 직후 `hangul.fnt` 로딩 추가. `hangul.fnt` 는 FDD 선적재 범위(CYLS=20)를 넘기므로 `data.img` 에 두고, 적재 성공 시 ASCII 영역(0..4095)을 `hankaku[]` 로 강제 덮어쓴 뒤 `*((int *) 0x0fe0)` 에 포인터 저장, 미적재 시 0 저장.
+  - [CMakeLists.txt](../CMakeLists.txt) / [tools/modern/Makefile.modern](../tools/modern/Makefile.modern) 모두 `hangul.fnt` 를 data.img 에 넣도록 반영.
+  - 검증: `cmake --build build/cmake --target image` 통과, `bxos_fat.py ls build/cmake/data.img:/` 에 `HANGUL.FNT` 표시.
+- **Phase 3~7 완료**:
+  - `graphic.c` 의 EUC-KR/UTF-8 렌더링 분기, `g_euckr_to_uhs` include, `cmd_langmode`/`cons_putchar`/스크롤 콘솔 확장 완료.
+  - `hangul.euc`, `hangul.utf`, `khello`, `chklang` 통합 완료.
+  - `BXOS-COMMANDS.md`, `README.utf8.md`, `SETUP-MAC.md`, `_doc/storage.md`, 본 문서 갱신 완료.
 
 ## 3. 확정된 핵심 결정 (재확인용)
 
@@ -39,12 +42,12 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
 - **새 langmode**: `3` = EUC-KR, `4` = UTF-8. 0/1/2 보존. 두 mode 모두 같은 한글 폰트 풀 공유.
 - **폰트 인덱싱 모델**: **Unicode syllable index** (`cp - 0xAC00`, 0..11171). 인코딩 중립.
 - **EUC-KR → Unicode 매핑**: 빌드 시 자동 생성된 커널 내장 `g_euckr_to_uhs[94*94]` (16-bit, ≈17.7KB).
-- **새 폰트 파일**: `harib27f/hangul/hangul.fnt` (361600 bytes = 4096 ASCII + 11172×32 Hangul). 부팅 FDD (haribote.img) 에 탑재.
+- **새 폰트 파일**: `harib27f/hangul/hangul.fnt` (361600 bytes = 4096 ASCII + 11172×32 Hangul). data.img 에 탑재하고 ATA/FAT16 경로로 로드.
 - **메모리 슬롯**: `0x0fe0` 에 `hangul` 폰트 시작 주소 4바이트. 0 이면 미적재.
 - **TASK 상태 확장**: `langbyte1` 그대로 + `langbyte2` 신설 (UTF-8 3바이트 디코딩용).
 - **Fallback 정책**: `hangul.fnt` 미적재 시 `langmode 3`/`4` 거부. EUC-KR 매핑 누락 / UTF-8 비-한글 codepoint / 잘못된 시퀀스 → hankaku fallback.
 - **콘솔 init 기본 langmode**: 변경 없음 (nihongo 가 있으면 1, 없으면 0). 사용자가 명시적으로 `langmode 3`/`4` 호출.
-- **검증 자산**: `hangul.euc` (EUC-KR), `hangul.utf8` (UTF-8), `khello.he2` (UTF-8), `chklang` 의 mode 3/4 분기.
+- **검증 자산**: `hangul.euc` (EUC-KR), `hangul.utf` (UTF-8), `khello.he2` (UTF-8), `chklang` 의 mode 3/4 분기.
 - **빌드 도구**: `tools/modern/makehangulfont.py` (BDF → `hangul.fnt` + `tools/modern/euckr_map.h`). 결과는 source-controlled.
 - **글리프 소스 후보**: GNU Unifont (BMP 전체, OFL/GPL dual) 1차, 또는 Neo둥근모 + 누락 보충.
 - **한글 키보드 입력 / IME / Hanja / Jamo 조합 / UTF-8 비-한글** — 모두 범위 밖.
@@ -55,12 +58,12 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
 |---|---|---|
 | 0. 결정 / 인터페이스 | 0.5d | 본 문서 + work3.md, NOTICE, bootpack.h 메모리 맵 주석 (☑ 완료) |
 | 1. 폰트 빌드 도구 + 매핑 | 2d | `makehangulfont.py`, `unifont-hangul.bdf`, `hangul.fnt`, `euckr_map.h`, `LICENSE.fonts` (☑ 완료) |
-| 2. 커널 폰트 로딩 | 1d | bootpack.c 의 `hangul.fnt` 로드 + `0x0fe0` 슬롯, CMake/Makefile.modern 통합 (☑ 완료) |
-| 3. `langmode 3` (EUC-KR) 렌더링 | 1d | graphic.c 의 EUC-KR 분기 (Unicode 매핑 경유), `cmd_langmode`/`cons_putchar` 확장 |
-| 4. `langmode 4` (UTF-8) 렌더링 | 1.5d | TASK 의 `langbyte2` 추가, graphic.c 의 3바이트 UTF-8 디코더 + 한글 영역 추출 |
-| 5. 검증 자산 + 콘솔 통합 | 1d | `hangul.euc`, `hangul.utf8`, `khello/khello.he2`, chklang mode-3/4 분기, build wiring |
-| 6. 호스트 도구 / 결정론 검증 | 0.5d | bxos_fat.py 회귀, `hangul.fnt` byte-identical 재현 확인 |
-| 7. 문서 / 마무리 | 0.5d | BXOS-COMMANDS.md / storage.md / README.utf8.md / SETUP-MAC.md 갱신 |
+| 2. 커널 폰트 로딩 | 1d | bootpack.c 의 data.img 기반 `hangul.fnt` 로드 + `0x0fe0` 슬롯, CMake/Makefile.modern 통합 (☑ 완료) |
+| 3. `langmode 3` (EUC-KR) 렌더링 | 1d | graphic.c/scroll console 의 EUC-KR 분기 (Unicode 매핑 경유), `cmd_langmode`/`cons_putchar` 확장 (☑ 완료) |
+| 4. `langmode 4` (UTF-8) 렌더링 | 1.5d | TASK 의 `langbyte2` 추가, graphic.c/scroll console 의 3바이트 UTF-8 디코더 + 한글 영역 추출 (☑ 완료) |
+| 5. 검증 자산 + 콘솔 통합 | 1d | `hangul.euc`, `hangul.utf`, `khello/khello.he2`, chklang mode-3/4 분기, build wiring (☑ 완료) |
+| 6. 호스트 도구 / 결정론 검증 | 0.5d | bxos_fat.py 회귀, `hangul.fnt` byte-identical 재현 확인 (☑ 완료) |
+| 7. 문서 / 마무리 | 0.5d | BXOS-COMMANDS.md / storage.md / README.utf8.md / SETUP-MAC.md 갱신 (☑ 완료) |
 
 총 **7~8 작업일**. Phase 2/3/4 가 순차 의존, Phase 5/6 는 4 끝나면 병행 가능.
 
@@ -69,7 +72,7 @@ work1 (쓰기 가능 FS + OS/앱 분리 빌드) → work2 (서브디렉터리 / 
 | 영역 | 주 변경 파일 |
 |---|---|
 | 폰트 빌드 도구 | [tools/modern/makehangulfont.py](../tools/modern/makehangulfont.py) (신규), [tools/modern/euckr_map.h](../tools/modern/euckr_map.h) (생성, 신규), [harib27f/hangul/](../harib27f/hangul/) (신규 디렉터리) |
-| 커널 부트/폰트 로딩 | [harib27f/haribote/bootpack.c](../harib27f/haribote/bootpack.c) (`file_search`/`file_loadfile2` 두 번째 호출 + `g_euckr_to_uhs` 정의), [harib27f/haribote/bootpack.h](../harib27f/haribote/bootpack.h) (메모리 맵 주석 + `langbyte2` 필드) |
+| 커널 부트/폰트 로딩 | [harib27f/haribote/bootpack.c](../harib27f/haribote/bootpack.c) (`fs_data_search`/`fs_data_loadfile` 로 `hangul.fnt` 로드), [harib27f/haribote/bootpack.h](../harib27f/haribote/bootpack.h) (메모리 맵 주석 + `langbyte2` 필드) |
 | 폰트 렌더링 | [harib27f/haribote/graphic.c](../harib27f/haribote/graphic.c) (`putfonts8_asc` 의 langmode==3 / ==4 분기) |
 | 콘솔 / langmode 명령 | [harib27f/haribote/console.c](../harib27f/haribote/console.c) (`cmd_langmode`, `cons_putchar`) |
 | 검증 앱 | [harib27f/chklang/chklang.c](../harib27f/chklang/chklang.c) (mode 3/4 분기), [harib27f/khello/khello.c](../harib27f/khello/) (신규 HE2 앱, UTF-8) |
@@ -97,7 +100,7 @@ QEMU 콘솔에서 한글 표시 워크플로우:
 > type hangul.euc
 > langmode 4              # UTF-8
 > chklang
-> type hangul.utf8
+> type hangul.utf
 > khello                  # UTF-8 인사말
 > langmode 1              # 일본어 복귀
 ```
@@ -132,6 +135,4 @@ work3.md §5 가 정본. 강조:
 
 다음 PR/세션 단위 제안:
 
-> "Phase 3 진입: [graphic.c](../harib27f/haribote/graphic.c) 의 `putfonts8_asc()` 에 `langmode == 3` EUC-KR 분기를 추가한다. `tools/modern/euckr_map.h` 의 `g_euckr_to_uhs[94*94]` 를 커널에 포함하고, EUC-KR lead/trail 을 Unicode 한글 음절 인덱스로 변환해 `0x0fe0` 의 `hangul.fnt` 글리프를 출력한다. [console.c](../harib27f/haribote/console.c) 의 `cons_putchar` 와 `cmd_langmode` 도 mode 3 을 허용하도록 확장하고, hangul 포인터가 0 이면 mode 변경을 거부한다."
-
-이후 Phase 3 (EUC-KR 렌더) → Phase 4 (UTF-8 디코더) → Phase 5 (검증 자산) → Phase 6 (호스트 도구) → Phase 7 (문서) 순서로 진행.
+현재 work3 는 완료 상태다. 후속 작업을 시작한다면 일본어 `langmode 1/2` 를 새 스크롤 콘솔 렌더러에서도 복구하는 일을 별도 work item 으로 잡는 것이 좋다.

@@ -64,12 +64,12 @@ winhelo
 tetris
 type euc.txt
 chklang
-type hangul.utf8
+type hangul.utf
 ```
 
 파일 목록은 `dir` 로 확인할 수 있습니다. 앱 실행 시 `Bad command or file name.` 이 나오면 파일명이 틀렸거나 이미지에 해당 파일이 없는 것입니다.
 
-## 포함 앱 (HE2 24개)
+## 포함 앱 (HE2 25개)
 
 | 명령 | 설명 |
 |---|---|
@@ -100,7 +100,7 @@ type hangul.utf8
 |---|---|
 | `euc.txt` | 일본어 EUC 텍스트 파일입니다. |
 | `hangul.euc` | EUC-KR 한글 텍스트 파일입니다. `langmode 3` 후 `type hangul.euc` 로 확인합니다. |
-| `hangul.utf8` | UTF-8 한글 텍스트 파일입니다. `langmode 4` 후 `type hangul.utf8` 로 확인합니다. |
+| `hangul.utf` | UTF-8 한글 텍스트 파일입니다. `langmode 4` 후 `type hangul.utf` 로 확인합니다. |
 | `kirakira.mml`, `daigo.mml`, `daiku.mml` | MML 음악 데이터 (현재 재생 앱은 미포함). |
 | `fujisan.jpg`, `night.bmp` | 이미지 파일 (현재 뷰어 앱은 미포함). |
 | `ipl09.nas`, `make.bat` | 빌드 시점 자료 — `cp` / `type` 동작 검증용으로 들어 있습니다. |

@@ -14,10 +14,10 @@ work1 작업으로 BxOS 의 디스크 구성이 단일 FDD 이미지에서 **부
 
 | 호스트 파일 | 게스트 인식 | 용도 | 파일시스템 | 크기 |
 |---|---|---|---|---|
-| `build/cmake/haribote.img` | `A:` (FDD, `-fda`) | 부팅 디스크 — `HARIBOTE.SYS` + `NIHONGO.FNT` + `HANGUL.FNT` | FAT12 | 1.44 MiB |
-| `build/cmake/data.img`     | `C:` (HDD, `-hda`, ATA Primary Master) | 사용자 디스크 — HE2 앱 + 데이터 파일 | FAT16 | 32 MiB |
+| `build/cmake/haribote.img` | `A:` (FDD, `-fda`) | 부팅 디스크 — `HARIBOTE.SYS` + `NIHONGO.FNT` | FAT12 | 1.44 MiB |
+| `build/cmake/data.img`     | `C:` (HDD, `-hda`, ATA Primary Master) | 사용자 디스크 — HE2 앱 + 데이터 파일 + `HANGUL.FNT` | FAT16 | 32 MiB |
 
-- 부팅 흐름은 그대로 유지된다. IPL 이 FDD 전체를 `ADR_DISKIMG` 로 메모리 로드 → `HariMain` 진입 → `nihongo.fnt` 와 `hangul.fnt` 만 메모리 이미지에서 찾아 `0x0fe8`과 `0x0fe0` 주소에 각각 메모리 맵으로 저장한다. (file.c 의 `file_loadfile2()` 가 FDD 메모리 캐시 전용으로 남아 있음.)
+- 부팅 흐름은 그대로 유지된다. IPL 이 FDD 의 `CYLS=20` 범위만 `ADR_DISKIMG` 로 메모리 로드 → `HariMain` 진입 → `nihongo.fnt` 는 FDD 메모리 이미지에서 찾아 `0x0fe8` 주소에 저장한다. `hangul.fnt` 는 361600바이트라 FDD 선적재 범위를 넘기므로 `data.img` 마운트 후 ATA/FAT16 경로로 직접 읽어 `0x0fe0` 주소에 저장한다. (file.c 의 `file_loadfile2()` 는 FDD 메모리 캐시 전용으로 남아 있음.)
 - HDD 는 부팅에 관여하지 않는다. `HariMain` 의 PIC 초기화 직후 `ata_init()` 으로 IDENTIFY 결과를 캐시하고, memman 초기화 직후 `fs_mount_data(0)` 으로 BPB/FAT/루트를 마운트한다.
 - 언어 모드 전환 시, DBCS 1바이트/2바이트 및 UTF-8 상태를 저장하기 위해 `struct TASK`의 `langbyte1`과 `langbyte2` 필드가 사용된다.
 - 콘솔의 기본 드라이브는 `C:` (HDD). `dir`, 앱 검색, `type`, syscall `api_fopen` 등 사용자 경로 전부 data.img 만 본다. 드라이브 prefix 는 없고 `/` 가 data.img 루트다.

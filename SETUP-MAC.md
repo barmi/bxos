@@ -6,8 +6,8 @@ work1/work2 작업 이후 빌드 시스템은 **CMake + NASM + i686-elf-gcc + Py
 
 | 이미지 | 위치 | 내용 |
 |---|---|---|
-| 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` + `HANGUL.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 25개 + 데모 데이터 10개 |
+| 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 25개 + 데이터 파일 11개 |
 
 자세한 디스크/드라이브 구조는 [`_doc/storage.md`](_doc/storage.md), 콘솔 명령은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md) 참고.
 
@@ -67,7 +67,7 @@ QEMU_EXTRA="-display cocoa,full-screen=on" ./run-qemu.sh    # 풀스크린
 부팅 후 콘솔에서 아래 명령으로 한글 출력을 시험해 볼 수 있습니다:
 
 * **EUC-KR 모드**: `langmode 3` 입력 후 `type hangul.euc` 실행.
-* **UTF-8 모드**: `langmode 4` 입력 후 `type hangul.utf8` 또는 `khello` 실행.
+* **UTF-8 모드**: `langmode 4` 입력 후 `type hangul.utf` 또는 `khello` 실행.
 
 ### 트러블슈팅
 
