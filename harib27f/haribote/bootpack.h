@@ -345,6 +345,7 @@ struct SCROLLWIN {
 	int x0, y0;
 	int wd, ht;
 	int cx;
+	unsigned char langmode;
 	struct SCROLLLINE lines[SCROLL_MAX_LINES];
 	int head;
 	int count;

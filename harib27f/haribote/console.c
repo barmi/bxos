@@ -1,6 +1,7 @@
 /* 콘솔 관계 */
 
 #include "bootpack.h"
+#include "../../tools/modern/euckr_map.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -8,6 +9,8 @@ struct DBGWIN dbg;
 
 static int cons_text_w(struct CONSOLE *cons);
 static int cons_text_h(struct CONSOLE *cons);
+static int scrollline_display_cols(struct SCROLLWIN *sw, struct SCROLLLINE *ln);
+static void scrollline_draw(struct SCROLLWIN *sw, struct SCROLLLINE *ln, int yy);
 static void cons_input_backspace(struct CONSOLE *cons, char *cmdline, int *cmd_len);
 static void cons_input_clear(struct CONSOLE *cons, char *cmdline, int *cmd_len);
 static void cons_input_set(struct CONSOLE *cons, char *cmdline, int *cmd_len, char *src);
@@ -285,6 +288,7 @@ void cons_putchar(struct CONSOLE *cons, int chr, char move)
 	int H = cons_text_h(cons);
 	if (cons->scroll != 0) {
 		if (move != 0 || chr == 0x0a || chr == 0x09) {
+			cons->scroll->langmode = task->langmode;
 			scrollwin_putc(cons->scroll, chr, COL8_FFFFFF);
 		}
 		cons->cur_x = scrollwin_cursor_x(cons->scroll);
@@ -1224,6 +1228,10 @@ void cmd_langmode(struct CONSOLE *cons, char *cmdline)
 			task->langmode = mode;
 			task->langbyte1 = 0;
 			task->langbyte2 = 0;
+			if (cons->scroll != 0) {
+				cons->scroll->langmode = mode;
+				scrollwin_redraw(cons->scroll);
+			}
 		}
 	} else {
 		cons_putstr0(cons, "mode number error.\n");
@@ -1942,6 +1950,100 @@ static struct SCROLLLINE *scrollwin_line_at(struct SCROLLWIN *sw, int display_id
 	return &sw->lines[idx];
 }
 
+static void draw_wide_hangul(struct SHEET *sht, int x, int y, int c, int codepoint)
+{
+	char *hangul = (char *) *((int *) 0x0fe0);
+	char *font;
+	if (hangul == 0 || codepoint < 0xac00 || codepoint > 0xd7a3) {
+		return;
+	}
+	font = hangul + 4096 + (codepoint - 0xac00) * 32;
+	putfont8(sht->buf, sht->bxsize, x,     y, c, font);
+	putfont8(sht->buf, sht->bxsize, x + 8, y, c, font + 16);
+}
+
+static int scrollline_display_cols(struct SCROLLWIN *sw, struct SCROLLLINE *ln)
+{
+	int j = 0, cols = 0;
+	while (j < ln->len) {
+		int b = ln->text[j];
+		if (sw->langmode == 3 &&
+				0xa1 <= b && b <= 0xfe && j + 1 < ln->len) {
+			int trail = ln->text[j + 1];
+			if (0xa1 <= trail && trail <= 0xfe &&
+					g_euckr_to_uhs[(b - 0xa1) * 94 + (trail - 0xa1)] != 0xffff) {
+				cols += 2;
+				j += 2;
+				continue;
+			}
+		}
+		if (sw->langmode == 3 && 0xa1 <= b && b <= 0xfe) {
+			break;
+		}
+		if (sw->langmode == 4 &&
+				0xea <= b && b <= 0xed && j + 2 < ln->len) {
+			int b2 = ln->text[j + 1], b3 = ln->text[j + 2];
+			int cp;
+			if (0x80 <= b2 && b2 <= 0xbf && 0x80 <= b3 && b3 <= 0xbf) {
+				cp = ((b & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+				if (0xac00 <= cp && cp <= 0xd7a3) {
+					cols += 2;
+					j += 3;
+					continue;
+				}
+			}
+		}
+		if (sw->langmode == 4 && 0xea <= b && b <= 0xed) {
+			break;
+		}
+		cols++;
+		j++;
+	}
+	return cols;
+}
+
+static void scrollline_draw(struct SCROLLWIN *sw, struct SCROLLLINE *ln, int yy)
+{
+	extern char hankaku[4096];
+	struct SHEET *sht = sw->sht;
+	int j = 0, col = 0, max_cols = scrollwin_text_cols(sw);
+	while (j < ln->len && col < max_cols) {
+		int b = ln->text[j];
+		int c = ln->color[j];
+		if (sw->langmode == 3 &&
+				0xa1 <= b && b <= 0xfe && j + 1 < ln->len && col + 1 < max_cols) {
+			int trail = ln->text[j + 1];
+			if (0xa1 <= trail && trail <= 0xfe) {
+				int cp = g_euckr_to_uhs[(b - 0xa1) * 94 + (trail - 0xa1)];
+				if (cp != 0xffff) {
+					draw_wide_hangul(sht, sw->x0 + col * 8, yy, c, cp);
+					col += 2;
+					j += 2;
+					continue;
+				}
+			}
+		}
+		if (sw->langmode == 4 &&
+				0xea <= b && b <= 0xed && j + 2 < ln->len && col + 1 < max_cols) {
+			int b2 = ln->text[j + 1], b3 = ln->text[j + 2];
+			int cp;
+			if (0x80 <= b2 && b2 <= 0xbf && 0x80 <= b3 && b3 <= 0xbf) {
+				cp = ((b & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+				if (0xac00 <= cp && cp <= 0xd7a3) {
+					draw_wide_hangul(sht, sw->x0 + col * 8, yy, c, cp);
+					col += 2;
+					j += 3;
+					continue;
+				}
+			}
+		}
+		putfont8(sht->buf, sht->bxsize, sw->x0 + col * 8, yy,
+				c, hankaku + b * 16);
+		col++;
+		j++;
+	}
+}
+
 void scrollwin_scroll_to(struct SCROLLWIN *sw, int new_top)
 {
 	int vis = scrollwin_visible_lines(sw);
@@ -1973,6 +2075,10 @@ void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
 {
 	struct SCROLLLINE *ln;
 	int max_chars = scrollwin_text_cols(sw);
+	struct TASK *task = task_now();
+	if (task != 0) {
+		sw->langmode = task->langmode;
+	}
 	if (chr == 0x0a) {
 		scrollwin_newline(sw);
 		return;
@@ -1984,18 +2090,19 @@ void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
 		do {
 			scrollwin_putc(sw, ' ', fc);
 			ln = scrollwin_cur_line(sw);
-		} while ((ln->len & 0x03) != 0);
+		} while ((scrollline_display_cols(sw, ln) & 0x03) != 0);
 		return;
 	}
 	ln = scrollwin_cur_line(sw);
-	if (ln->len >= max_chars) {
+	if (scrollline_display_cols(sw, ln) >= max_chars ||
+			ln->len >= SCROLL_LINE_CHARS) {
 		scrollwin_newline(sw);
 		ln = scrollwin_cur_line(sw);
 	}
 	ln->text[ln->len] = (unsigned char) chr;
 	ln->color[ln->len] = (unsigned char) fc;
 	ln->len++;
-	sw->cx = ln->len;
+	sw->cx = scrollline_display_cols(sw, ln);
 	if (sw->auto_follow) {
 		int vis = scrollwin_visible_lines(sw);
 		sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
@@ -2026,7 +2133,7 @@ void scrollwin_backspace(struct SCROLLWIN *sw)
 
 int scrollwin_cursor_x(struct SCROLLWIN *sw)
 {
-	return sw->x0 + scrollwin_cur_line(sw)->len * 8;
+	return sw->x0 + sw->cx * 8;
 }
 
 int scrollwin_cursor_y(struct SCROLLWIN *sw)
@@ -2040,7 +2147,6 @@ int scrollwin_cursor_y(struct SCROLLWIN *sw)
 
 void scrollwin_redraw(struct SCROLLWIN *sw)
 {
-	extern char hankaku[4096];
 	struct SHEET *sht = sw->sht;
 	int x, y, line, vis, tw;
 	int scrollbar_x, track_h, thumb_h, thumb_y, max_top;
@@ -2057,13 +2163,9 @@ void scrollwin_redraw(struct SCROLLWIN *sw)
 		int idx_disp = sw->scroll_top + line;
 		struct SCROLLLINE *ln;
 		int yy = sw->y0 + line * 16;
-		int j;
 		if (idx_disp >= sw->count) break;
 		ln = scrollwin_line_at(sw, idx_disp);
-		for (j = 0; j < ln->len; j++) {
-			putfont8(sht->buf, sht->bxsize, sw->x0 + j * 8, yy,
-					ln->color[j], hankaku + ln->text[j] * 16);
-		}
+		scrollline_draw(sw, ln, yy);
 	}
 	for (y = sw->y0; y < sw->y0 + sw->ht; y++) {
 		for (x = scrollbar_x; x < sw->x0 + sw->wd; x++) {
@@ -2144,6 +2246,7 @@ void scrollwin_init(struct SCROLLWIN *sw, struct SHEET *sht,
 	if (sw->wd < 16 + SCROLLBAR_W) sw->wd = 16 + SCROLLBAR_W;
 	if (sw->ht < 16) sw->ht = 16;
 	sw->cx = 0;
+	sw->langmode = 0;
 	for (i = 0; i < SCROLL_MAX_LINES; i++) {
 		sw->lines[i].len = 0;
 	}
