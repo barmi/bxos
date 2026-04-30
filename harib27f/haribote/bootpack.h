@@ -89,6 +89,11 @@ void putblock8_8(char *vram, int vxsize, int pxsize,
 
 #define MAX_MOUSE_CURSOR	4
 #define SIZE_MOUSE_CURSOR	(16*16)
+#define BX_CURSOR_ARROW		0
+#define BX_CURSOR_RESIZE_NWSE	1
+#define BX_CURSOR_RESIZE_WE	2
+#define BX_CURSOR_RESIZE_NS	3
+void mouse_set_cursor_shape(int shape);
 
 /* dsctbl.c */
 struct SEGMENT_DESCRIPTOR {

@@ -409,3 +409,10 @@ int api_set_winevent(int win, int flags) {
     return r;
 }
 
+/* ─── 43: setcursor — EBX=shape → EAX = 0/-1 ─────────────────────── */
+int api_setcursor(int shape) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(43), "b"(shape) : "memory");
+    return r;
+}

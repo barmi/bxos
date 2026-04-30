@@ -21,7 +21,7 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
   - explorer MVP 범위, 기본/최소 창 크기, tree 폭 정책, Enter/double-click 분기, `api_exec` cwd 상속 정책 확정.
   - work2 §161 의 “`api_mkdir`/`api_rmdir` 미도입” 결정을 의도적으로 뒤집음(콘솔 built-in 은 유지하면서 사용자 syscall 만 추가).
   - app window resize opt-in 정책(`api_set_winevent` flags + 앱 buffer 교체 절차) 을 work4.md Phase 2 머리에 메모로 기록.
-  - Phase 4까지의 후속 결정: double-click 판정은 현재 앱 측 같은-row 재click, `api_capturemouse` 는 미도입, `api_rename` 은 같은 부모 file/dir rename 지원(cross-parent move 는 -2).
+  - Phase 4까지의 후속 결정: double-click 판정은 현재 앱 측 같은-row 재click, `api_capturemouse` 대신 edx=43 `api_setcursor(shape)` 도입, `api_rename` 은 같은 부모 file/dir rename 지원(cross-parent move 는 -2).
 - 현재 코드 상태에서 가능한 것:
   - 콘솔에서 `dir`, `cd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `type` 가능.
   - HE2 앱에서 파일 read/write/delete 가능.
@@ -29,7 +29,7 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
   - HE2 앱에서 창 열기/그리기/키 입력 받기 가능.
   - HE2 앱에서 디렉터리 열람, stat, mkdir/rmdir/rename, 앱 실행 syscall 호출 가능.
   - HE2 window 앱에서 mouse/resize event 수신 가능.
-  - `explorer.he2` 가 2-pane tree/list UI, 키보드/마우스 선택, resize layout, splitter drag 를 제공.
+  - `explorer.he2` 가 2-pane tree/list UI, 키보드/마우스 선택, live resize layout, splitter drag, pane scrollbar 를 제공.
 - 현재 코드 상태에서 부족한 것:
   - explorer 에서 `.HE2` 실행 동작 연결 전.
   - explorer preview mode 전.
@@ -104,7 +104,7 @@ struct BX_DIRINFO {
 | 40 | `api_getevent(ev, mode)` | key/mouse/resize event 수신. mode=0 poll, mode=1 wait. |
 | 41 | `api_resizewin(win, buf, w, h, col_inv)` | 앱이 새 buffer 를 제공하고 window buffer 를 교체. |
 | 42 | `api_set_winevent(win, flags)` | mouse/resize/double-click event 수신 여부 설정. |
-| 43 | `api_capturemouse(win, enable)` | 예약만 유지. Phase 4 splitter drag 는 앱 측 상태로 처리해 아직 미도입. |
+| 43 | `api_setcursor(shape)` | app 이 client 내부 hover 상태에 맞춰 global mouse cursor shape 를 바꾼다. |
 
 event 구조체 초안:
 
@@ -134,7 +134,7 @@ struct BX_EVENT {
 | 1. 커널 디렉터리 API / 파일관리 syscall ☑ | 2d | `api_opendir`~`api_exec` (edx 32~39), libbxos wrapper, lsdir 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 2. 앱 윈도우 mouse / resize event API ☑ | 2d | `api_getevent`/`api_resizewin`/`api_set_winevent` (edx 40~42), `BX_EVENT` 큐 + fifo wakeup marker, evtest 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 3. 2-pane explorer 읽기 전용 MVP ☑ | 2d | `EXPLORER.HE2`, toolbar/tree/list/status, keyboard+mouse selection, lazy expand, resize 대응 (2026-04-30 코드 완료, QEMU smoke 대기) |
-| 4. 리사이즈 대응 레이아웃 polish ☑ | 1.5d | `layout_compute` rect 산출, splitter drag, tree ratio 보존, 긴 path/text 잘라쓰기 (2026-04-30 코드 완료, QEMU smoke 대기) |
+| 4. 리사이즈 대응 레이아웃 polish ☑ | 1.5d | `layout_compute` rect 산출, live app resize, splitter drag/cursor, tree/list scrollbar, tree ratio 보존, 긴 path/text 잘라쓰기 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 5. 파일 열기 / 앱 실행 / preview | 1.5d | `.HE2` 실행, text/raw preview |
 | 6. 파일관리 동작 | 2d | mkdir, delete, rename/move |
 | 7. UI polish / 오류 처리 | 1d | 긴 목록, 긴 path, mouse/keyboard focus 안정화 |
@@ -189,7 +189,7 @@ Phase 0~4 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase
    - Phase 1: `lsdir /` 가 root entries 끝까지 출력. `lsdir /sub` (mkdir /sub 후 진입) 정상. 회귀: `dir /`, `mkdir/rmdir`, `cd`, `pwd`, `type hangul.utf` 변화 없음.
    - Phase 2: `start evtest` 후 client click → 점/박스 표시. drag → 점선. 우하단 모서리 drag-release → 새 크기로 frame 재배치. 회귀: tetris 키보드 입력, title bar drag, 콘솔 resize 동작 변화 없음.
    - Phase 3: `explorer` 실행 시 왼쪽 tree(`/` + 자식들), 오른쪽 file list. ↑↓/Tab/Enter/`r`/`q` 키보드 동작. row click 선택, 같은 row 재click → open(tree expand 또는 list dir 진입). `mkdir /sub` → `explorer /sub` 시 chain expand.
-   - Phase 4: splitter drag 로 tree/list 폭 변경. 창을 크게/작게 resize 한 뒤에도 변경한 비율이 유지되는지 확인. console/explorer 의 resize edge 에 hover 할 때 방향별 resize 커서가 보이는지 확인. 최소 크기에서 toolbar/path/status/list text 가 겹치지 않는지 확인. resize 20회 반복.
+   - Phase 4: splitter drag 로 tree/list 폭 변경. splitter hover 에서 좌우 resize 커서가 보이는지 확인. 창을 크게/작게 resize 하는 동안 explorer layout 이 즉시 따라오는지 확인. console/explorer 의 resize edge 에 hover 할 때 방향별 resize 커서가 보이는지 확인. tree/list 항목이 표시 영역보다 많을 때 scrollbar thumb drag/track click 이 동작하는지 확인. 최소 크기에서 toolbar/path/status/list text 가 겹치지 않는지 확인. resize 20회 반복.
 3. **Phase 5 진입 — 파일 열기 / 앱 실행 / preview**:
    - work4.md §3 Phase 5 참조.
    - `on_key()` 의 list Enter/Right 경로와 `on_mouse_down()` 의 list 같은-row 재click 경로를 공통 `open_selected_file()` 류 helper 로 묶는다.
@@ -206,7 +206,7 @@ Phase 0~4 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase
 - `api_exec` 는 기존 `cmd_app` 경로를 재사용하되, 콘솔 출력/에러 경로와 cwd 상속을 조심해야 한다.
 - app mouse event 는 title bar drag, close button, window resize edge 와 분리해야 한다.
 - app resize 는 사용자 buffer 교체 설계가 핵심이다. 커널이 기존 앱 buffer 크기를 모른 채 크게 그리면 메모리 오염 위험이 있다.
-- splitter drag 는 `api_capturemouse` 없이 구현되어 client 밖 release 를 놓칠 수 있다. 앱은 다음 click/resize 에서 drag 상태를 정리한다.
+- splitter drag 는 `api_capturemouse` 없이 구현되어 client 밖 release 를 놓칠 수 있다. 앱은 다음 click/resize 에서 drag 상태를 정리한다. splitter hover 커서는 `api_setcursor(BX_CURSOR_RESIZE_WE)` 로 처리한다.
 - 파일명은 8.3 이다. 앱 입력창에서 긴 이름을 silent truncation 하지 말고 경고하거나 거부한다.
 - 바이너리 preview 는 제어문자를 그대로 출력하지 말고 hex fallback 을 사용한다.
 - FAT write 후에는 항상 `fsck_msdos -n` 로 호스트 검증한다.

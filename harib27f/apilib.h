@@ -60,6 +60,11 @@ struct BX_EVENT {
 #define BX_WIN_EV_MOUSE         0x01
 #define BX_WIN_EV_RESIZE        0x02
 #define BX_WIN_EV_DBLCLK        0x04
+#define BX_CURSOR_ARROW         0
+#define BX_CURSOR_RESIZE_NWSE   1
+#define BX_CURSOR_RESIZE_WE     2
+#define BX_CURSOR_RESIZE_NS     3
 int api_getevent(struct BX_EVENT *out, int mode);
 int api_resizewin(int win, char *new_buf, int new_w, int new_h, int col_inv);
 int api_set_winevent(int win, int flags);
+int api_setcursor(int shape);

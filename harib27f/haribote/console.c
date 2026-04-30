@@ -36,17 +36,29 @@ static void task_reset_console(struct TASK *task);
 #define FH_MODE_WRITE	2
 
 /* work4 Phase 2: BX_EVENT 한 개를 task 의 circular event 큐에 enqueue 한다.
- *   - mouse drag 처럼 동일 좌표가 연속으로 들어오는 경우는 호출자가 판단하고
+ *   - resize drag 는 같은 window 의 pending RESIZE 를 최신 w/h 로 coalesce.
+ *     mouse drag 처럼 동일 좌표가 연속으로 들어오는 경우는 호출자가 판단하고
  *     필요하면 producer 측에서 이전 MOUSE_MOVE 와 합쳐 넣어도 된다.
  *   - 큐가 가득 찼으면 새 이벤트를 drop (가장 오래된 클릭 손실 방지).
  *   - fifo32_put(BX_EVENT_FIFO_MARKER) 로 task 를 깨운다.                       */
 void bx_event_post(struct TASK *task, int type, int win, int x, int y,
 		int button, int key, int w, int h)
 {
-	int idx;
+	int idx, scan;
 	struct BX_EVENT *ev;
 	if (task == 0 || task->event_buf == 0 || task->event_size <= 0) {
 		return;
+	}
+	if (type == BX_EVENT_RESIZE) {
+		for (scan = 0; scan < task->event_count; scan++) {
+			idx = (task->event_p + scan) % task->event_size;
+			ev = &task->event_buf[idx];
+			if (ev->type == BX_EVENT_RESIZE && ev->win == win) {
+				ev->w = w;
+				ev->h = h;
+				return;
+			}
+		}
 	}
 	if (task->event_count >= task->event_size) {
 		return;	/* drop: 큐 full */
@@ -2102,6 +2114,13 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 			if (ecx & BX_WIN_EV_DBLCLK) {
 				rsht->flags |= SHEET_FLAG_APP_DBLCLK;
 			}
+			reg[7] = 0;
+		}
+	} else if (edx == 43) {
+		// api_setcursor(shape) → 0/-1. shape = BX_CURSOR_*.
+		reg[7] = -1;
+		if (ebx >= BX_CURSOR_ARROW && ebx < MAX_MOUSE_CURSOR) {
+			mouse_set_cursor_shape(ebx);
 			reg[7] = 0;
 		}
 	} else if (edx == 39) {

@@ -16,6 +16,32 @@ void init_menu(struct MNLV *mnlv, struct MENU **menu);
 void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *title);
 
 unsigned int g_memtotal = 0;	/* HariMain memtest 결과 — work4 api_exec 등에서 참조 */
+struct SHEET *g_sht_mouse = 0;
+unsigned char *g_mouse_buf = 0;
+int g_mouse_cursor = BX_CURSOR_ARROW;
+
+void mouse_set_cursor_shape(int shape)
+{
+	struct SHTCTL *ctl;
+	if (shape < 0 || shape >= MAX_MOUSE_CURSOR) {
+		shape = BX_CURSOR_ARROW;
+	}
+	if (g_sht_mouse == 0 || g_mouse_buf == 0 || shape == g_mouse_cursor) {
+		return;
+	}
+	g_mouse_cursor = shape;
+	g_sht_mouse->buf = g_mouse_buf + shape * SIZE_MOUSE_CURSOR;
+	if (g_sht_mouse->height >= 0) {
+		ctl = g_sht_mouse->ctl;
+		sheet_refreshmap(ctl, g_sht_mouse->vx0, g_sht_mouse->vy0,
+				g_sht_mouse->vx0 + g_sht_mouse->bxsize,
+				g_sht_mouse->vy0 + g_sht_mouse->bysize, 0);
+		sheet_refreshsub(ctl, g_sht_mouse->vx0, g_sht_mouse->vy0,
+				g_sht_mouse->vx0 + g_sht_mouse->bxsize,
+				g_sht_mouse->vy0 + g_sht_mouse->bysize, 0, ctl->top);
+	}
+	return;
+}
 
 void HariMain(void)
 {
@@ -58,19 +84,15 @@ void HariMain(void)
 	 * 사이즈, (redge & RZ_*) 가 잡은 위치 (오른쪽/아래/오른아래) 비트.    */
 	struct SHEET *rsht = 0;
 	int rmx = 0, rmy = 0, rw0 = 0, rh0 = 0, redge = 0, new_rw = 0, new_rh = 0;
+	int rpost_w = 0, rpost_h = 0;
 #define RZ_RIGHT  1
 #define RZ_BOTTOM 2
 #define RZ_HANDLE 14   /* 우하단 모서리 잡는 영역(px) */
 #define RZ_EDGE   4    /* 우/하단 엣지 폭(px) */
 #define RZ_MIN_W  64
 #define RZ_MIN_H  48
-#define MCURSOR_ARROW       0
-#define MCURSOR_RESIZE_NWSE 1
-#define MCURSOR_RESIZE_WE   2
-#define MCURSOR_RESIZE_NS   3
 	/* work4 Phase 2: app client mouse event 라우팅 — 이전 btn 상태 추적. */
 	int old_btn = 0;
-	int mouse_cursor = MCURSOR_ARROW;
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
 	unsigned char *nihongo, *hangul;
@@ -166,6 +188,9 @@ void HariMain(void)
 	sht_mouse = sheet_alloc(shtctl);
 	sheet_setbuf(sht_mouse, buf_mouse, 16, 16, 99);
 	init_mouse_cursor8(buf_mouse, 99);
+	g_sht_mouse = sht_mouse;
+	g_mouse_buf = buf_mouse;
+	g_mouse_cursor = BX_CURSOR_ARROW;
 	mx = (binfo->scrnx - 16) / 2; /* 화면 중앙이 되도록 좌표 계산 */
 	my = (binfo->scrny - 28 - 16) / 2;
 
@@ -372,7 +397,16 @@ void HariMain(void)
 							if (rsht->vx0 + new_rw > binfo->scrnx) new_rw = binfo->scrnx - rsht->vx0;
 							if (rsht->vy0 + new_rh > binfo->scrny) new_rh = binfo->scrny - rsht->vy0;
 							if (new_rw != rsht->bxsize || new_rh != rsht->bysize) {
-								if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
+								if ((rsht->flags & SHEET_FLAG_APP_EVENTS) != 0 &&
+										rsht->task != 0) {
+									if (new_rw != rpost_w || new_rh != rpost_h) {
+										bx_event_post(rsht->task, BX_EVENT_RESIZE,
+												(int) rsht, 0, 0, 0, 0,
+												new_rw, new_rh);
+										rpost_w = new_rw;
+										rpost_h = new_rh;
+									}
+								} else if ((rsht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
 									console_resize(rsht, new_rw, new_rh);
 								} else if ((rsht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
 									scrollwin_window_resize(rsht, new_rw, new_rh, "debug");
@@ -411,6 +445,8 @@ void HariMain(void)
 												rh0   = sht->bysize;
 												new_rw = rw0;
 												new_rh = rh0;
+												rpost_w = rw0;
+												rpost_h = rh0;
 												redge = (hit_right || hit_corner ? RZ_RIGHT : 0)
 												      | (hit_bottom || hit_corner ? RZ_BOTTOM : 0);
 												break;	/* 리사이즈 모드 진입 */
@@ -469,9 +505,11 @@ void HariMain(void)
 							 * 의도 크기 (new_rw, new_rh) 를 BX_EVENT_RESIZE 로 보낸다.  */
 							if ((rsht->flags & SHEET_FLAG_APP_EVENTS) != 0 &&
 									rsht->task != 0) {
-								bx_event_post(rsht->task, BX_EVENT_RESIZE,
-										(int) rsht, 0, 0, 0, 0,
-										new_rw, new_rh);
+								if (new_rw != rpost_w || new_rh != rpost_h) {
+									bx_event_post(rsht->task, BX_EVENT_RESIZE,
+											(int) rsht, 0, 0, 0, 0,
+											new_rw, new_rh);
+								}
 							}
 							rsht = 0;
 							redge = 0;
@@ -547,14 +585,14 @@ void HariMain(void)
 					/* Resize 가능한 창의 우/하단 edge 에 올라가면 커서 모양을 바꾼다.
 					 * 실제 resize hit-test 와 같은 조건을 써서 "잡히는 영역"이 보이게 한다. */
 					{
-						int next_cursor = MCURSOR_ARROW;
+						int next_cursor = BX_CURSOR_ARROW;
 						if (rsht != 0) {
 							if ((redge & (RZ_RIGHT | RZ_BOTTOM)) == (RZ_RIGHT | RZ_BOTTOM)) {
-								next_cursor = MCURSOR_RESIZE_NWSE;
+								next_cursor = BX_CURSOR_RESIZE_NWSE;
 							} else if ((redge & RZ_RIGHT) != 0) {
-								next_cursor = MCURSOR_RESIZE_WE;
+								next_cursor = BX_CURSOR_RESIZE_WE;
 							} else if ((redge & RZ_BOTTOM) != 0) {
-								next_cursor = MCURSOR_RESIZE_NS;
+								next_cursor = BX_CURSOR_RESIZE_NS;
 							}
 						} else if (mmx < 0 &&
 								!dbg_get()->sw.sb_grab &&
@@ -577,11 +615,11 @@ void HariMain(void)
 											int hit_corner = (sx >= s->bxsize - RZ_HANDLE)
 														  && (sy >= s->bysize - RZ_HANDLE);
 											if (hit_corner) {
-												next_cursor = MCURSOR_RESIZE_NWSE;
+												next_cursor = BX_CURSOR_RESIZE_NWSE;
 											} else if (hit_right) {
-												next_cursor = MCURSOR_RESIZE_WE;
+												next_cursor = BX_CURSOR_RESIZE_WE;
 											} else if (hit_bottom) {
-												next_cursor = MCURSOR_RESIZE_NS;
+												next_cursor = BX_CURSOR_RESIZE_NS;
 											}
 										}
 										break;
@@ -589,18 +627,7 @@ void HariMain(void)
 								}
 							}
 						}
-						if (next_cursor != mouse_cursor) {
-							mouse_cursor = next_cursor;
-							sht_mouse->buf = buf_mouse + mouse_cursor * SIZE_MOUSE_CURSOR;
-							if (sht_mouse->height >= 0) {
-								sheet_refreshmap(shtctl, sht_mouse->vx0, sht_mouse->vy0,
-										sht_mouse->vx0 + sht_mouse->bxsize,
-										sht_mouse->vy0 + sht_mouse->bysize, 0);
-								sheet_refreshsub(shtctl, sht_mouse->vx0, sht_mouse->vy0,
-										sht_mouse->vx0 + sht_mouse->bxsize,
-										sht_mouse->vy0 + sht_mouse->bysize, 0, shtctl->top);
-							}
-						}
+						mouse_set_cursor_shape(next_cursor);
 					}
 					old_btn = mdec.btn;
 				}
