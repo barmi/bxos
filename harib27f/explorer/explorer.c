@@ -18,6 +18,7 @@
  * 마우스 (Phase 3 MVP):
  *   tree/list 의 row 를 single-click → 선택 (포커스도 그 pane 으로 이동).
  *   같은 row 를 한번 더 click → "open" (트리 = expand toggle, 리스트 = 디렉터리 진입).
+ *   splitter drag 로 tree/list 폭 조절.
  *   resize edge drag 종료 시 RESIZE 이벤트로 layout 재계산 + redraw.            */
 #include "apilib.h"
 
@@ -42,8 +43,9 @@
 #define ROW_H            16
 #define SPLIT_W          4
 #define TREE_INDENT      8
-#define TREE_RATIO_DEF   32   /* % */
+#define TREE_RATIO_DEF   320  /* permille */
 #define TREE_W_MIN       96
+#define LIST_W_MIN       80
 
 /* color (graphic.c table_rgb)
  *   COL8_FFFFFF=7 흰색 (raised TL / sunken BR)
@@ -76,6 +78,7 @@
 
 #define FOCUS_TREE       0
 #define FOCUS_LIST       1
+#define HIT_SPLITTER     2
 
 /* ---- 상태 ----------------------------------------------------------------- */
 
@@ -85,6 +88,19 @@ struct ExpNode {
     int  expanded;
 };
 
+struct Rect {
+    int x, y, w, h;
+};
+
+struct Layout {
+    struct Rect toolbar;
+    struct Rect middle;
+    struct Rect tree;
+    struct Rect splitter;
+    struct Rect list;
+    struct Rect status;
+};
+
 struct AppState {
     int  win;
     int  w, h;
@@ -92,6 +108,8 @@ struct AppState {
     char *buf;
     int  buf_size;
     int  tree_w;        /* tree pane width in client coords */
+    int  tree_ratio;    /* permille, updated by splitter drag */
+    struct Layout layout;
 
     struct ExpNode tree[MAX_TREE_NODES];
     int  tree_count;
@@ -110,6 +128,7 @@ struct AppState {
     /* 같은-row 두 번 click → open. Mouse pane: 0=tree,1=list,-1=none */
     int  last_click_pane;
     int  last_click_idx;
+    int  dragging_splitter;
 };
 
 static struct AppState G;
@@ -344,20 +363,84 @@ static void tree_init(const char *target)
 
 /* ---- 레이아웃 ---------------------------------------------------------- */
 
-static void compute_layout(void)
+static int clamp_int(int v, int lo, int hi)
 {
-    int avail;
-    G.cw = G.w - FRAME_L - FRAME_R;
-    G.ch = G.h - FRAME_T - FRAME_B;
-    avail = G.cw - SPLIT_W;
-    if (G.tree_w == 0) G.tree_w = avail * TREE_RATIO_DEF / 100;
-    if (G.tree_w < TREE_W_MIN) G.tree_w = TREE_W_MIN;
-    if (G.tree_w > avail - 80) G.tree_w = avail - 80;
-    if (G.tree_w < TREE_W_MIN) G.tree_w = TREE_W_MIN;
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
 }
 
-static int mid_top(void)    { return TOOLBAR_H; }
-static int mid_bot(void)    { return G.ch - STATUS_H; }
+static void layout_compute(int cw, int ch, int tree_ratio, struct Layout *out)
+{
+    int middle_h = ch - TOOLBAR_H - STATUS_H;
+    int avail = cw - SPLIT_W;
+    int max_tree;
+    int tree_w;
+
+    if (middle_h < ROW_H * 2) middle_h = ROW_H * 2;
+    if (avail < TREE_W_MIN + LIST_W_MIN) avail = TREE_W_MIN + LIST_W_MIN;
+
+    max_tree = avail - LIST_W_MIN;
+    if (max_tree < TREE_W_MIN) max_tree = TREE_W_MIN;
+    tree_w = avail * tree_ratio / 1000;
+    tree_w = clamp_int(tree_w, TREE_W_MIN, max_tree);
+
+    out->toolbar.x = 0;
+    out->toolbar.y = 0;
+    out->toolbar.w = cw;
+    out->toolbar.h = TOOLBAR_H;
+
+    out->middle.x = 0;
+    out->middle.y = TOOLBAR_H;
+    out->middle.w = cw;
+    out->middle.h = middle_h;
+
+    out->tree.x = 0;
+    out->tree.y = TOOLBAR_H;
+    out->tree.w = tree_w;
+    out->tree.h = middle_h;
+
+    out->splitter.x = tree_w;
+    out->splitter.y = TOOLBAR_H;
+    out->splitter.w = SPLIT_W;
+    out->splitter.h = middle_h;
+
+    out->list.x = tree_w + SPLIT_W;
+    out->list.y = TOOLBAR_H;
+    out->list.w = cw - out->list.x;
+    out->list.h = middle_h;
+    if (out->list.w < LIST_W_MIN) out->list.w = LIST_W_MIN;
+
+    out->status.x = 0;
+    out->status.y = ch - STATUS_H;
+    out->status.w = cw;
+    out->status.h = STATUS_H;
+}
+
+static void compute_layout(void)
+{
+    G.cw = G.w - FRAME_L - FRAME_R;
+    G.ch = G.h - FRAME_T - FRAME_B;
+    if (G.tree_ratio <= 0) G.tree_ratio = TREE_RATIO_DEF;
+    layout_compute(G.cw, G.ch, G.tree_ratio, &G.layout);
+    G.tree_w = G.layout.tree.w;
+}
+
+static void set_tree_width_from_mouse(int cx)
+{
+    int avail = G.cw - SPLIT_W;
+    int max_tree = avail - LIST_W_MIN;
+    if (max_tree < TREE_W_MIN) max_tree = TREE_W_MIN;
+    G.tree_w = clamp_int(cx, TREE_W_MIN, max_tree);
+    if (avail > 0) {
+        G.tree_ratio = G.tree_w * 1000 / avail;
+        G.tree_ratio = clamp_int(G.tree_ratio, 50, 950);
+    }
+    compute_layout();
+}
+
+static int mid_top(void)    { return G.layout.middle.y; }
+static int mid_bot(void)    { return G.layout.middle.y + G.layout.middle.h; }
 
 /* ---- 그리기 헬퍼 (client → sheet 좌표) -------------------------------- */
 
@@ -422,26 +505,58 @@ static void bevel_sunken2(int x0, int y0, int x1, int y1, int fill)
 
 
 /* 화면 폭에 맞춰 문자열을 잘라 표시. col 갯수만큼 글자만 표시.
- * 실제 폭이 부족하면 마지막 1~2 글자를 ".." 으로 대체.                       */
-static int trunc_to_cols(char *dst, const char *src, int cols)
+ * 실제 폭이 부족하면 마지막 3 글자를 "..." 으로 대체.                        */
+static int trunc_to_cols(char *dst, const char *src, int cols, int dst_max)
 {
     int i, sl = s_len(src);
+    if (dst_max <= 0) return 0;
+    if (cols > dst_max - 1) cols = dst_max - 1;
     if (cols <= 0) { dst[0] = 0; return 0; }
     if (sl <= cols) {
         for (i = 0; i < sl; i++) dst[i] = src[i];
         dst[i] = 0;
         return sl;
     }
-    if (cols <= 2) {
+    if (cols <= 3) {
         for (i = 0; i < cols; i++) dst[i] = '.';
         dst[i] = 0;
         return cols;
     }
-    for (i = 0; i < cols - 2; i++) dst[i] = src[i];
+    for (i = 0; i < cols - 3; i++) dst[i] = src[i];
+    dst[cols - 3] = '.';
     dst[cols - 2] = '.';
     dst[cols - 1] = '.';
     dst[cols] = 0;
     return cols;
+}
+
+static int trunc_path_to_cols(char *dst, const char *src, int cols, int dst_max)
+{
+    int sl = s_len(src);
+    int keep_head, keep_tail, i, j;
+    if (dst_max <= 0) return 0;
+    if (cols > dst_max - 1) cols = dst_max - 1;
+    if (cols <= 0) { dst[0] = 0; return 0; }
+    if (sl <= cols) {
+        for (i = 0; i < sl; i++) dst[i] = src[i];
+        dst[i] = 0;
+        return sl;
+    }
+    if (cols <= 3) {
+        for (i = 0; i < cols; i++) dst[i] = '.';
+        dst[i] = 0;
+        return cols;
+    }
+    keep_head = (cols - 3) / 2;
+    keep_tail = cols - 3 - keep_head;
+    j = 0;
+    for (i = 0; i < keep_head; i++) dst[j++] = src[i];
+    dst[j++] = '.';
+    dst[j++] = '.';
+    dst[j++] = '.';
+    for (i = sl - keep_tail; i < sl; i++) dst[j++] = src[i];
+    dst[j] = 0;
+    return j;
 }
 
 /* ---- pane 그리기 ------------------------------------------------------ */
@@ -451,13 +566,14 @@ static void draw_toolbar(void)
     char tmp[64];
     char path[MAX_PATH];
     int n;
+    int tw = G.layout.toolbar.w;
     /* toolbar 자체를 raised 베벨 띠로 (light gray 면 + 위/아래 라인) */
-    cli_box(0, 0, G.cw - 1, TOOLBAR_H - 1, COL_CHROME);
+    cli_box(0, 0, tw - 1, TOOLBAR_H - 1, COL_CHROME);
     /* 위쪽 1px: 흰색, 아래쪽 1px: 어두운 회색 → 화면에서 살짝 떠 있는 느낌 */
-    cli_box(0, 0, G.cw - 1, 0, COL_WHITE);
-    cli_box(0, TOOLBAR_H - 1, G.cw - 1, TOOLBAR_H - 1, COL_DGRAY);
+    cli_box(0, 0, tw - 1, 0, COL_WHITE);
+    cli_box(0, TOOLBAR_H - 1, tw - 1, TOOLBAR_H - 1, COL_DGRAY);
     /* 아래쪽 다시 흰선 1px → toolbar/middle 사이 separator (raised line) */
-    cli_box(0, TOOLBAR_H, G.cw - 1, TOOLBAR_H, COL_WHITE);
+    cli_box(0, TOOLBAR_H, tw - 1, TOOLBAR_H, COL_WHITE);
     /* placeholder buttons (raised) */
     {
         int x = 4, w = 22, y0 = 3, y1 = TOOLBAR_H - 5;
@@ -472,12 +588,13 @@ static void draw_toolbar(void)
         }
         /* path 영역: sunken textbox */
         {
-            int px0 = x + 4, py0 = 3, px1 = G.cw - 6, py1 = TOOLBAR_H - 5;
+            int px0 = x + 4, py0 = 3, px1 = tw - 6, py1 = TOOLBAR_H - 5;
+            if (px1 < px0 + 16) px1 = px0 + 16;
             bevel_sunken(px0, py0, px1, py1, COL_BG);
             s_cpy(path,
                     G.tree_count > 0 ? G.tree[G.tree_sel].path : "/",
                     MAX_PATH);
-            n = trunc_to_cols(tmp, path, (px1 - px0 - 4) / 8);
+            n = trunc_path_to_cols(tmp, path, (px1 - px0 - 4) / 8, sizeof tmp);
             cli_str(px0 + 4, py0 + 3, COL_TEXT, n, tmp);
         }
     }
@@ -486,16 +603,17 @@ static void draw_toolbar(void)
 static void draw_status(void)
 {
     char tmp[64];
-    int y0 = G.ch - STATUS_H, y1 = G.ch - 1;
+    int y0 = G.layout.status.y, y1 = G.layout.status.y + G.layout.status.h - 1;
+    int sw = G.layout.status.w;
     int n;
     int col = G.status_err ? COL_ERR : COL_TEXT;
     /* 위쪽 separator (raised line) */
-    cli_box(0, y0,     G.cw - 1, y0,     COL_DGRAY);
-    cli_box(0, y0 + 1, G.cw - 1, y0 + 1, COL_WHITE);
+    cli_box(0, y0,     sw - 1, y0,     COL_DGRAY);
+    cli_box(0, y0 + 1, sw - 1, y0 + 1, COL_WHITE);
     /* status panel: light gray 면 + 안쪽에 sunken text 영역 */
-    cli_box(0, y0 + 2, G.cw - 1, y1, COL_CHROME);
-    bevel_sunken(4, y0 + 3, G.cw - 5, y1 - 2, COL_BG);
-    n = trunc_to_cols(tmp, G.status, (G.cw - 16) / 8);
+    cli_box(0, y0 + 2, sw - 1, y1, COL_CHROME);
+    bevel_sunken(4, y0 + 3, sw - 5, y1 - 2, COL_BG);
+    n = trunc_path_to_cols(tmp, G.status, (sw - 16) / 8, sizeof tmp);
     cli_str(8, y0 + 5, col, n, tmp);
 }
 
@@ -506,8 +624,10 @@ static void draw_tree(void)
     int i, r;
     int max_cols;
     /* tree 패널 = sunken textbox 식 베벨. 안쪽 영역(2px inset)을 row 영역으로. */
-    int outer_x0 = 2, outer_y0 = top + 2;
-    int outer_x1 = G.tree_w - 3, outer_y1 = bot - 3;
+    int tree_x0 = G.layout.tree.x;
+    int tree_x1 = G.layout.tree.x + G.layout.tree.w - 1;
+    int outer_x0 = tree_x0 + 2, outer_y0 = top + 2;
+    int outer_x1 = tree_x1 - 2, outer_y1 = bot - 3;
     int inner_x0 = outer_x0 + 2, inner_y0 = outer_y0 + 2;
     int inner_x1 = outer_x1 - 2, inner_y1 = outer_y1 - 2;
     int row_w = inner_x1 - inner_x0 + 1;
@@ -519,7 +639,7 @@ static void draw_tree(void)
     if (G.tree_top < 0) G.tree_top = 0;
 
     /* 바깥 chrome 면 + sunken 베벨 */
-    cli_box(0, top, G.tree_w - 1, bot - 1, COL_CHROME);
+    cli_box(tree_x0, top, tree_x1, bot - 1, COL_CHROME);
     bevel_sunken2(outer_x0, outer_y0, outer_x1, outer_y1, COL_BG);
 
     max_cols = row_w / 8;
@@ -548,13 +668,14 @@ static void draw_tree(void)
                 cli_str(inner_x0 + 2 + indent, row_y + 1, fg, 1, m);
             }
             if (avail < 1) avail = 1;
-            n = trunc_to_cols(tmp, bn, avail);
+            n = trunc_to_cols(tmp, bn, avail, sizeof tmp);
             cli_str(inner_x0 + 2 + indent + 12, row_y + 1, fg, n, tmp);
         }
     }
     /* splitter — raised vertical bar */
     {
-        int sx0 = G.tree_w, sx1 = G.tree_w + SPLIT_W - 1;
+        int sx0 = G.layout.splitter.x;
+        int sx1 = G.layout.splitter.x + G.layout.splitter.w - 1;
         cli_box(sx0, top, sx1, bot - 1, COL_CHROME);
         cli_box(sx0,     top, sx0,     bot - 1, COL_WHITE);
         cli_box(sx1,     top, sx1,     bot - 1, COL_DGRAY);
@@ -564,8 +685,8 @@ static void draw_tree(void)
 static void draw_list(void)
 {
     int top = mid_top(), bot = mid_bot();
-    int pane_x0 = G.tree_w + SPLIT_W;
-    int pane_x1 = G.cw - 1;
+    int pane_x0 = G.layout.list.x;
+    int pane_x1 = G.layout.list.x + G.layout.list.w - 1;
     /* sunken textbox 안쪽에 헤더 + row 들 */
     int outer_x0 = pane_x0 + 2, outer_y0 = top + 2;
     int outer_x1 = pane_x1 - 2, outer_y1 = bot - 3;
@@ -578,6 +699,7 @@ static void draw_list(void)
     int r, i;
     int size_col_x;
     int show_size;
+    int name_cols;
 
     /* 바깥 chrome + sunken 베벨 */
     cli_box(pane_x0, top, pane_x1, bot - 1, COL_CHROME);
@@ -586,6 +708,10 @@ static void draw_list(void)
     show_size = (row_w >= 18 * 8);
     /* size 컬럼 위치: 우측 끝에서 8 글자 폭 (+ 4 px 패딩). */
     size_col_x = inner_x1 - 8 * 8 + 1;
+    name_cols = show_size ? (size_col_x - (inner_x0 + 4) - 8) / 8
+                          : (row_w - 8) / 8;
+    if (name_cols < 1) name_cols = 1;
+    if (name_cols > 12) name_cols = 12;
 
     /* 헤더 (raised) */
     bevel_raised(inner_x0, header_y, inner_x1, header_y + header_h - 1, COL_CHROME);
@@ -617,13 +743,14 @@ static void draw_list(void)
                 cli_box(inner_x0, row_y,
                         inner_x1, row_y + ROW_H - 1, sel_col);
             }
-            n = trunc_to_cols(nm, ent->name, 12);
+            n = trunc_to_cols(nm, ent->name, name_cols, sizeof nm);
             cli_str(inner_x0 + 4, row_y + 1, fg, n, nm);
-            if (isdir) {
-                cli_str(inner_x0 + 4 + 13 * 8, row_y + 1, fg, 5, "<DIR>");
-            } else if (show_size) {
+            if (isdir && show_size) {
+                cli_str(size_col_x, row_y + 1, fg, 5, "<DIR>");
+            } else if (!isdir && show_size) {
                 int_to_str(ent->size, sz);
-                cli_str(size_col_x, row_y + 1, fg, s_len(sz), sz);
+                n = trunc_to_cols(nm, sz, 8, sizeof nm);
+                cli_str(size_col_x, row_y + 1, fg, n, nm);
             }
         }
     }
@@ -771,20 +898,44 @@ static int hit_pane(int cx, int cy)
 {
     int top = mid_top(), bot = mid_bot();
     if (cx < 0 || cy < top || cy >= bot) return -1;
-    if (cx < G.tree_w) return FOCUS_TREE;
-    if (cx >= G.tree_w + SPLIT_W && cx < G.cw) return FOCUS_LIST;
+    if (cx >= G.layout.splitter.x &&
+            cx < G.layout.splitter.x + G.layout.splitter.w) return HIT_SPLITTER;
+    if (cx >= G.layout.tree.x &&
+            cx < G.layout.tree.x + G.layout.tree.w) return FOCUS_TREE;
+    if (cx >= G.layout.list.x &&
+            cx < G.layout.list.x + G.layout.list.w) return FOCUS_LIST;
     return -1;
+}
+
+static int tree_row_at(int cy)
+{
+    int top = mid_top() + 4;
+    int bot = mid_bot() - 5;
+    if (cy < top || cy > bot) return -1;
+    return (cy - top) / ROW_H;
+}
+
+static int list_row_at(int cy)
+{
+    int top = mid_top() + 4 + ROW_H; /* skip header */
+    int bot = mid_bot() - 5;
+    if (cy < top || cy > bot) return -1;
+    return (cy - top) / ROW_H;
 }
 
 static void on_mouse_down(int cx, int cy)
 {
     int pane = hit_pane(cx, cy);
-    int top = mid_top();
-    if (pane == FOCUS_TREE) {
-        int row = (cy - top) / ROW_H;
+    if (pane == HIT_SPLITTER) {
+        G.dragging_splitter = 1;
+        G.last_click_pane = -1;
+        set_tree_width_from_mouse(cx);
+    } else if (pane == FOCUS_TREE) {
+        int row = tree_row_at(cy);
         int idx = G.tree_top + row;
+        G.dragging_splitter = 0;
         G.focus = FOCUS_TREE;
-        if (idx >= 0 && idx < G.tree_count) {
+        if (row >= 0 && idx >= 0 && idx < G.tree_count) {
             int dbl = (G.last_click_pane == FOCUS_TREE && G.last_click_idx == idx);
             G.tree_sel = idx;
             if (dbl) {
@@ -799,12 +950,12 @@ static void on_mouse_down(int cx, int cy)
             update_files_for_selection();
         }
     } else if (pane == FOCUS_LIST) {
-        /* row=0 은 헤더, 1+ 부터 실제 row */
-        int row = (cy - top) / ROW_H;
+        int row = list_row_at(cy);
         int idx;
+        G.dragging_splitter = 0;
         G.focus = FOCUS_LIST;
-        if (row <= 0) return;
-        idx = G.files_top + (row - 1);
+        if (row < 0) return;
+        idx = G.files_top + row;
         if (idx >= 0 && idx < G.files_count) {
             int dbl = (G.last_click_pane == FOCUS_LIST && G.last_click_idx == idx);
             G.files_sel = idx;
@@ -822,7 +973,29 @@ static void on_mouse_down(int cx, int cy)
             }
         }
     } else {
+        G.dragging_splitter = 0;
         G.last_click_pane = -1;
+    }
+}
+
+static void on_mouse_move(int cx, int cy, int button)
+{
+    (void) cy;
+    if (G.dragging_splitter) {
+        if ((button & 1) != 0) {
+            set_tree_width_from_mouse(cx);
+        } else {
+            G.dragging_splitter = 0;
+        }
+    }
+}
+
+static void on_mouse_up(int cx, int cy)
+{
+    (void) cy;
+    if (G.dragging_splitter) {
+        set_tree_width_from_mouse(cx);
+        G.dragging_splitter = 0;
     }
 }
 
@@ -831,6 +1004,7 @@ static void on_resize(int new_w, int new_h)
     int nw = new_w, nh = new_h;
     char *new_buf;
     int new_size;
+    G.dragging_splitter = 0;
     if (nw < WIN_W_MIN) nw = WIN_W_MIN;
     if (nh < WIN_H_MIN) nh = WIN_H_MIN;
     new_size = nw * nh;
@@ -840,17 +1014,19 @@ static void on_resize(int new_w, int new_h)
         return;
     }
     {
-        int old_w = G.w, old_h = G.h;
         char *old_buf = G.buf;
         int old_size = G.buf_size;
+        if (api_resizewin(G.win, new_buf, nw, nh, -1) != 0) {
+            api_free(new_buf, new_size);
+            status_set("resize failed", 1);
+            return;
+        }
         G.w = nw;
         G.h = nh;
         G.buf = new_buf;
         G.buf_size = new_size;
-        api_resizewin(G.win, new_buf, nw, nh, -1);
         compute_layout();
         api_free(old_buf, old_size);
-        (void) old_w; (void) old_h;
     }
 }
 
@@ -886,9 +1062,11 @@ void HariMain(void)
     G.w = WIN_W_DEF;
     G.h = WIN_H_DEF;
     G.tree_w = 0;
+    G.tree_ratio = TREE_RATIO_DEF;
     G.focus = FOCUS_TREE;
     G.last_click_pane = -1;
     G.last_click_idx = -1;
+    G.dragging_splitter = 0;
     G.buf_size = G.w * G.h;
     G.buf = api_malloc(G.buf_size);
     G.win = api_openwin(G.buf, G.w, G.h, -1, "Explorer");
@@ -905,6 +1083,10 @@ void HariMain(void)
             on_key(ev.key);
         } else if (ev.type == BX_EVENT_MOUSE_DOWN) {
             if (ev.button & 1) on_mouse_down(ev.x, ev.y);
+        } else if (ev.type == BX_EVENT_MOUSE_MOVE) {
+            on_mouse_move(ev.x, ev.y, ev.button);
+        } else if (ev.type == BX_EVENT_MOUSE_UP) {
+            on_mouse_up(ev.x, ev.y);
         } else if (ev.type == BX_EVENT_RESIZE) {
             on_resize(ev.w, ev.h);
         }
