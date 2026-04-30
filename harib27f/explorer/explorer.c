@@ -69,6 +69,7 @@
 #define COL_SEL_NOF      8    /* gray    */
 #define COL_SEL_FG       7    /* white   */
 #define COL_DIR          12   /* dark blue */
+#define COL_EXEC         10   /* dark green */
 #define COL_ERR          1    /* red     */
 
 #define KEY_UP           0x80
@@ -158,10 +159,13 @@ struct AppState {
     int  focus;
     char status[80];
     int  status_err;
+    int  status_transient;
 
     /* 같은-row 두 번 click → open. Mouse pane: 0=tree,1=list,-1=none */
     int  last_click_pane;
     int  last_click_idx;
+    int  toolbar_hover;
+    int  toolbar_pressed;
     int  dragging_splitter;
     int  dragging_scroll;
     int  scroll_drag_y;
@@ -207,6 +211,28 @@ static void path_join(char *out, const char *base, const char *name)
     }
     for (j = 0; name[j] != 0 && i < MAX_PATH - 1; j++) out[i++] = name[j];
     out[i] = 0;
+}
+
+static int path_join_checked(char *out, const char *base, const char *name)
+{
+    int i = 0, j;
+    if (base[0] == '/' && base[1] == 0) {
+        if (i >= MAX_PATH - 1) return -1;
+        out[i++] = '/';
+    } else {
+        for (j = 0; base[j] != 0; j++) {
+            if (i >= MAX_PATH - 1) return -1;
+            out[i++] = base[j];
+        }
+        if (i >= MAX_PATH - 1) return -1;
+        out[i++] = '/';
+    }
+    for (j = 0; name[j] != 0; j++) {
+        if (i >= MAX_PATH - 1) return -1;
+        out[i++] = name[j];
+    }
+    out[i] = 0;
+    return 0;
 }
 
 static void path_parent(const char *p, char *out)
@@ -810,15 +836,42 @@ static int scroll_top_from_y(int y, int drag_y, int drag_top,
     return clamp_int(top, 0, range);
 }
 
+static void scroll_track_bounds(int y0, int h, int *track_y, int *track_h)
+{
+    if (h > SCROLL_W * 3) {
+        *track_y = y0 + SCROLL_W;
+        *track_h = h - SCROLL_W * 2;
+    } else {
+        *track_y = y0 + 1;
+        *track_h = h - 2;
+    }
+    if (*track_h < 1) *track_h = 1;
+}
+
 static void draw_scrollbar(int x0, int y0, int h, int top, int count, int rows)
 {
-    int thumb_h, thumb_y;
+    int thumb_h, thumb_y, track_y, track_h;
     if (rows <= 0 || count <= rows) return;
     cli_box(x0, y0, x0 + SCROLL_W - 1, y0 + h - 1, COL_CHROME);
     bevel_sunken(x0, y0, x0 + SCROLL_W - 1, y0 + h - 1, COL_CHROME);
-    thumb_y = scroll_thumb_y(top, count, rows, y0 + 1, h - 2, &thumb_h);
+    scroll_track_bounds(y0, h, &track_y, &track_h);
+    if (h > SCROLL_W * 3) {
+        bevel_raised(x0 + 1, y0 + 1, x0 + SCROLL_W - 2,
+                y0 + SCROLL_W - 1, COL_CHROME);
+        bevel_raised(x0 + 1, y0 + h - SCROLL_W, x0 + SCROLL_W - 2,
+                y0 + h - 2, COL_CHROME);
+    }
+    thumb_y = scroll_thumb_y(top, count, rows, track_y, track_h, &thumb_h);
     bevel_raised(x0 + 1, thumb_y, x0 + SCROLL_W - 2,
             thumb_y + thumb_h - 1, COL_CHROME);
+}
+
+static int toolbar_button_enabled(int btn)
+{
+    if (btn < 0 || btn >= 6) return 0;
+    if (G.mode == MODE_INPUT || G.mode == MODE_CONFIRM) return 0;
+    if ((btn == 4 || btn == 5) && G.files_count <= 0) return 0;
+    return 1;
 }
 
 /* ---- pane 그리기 ------------------------------------------------------ */
@@ -842,9 +895,17 @@ static void draw_toolbar(void)
         const char *labels[6] = { "<-", "..", "R", "N", "D", "M" };
         int j;
         for (j = 0; j < 6; j++) {
-            bevel_raised(x, y0, x + w - 1, y1, COL_CHROME);
+            int enabled = toolbar_button_enabled(j);
+            int pressed = (G.toolbar_pressed == j && enabled);
+            int hover = (G.toolbar_hover == j && enabled);
+            if (pressed) bevel_sunken(x, y0, x + w - 1, y1, COL_CHROME);
+            else         bevel_raised(x, y0, x + w - 1, y1, COL_CHROME);
+            if (hover && !pressed) {
+                cli_box(x + 2, y0 + 2, x + w - 3, y0 + 2, COL_WHITE);
+                cli_box(x + 2, y1 - 2, x + w - 3, y1 - 2, COL_DGRAY);
+            }
             cli_str(x + (w - (s_len(labels[j])) * 8) / 2,
-                    y0 + 3, COL_TEXT,
+                    y0 + 3, enabled ? COL_TEXT : COL_DGRAY,
                     s_len(labels[j]), labels[j]);
             x += w + 2;
         }
@@ -1020,7 +1081,9 @@ static void draw_list(void)
             int sel = (i == G.files_sel);
             int sel_col = (G.focus == FOCUS_LIST) ? COL_SEL_FOC : COL_SEL_NOF;
             int isdir = (ent->attr & 0x10) != 0;
-            int fg = sel ? COL_SEL_FG : (isdir ? COL_DIR : COL_TEXT);
+            int isexec = (!isdir && has_he2_ext(ent->name));
+            int fg = sel ? COL_SEL_FG : (isdir ? COL_DIR :
+                    (isexec ? COL_EXEC : COL_TEXT));
             char nm[16];
             int n;
             char sz[16];
@@ -1184,6 +1247,16 @@ static void status_set(const char *s, int err)
 {
     s_cpy(G.status, s, sizeof G.status);
     G.status_err = err ? 1 : 0;
+    G.status_transient = err ? 0 : 1;
+}
+
+static void status_clear_transient(void)
+{
+    if (G.status_transient && G.mode == MODE_LIST) {
+        G.status[0] = 0;
+        G.status_err = 0;
+        G.status_transient = 0;
+    }
 }
 
 static void refresh_input_status(void)
@@ -1192,6 +1265,7 @@ static void refresh_input_status(void)
     append_text(G.status, sizeof G.status, G.input_buf);
     append_text(G.status, sizeof G.status, "_");
     G.status_err = 0;
+    G.status_transient = 0;
 }
 
 static void select_file_by_name(const char *name, int fallback)
@@ -1322,7 +1396,10 @@ static void open_selected_file(void)
         return;
     }
     e = &G.files[G.files_sel];
-    path_join(child, G.tree[G.tree_sel].path, e->name);
+    if (path_join_checked(child, G.tree[G.tree_sel].path, e->name) != 0) {
+        status_set("path too long", 1);
+        return;
+    }
     if ((e->attr & 0x10) != 0) {
         enter_dir_path(child);
         return;
@@ -1346,7 +1423,11 @@ static int selected_path(char *out, struct BX_DIRINFO **ent)
         return -1;
     }
     if (ent != 0) *ent = &G.files[G.files_sel];
-    path_join(out, G.tree[G.tree_sel].path, G.files[G.files_sel].name);
+    if (path_join_checked(out, G.tree[G.tree_sel].path,
+                G.files[G.files_sel].name) != 0) {
+        status_set("path too long", 1);
+        return -1;
+    }
     return 0;
 }
 
@@ -1419,7 +1500,10 @@ static void finish_mkdir(void)
         status_set("invalid 8.3 directory name", 1);
         return;
     }
-    path_join(path, G.tree[G.tree_sel].path, name);
+    if (path_join_checked(path, G.tree[G.tree_sel].path, name) != 0) {
+        status_set("path too long", 1);
+        return;
+    }
     if (api_mkdir(path) != 0) {
         status_set("mkdir failed", 1);
         return;
@@ -1441,9 +1525,17 @@ static void finish_rename(void)
     if (G.input_buf[0] == '/') {
         s_cpy(newpath, G.input_buf, sizeof newpath);
     } else if (path_has_slash(G.input_buf)) {
-        path_join(newpath, G.tree[G.tree_sel].path, G.input_buf);
+        if (path_join_checked(newpath, G.tree[G.tree_sel].path,
+                    G.input_buf) != 0) {
+            status_set("path too long", 1);
+            return;
+        }
     } else {
-        path_join(newpath, G.tree[G.tree_sel].path, newleaf);
+        if (path_join_checked(newpath, G.tree[G.tree_sel].path,
+                    newleaf) != 0) {
+            status_set("path too long", 1);
+            return;
+        }
     }
     if (api_rename(G.op_path, newpath) != 0) {
         status_set("rename failed", 1);
@@ -1553,6 +1645,7 @@ static void on_key(int key)
         api_closewin(G.win);
         api_end();
     }
+    status_clear_transient();
     if (key == KEY_TAB) {
         G.focus = (G.focus == FOCUS_TREE) ? FOCUS_LIST : FOCUS_TREE;
         return;
@@ -1693,8 +1786,7 @@ static void begin_scroll_drag(int pane, int cy)
         rows = r.h / ROW_H;
         count = G.tree_count;
         top = G.tree_top;
-        track_y = r.y + 1;
-        track_h = r.h - 2;
+        scroll_track_bounds(r.y, r.h, &track_y, &track_h);
     } else {
         r = list_inner_rect();
         rows = (r.h - ROW_H) / ROW_H;
@@ -1705,12 +1797,22 @@ static void begin_scroll_drag(int pane, int cy)
             count = G.files_count;
             top = G.files_top;
         }
-        track_y = r.y + ROW_H + 1;
-        track_h = r.h - ROW_H - 2;
+        scroll_track_bounds(r.y + ROW_H, r.h - ROW_H, &track_y, &track_h);
     }
     if (rows <= 0 || count <= rows) return;
     thumb_y = scroll_thumb_y(top, count, rows, track_y, track_h, &thumb_h);
-    if (cy < thumb_y) {
+    if (pane == SCROLL_TREE && r.h > SCROLL_W * 3 && cy < r.y + SCROLL_W) {
+        top--;
+    } else if (pane == SCROLL_TREE && r.h > SCROLL_W * 3 &&
+            cy >= r.y + r.h - SCROLL_W) {
+        top++;
+    } else if (pane != SCROLL_TREE && r.h - ROW_H > SCROLL_W * 3 &&
+            cy < r.y + ROW_H + SCROLL_W) {
+        top--;
+    } else if (pane != SCROLL_TREE && r.h - ROW_H > SCROLL_W * 3 &&
+            cy >= r.y + r.h - SCROLL_W) {
+        top++;
+    } else if (cy < thumb_y) {
         top -= rows;
     } else if (cy >= thumb_y + thumb_h) {
         top += rows;
@@ -1734,8 +1836,7 @@ static void update_scroll_drag(int cy)
         r = tree_inner_rect();
         rows = r.h / ROW_H;
         count = G.tree_count;
-        track_y = r.y + 1;
-        track_h = r.h - 2;
+        scroll_track_bounds(r.y, r.h, &track_y, &track_h);
         top = scroll_top_from_y(cy, G.scroll_drag_y, G.scroll_drag_top,
                 count, rows, track_y, track_h);
         G.tree_top = top;
@@ -1743,8 +1844,7 @@ static void update_scroll_drag(int cy)
         r = list_inner_rect();
         rows = (r.h - ROW_H) / ROW_H;
         count = G.files_count;
-        track_y = r.y + ROW_H + 1;
-        track_h = r.h - ROW_H - 2;
+        scroll_track_bounds(r.y + ROW_H, r.h - ROW_H, &track_y, &track_h);
         top = scroll_top_from_y(cy, G.scroll_drag_y, G.scroll_drag_top,
                 count, rows, track_y, track_h);
         G.files_top = top;
@@ -1752,8 +1852,7 @@ static void update_scroll_drag(int cy)
         r = list_inner_rect();
         rows = (r.h - ROW_H) / ROW_H;
         count = preview_total_lines();
-        track_y = r.y + ROW_H + 1;
-        track_h = r.h - ROW_H - 2;
+        scroll_track_bounds(r.y + ROW_H, r.h - ROW_H, &track_y, &track_h);
         top = scroll_top_from_y(cy, G.scroll_drag_y, G.scroll_drag_top,
                 count, rows, track_y, track_h);
         G.preview_top = top;
@@ -1774,6 +1873,7 @@ static int toolbar_button_at(int cx, int cy)
 static void activate_toolbar_button(int btn)
 {
     char parent[MAX_PATH];
+    if (!toolbar_button_enabled(btn)) return;
     if (G.mode == MODE_INPUT || G.mode == MODE_CONFIRM) return;
     if (G.mode == MODE_PREVIEW) {
         leave_preview();
@@ -1797,11 +1897,13 @@ static void activate_toolbar_button(int btn)
 static void on_mouse_down(int cx, int cy)
 {
     int pane = hit_pane(cx, cy);
+    status_clear_transient();
     if (cy >= 0 && cy < TOOLBAR_H) {
         int btn = toolbar_button_at(cx, cy);
         G.dragging_splitter = 0;
         G.dragging_scroll = SCROLL_NONE;
         G.last_click_pane = -1;
+        G.toolbar_pressed = toolbar_button_enabled(btn) ? btn : -1;
         if (btn >= 0) activate_toolbar_button(btn);
         return;
     }
@@ -1888,6 +1990,7 @@ static void on_mouse_down(int cx, int cy)
 
 static void on_mouse_move(int cx, int cy, int button)
 {
+    G.toolbar_hover = toolbar_button_at(cx, cy);
     if (G.dragging_splitter) {
         set_cursor_shape(BX_CURSOR_RESIZE_WE);
         if ((button & 1) != 0) {
@@ -1914,6 +2017,7 @@ static void on_mouse_up(int cx, int cy)
         set_tree_width_from_mouse(cx);
         G.dragging_splitter = 0;
     }
+    G.toolbar_pressed = -1;
     G.dragging_scroll = SCROLL_NONE;
 }
 
@@ -1983,6 +2087,7 @@ void HariMain(void)
     G.tree_w = 0;
     G.tree_ratio = TREE_RATIO_DEF;
     G.focus = FOCUS_TREE;
+    G.status_transient = 0;
     G.mode = MODE_LIST;
     G.preview_path[0] = 0;
     G.preview_len = 0;
@@ -2000,6 +2105,8 @@ void HariMain(void)
     G.op_sel = 0;
     G.last_click_pane = -1;
     G.last_click_idx = -1;
+    G.toolbar_hover = -1;
+    G.toolbar_pressed = -1;
     G.dragging_splitter = 0;
     G.dragging_scroll = SCROLL_NONE;
     G.cursor_shape = BX_CURSOR_ARROW;
