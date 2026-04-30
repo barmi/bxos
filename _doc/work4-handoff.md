@@ -189,7 +189,7 @@ Phase 0~4 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase
    - Phase 1: `lsdir /` 가 root entries 끝까지 출력. `lsdir /sub` (mkdir /sub 후 진입) 정상. 회귀: `dir /`, `mkdir/rmdir`, `cd`, `pwd`, `type hangul.utf` 변화 없음.
    - Phase 2: `start evtest` 후 client click → 점/박스 표시. drag → 점선. 우하단 모서리 drag-release → 새 크기로 frame 재배치. 회귀: tetris 키보드 입력, title bar drag, 콘솔 resize 동작 변화 없음.
    - Phase 3: `explorer` 실행 시 왼쪽 tree(`/` + 자식들), 오른쪽 file list. ↑↓/Tab/Enter/`r`/`q` 키보드 동작. row click 선택, 같은 row 재click → open(tree expand 또는 list dir 진입). `mkdir /sub` → `explorer /sub` 시 chain expand.
-   - Phase 4: splitter drag 로 tree/list 폭 변경. 창을 크게/작게 resize 한 뒤에도 변경한 비율이 유지되는지 확인. 최소 크기에서 toolbar/path/status/list text 가 겹치지 않는지 확인. resize 20회 반복.
+   - Phase 4: splitter drag 로 tree/list 폭 변경. 창을 크게/작게 resize 한 뒤에도 변경한 비율이 유지되는지 확인. console/explorer 의 resize edge 에 hover 할 때 방향별 resize 커서가 보이는지 확인. 최소 크기에서 toolbar/path/status/list text 가 겹치지 않는지 확인. resize 20회 반복.
 3. **Phase 5 진입 — 파일 열기 / 앱 실행 / preview**:
    - work4.md §3 Phase 5 참조.
    - `on_key()` 의 list Enter/Right 경로와 `on_mouse_down()` 의 list 같은-row 재click 경로를 공통 `open_selected_file()` 류 helper 로 묶는다.

@@ -87,7 +87,7 @@ void putblock8_8(char *vram, int vxsize, int pxsize,
 #define COL8_008484		14
 #define COL8_848484		15
 
-#define MAX_MOUSE_CURSOR	2
+#define MAX_MOUSE_CURSOR	4
 #define SIZE_MOUSE_CURSOR	(16*16)
 
 /* dsctbl.c */
@@ -196,6 +196,8 @@ struct SHTCTL *shtctl_init(struct MEMMAN *memman, unsigned char *vram, int xsize
 struct SHEET *sheet_alloc(struct SHTCTL *ctl);
 void sheet_setbuf(struct SHEET *sht, unsigned char *buf, int xsize, int ysize, int col_inv);
 void sheet_updown(struct SHEET *sht, int height);
+void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0);
+void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0, int h1);
 void sheet_refresh(struct SHEET *sht, int bx0, int by0, int bx1, int by1);
 void sheet_slide(struct SHEET *sht, int vx0, int vy0);
 void sheet_free(struct SHEET *sht);

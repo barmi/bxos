@@ -64,8 +64,13 @@ void HariMain(void)
 #define RZ_EDGE   4    /* 우/하단 엣지 폭(px) */
 #define RZ_MIN_W  64
 #define RZ_MIN_H  48
+#define MCURSOR_ARROW       0
+#define MCURSOR_RESIZE_NWSE 1
+#define MCURSOR_RESIZE_WE   2
+#define MCURSOR_RESIZE_NS   3
 	/* work4 Phase 2: app client mouse event 라우팅 — 이전 btn 상태 추적. */
 	int old_btn = 0;
+	int mouse_cursor = MCURSOR_ARROW;
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
 	unsigned char *nihongo, *hangul;
@@ -536,6 +541,64 @@ void HariMain(void)
 										BX_EVENT_MOUSE_MOVE,
 										(int) app_sht, app_x, app_y,
 										mdec.btn, 0, 0, 0);
+							}
+						}
+					}
+					/* Resize 가능한 창의 우/하단 edge 에 올라가면 커서 모양을 바꾼다.
+					 * 실제 resize hit-test 와 같은 조건을 써서 "잡히는 영역"이 보이게 한다. */
+					{
+						int next_cursor = MCURSOR_ARROW;
+						if (rsht != 0) {
+							if ((redge & (RZ_RIGHT | RZ_BOTTOM)) == (RZ_RIGHT | RZ_BOTTOM)) {
+								next_cursor = MCURSOR_RESIZE_NWSE;
+							} else if ((redge & RZ_RIGHT) != 0) {
+								next_cursor = MCURSOR_RESIZE_WE;
+							} else if ((redge & RZ_BOTTOM) != 0) {
+								next_cursor = MCURSOR_RESIZE_NS;
+							}
+						} else if (mmx < 0 &&
+								!dbg_get()->sw.sb_grab &&
+								!(key_win != 0 && key_win->scroll != 0 &&
+										key_win->scroll->sb_grab)) {
+							int sj, sx, sy;
+							for (sj = shtctl->top - 1; sj > 0; sj--) {
+								struct SHEET *s = shtctl->sheets[sj];
+								if (s == sht_mouse) {
+									continue;
+								}
+								sx = mx - s->vx0;
+								sy = my - s->vy0;
+								if (0 <= sx && sx < s->bxsize &&
+										0 <= sy && sy < s->bysize) {
+									if (s->buf[sy * s->bxsize + sx] != s->col_inv) {
+										if ((s->flags & SHEET_FLAG_RESIZABLE) != 0) {
+											int hit_right  = (sx >= s->bxsize - RZ_EDGE);
+											int hit_bottom = (sy >= s->bysize - RZ_EDGE);
+											int hit_corner = (sx >= s->bxsize - RZ_HANDLE)
+														  && (sy >= s->bysize - RZ_HANDLE);
+											if (hit_corner) {
+												next_cursor = MCURSOR_RESIZE_NWSE;
+											} else if (hit_right) {
+												next_cursor = MCURSOR_RESIZE_WE;
+											} else if (hit_bottom) {
+												next_cursor = MCURSOR_RESIZE_NS;
+											}
+										}
+										break;
+									}
+								}
+							}
+						}
+						if (next_cursor != mouse_cursor) {
+							mouse_cursor = next_cursor;
+							sht_mouse->buf = buf_mouse + mouse_cursor * SIZE_MOUSE_CURSOR;
+							if (sht_mouse->height >= 0) {
+								sheet_refreshmap(shtctl, sht_mouse->vx0, sht_mouse->vy0,
+										sht_mouse->vx0 + sht_mouse->bxsize,
+										sht_mouse->vy0 + sht_mouse->bysize, 0);
+								sheet_refreshsub(shtctl, sht_mouse->vx0, sht_mouse->vy0,
+										sht_mouse->vx0 + sht_mouse->bxsize,
+										sht_mouse->vy0 + sht_mouse->bysize, 0, shtctl->top);
 							}
 						}
 					}
