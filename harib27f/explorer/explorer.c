@@ -619,6 +619,47 @@ static int scroll_thumb_y(int top, int count, int rows, int track_y, int track_h
     return track_y + top * movable / range;
 }
 
+static int tree_visible_rows(void)
+{
+    struct Rect r = tree_inner_rect();
+    return r.h / ROW_H;
+}
+
+static int list_visible_rows(void)
+{
+    struct Rect r = list_inner_rect();
+    int rows = (r.h - ROW_H) / ROW_H;
+    return rows < 0 ? 0 : rows;
+}
+
+static void ensure_tree_sel_visible(void)
+{
+    int rows = tree_visible_rows();
+    int max_top = G.tree_count - rows;
+    if (max_top < 0) max_top = 0;
+    if (rows <= 0) {
+        G.tree_top = 0;
+        return;
+    }
+    if (G.tree_sel < G.tree_top) G.tree_top = G.tree_sel;
+    if (G.tree_sel >= G.tree_top + rows) G.tree_top = G.tree_sel - rows + 1;
+    G.tree_top = clamp_int(G.tree_top, 0, max_top);
+}
+
+static void ensure_file_sel_visible(void)
+{
+    int rows = list_visible_rows();
+    int max_top = G.files_count - rows;
+    if (max_top < 0) max_top = 0;
+    if (rows <= 0) {
+        G.files_top = 0;
+        return;
+    }
+    if (G.files_sel < G.files_top) G.files_top = G.files_sel;
+    if (G.files_sel >= G.files_top + rows) G.files_top = G.files_sel - rows + 1;
+    G.files_top = clamp_int(G.files_top, 0, max_top);
+}
+
 static int scroll_top_from_y(int y, int drag_y, int drag_top,
         int count, int rows, int track_y, int track_h)
 {
@@ -724,10 +765,11 @@ static void draw_tree(void)
         row_w -= SCROLL_W + 2;
     }
     row_x1 = inner_x0 + row_w - 1;
-    /* clamp top */
-    if (G.tree_sel < G.tree_top) G.tree_top = G.tree_sel;
-    if (G.tree_sel >= G.tree_top + rows) G.tree_top = G.tree_sel - rows + 1;
-    if (G.tree_top < 0) G.tree_top = 0;
+    {
+        int max_top = G.tree_count - rows;
+        if (max_top < 0) max_top = 0;
+        G.tree_top = clamp_int(G.tree_top, 0, max_top);
+    }
 
     /* 바깥 chrome 면 + sunken 베벨 */
     cli_box(tree_x0, top, tree_x1, bot - 1, COL_CHROME);
@@ -826,9 +868,11 @@ static void draw_list(void)
     }
 
     /* row 영역 */
-    if (G.files_sel < G.files_top) G.files_top = G.files_sel;
-    if (G.files_sel >= G.files_top + rows) G.files_top = G.files_sel - rows + 1;
-    if (G.files_top < 0) G.files_top = 0;
+    {
+        int max_top = G.files_count - rows;
+        if (max_top < 0) max_top = 0;
+        G.files_top = clamp_int(G.files_top, 0, max_top);
+    }
 
     for (r = 0; r < rows; r++) {
         i = G.files_top + r;
@@ -912,6 +956,7 @@ static void enter_dir_path(const char *path)
         if (!G.tree[idx].expanded) tree_expand_at(idx);
     }
     G.tree_sel = idx;
+    ensure_tree_sel_visible();
     update_files_for_selection();
 }
 
@@ -935,9 +980,11 @@ static void on_key(int key)
     if (G.focus == FOCUS_TREE) {
         if (key == KEY_UP) {
             if (G.tree_sel > 0) G.tree_sel--;
+            ensure_tree_sel_visible();
             update_files_for_selection();
         } else if (key == KEY_DOWN) {
             if (G.tree_sel + 1 < G.tree_count) G.tree_sel++;
+            ensure_tree_sel_visible();
             update_files_for_selection();
         } else if (key == KEY_LEFT || key == KEY_BS) {
             struct ExpNode *nd = &G.tree[G.tree_sel];
@@ -950,6 +997,7 @@ static void on_key(int key)
                     int p = tree_find(parent);
                     if (p >= 0) G.tree_sel = p;
                 }
+                ensure_tree_sel_visible();
                 update_files_for_selection();
             }
         } else if (key == KEY_RIGHT) {
@@ -967,8 +1015,10 @@ static void on_key(int key)
         /* FOCUS_LIST */
         if (key == KEY_UP) {
             if (G.files_sel > 0) G.files_sel--;
+            ensure_file_sel_visible();
         } else if (key == KEY_DOWN) {
             if (G.files_sel + 1 < G.files_count) G.files_sel++;
+            ensure_file_sel_visible();
         } else if (key == KEY_LEFT || key == KEY_BS) {
             /* 부모로 */
             path_parent(G.tree[G.tree_sel].path, parent);
