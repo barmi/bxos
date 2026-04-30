@@ -184,6 +184,7 @@ struct SHEET {
 	struct SHTCTL *ctl;
 	struct TASK *task;
 	struct SCROLLWIN *scroll;
+	char title[32];	/* work4 Phase 3: api_openwin 시 저장, api_resizewin 시 frame 재그리기 용 */
 };
 struct SHTCTL {
 	unsigned char *vram, *map;

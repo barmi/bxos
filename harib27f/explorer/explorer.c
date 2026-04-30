@@ -45,12 +45,19 @@
 #define TREE_RATIO_DEF   32   /* % */
 #define TREE_W_MIN       96
 
-/* color (graphic.c table_rgb) */
-#define COL_BG           7    /* white   */
-#define COL_TEXT         0    /* black   */
-#define COL_GRAY         8    /* lt gray */
-#define COL_TBAR_BG      8
-#define COL_STAT_BG      8
+/* color (graphic.c table_rgb)
+ *   COL8_FFFFFF=7 흰색 (raised TL / sunken BR)
+ *   COL8_C6C6C6=8 light gray (chrome 면 색)
+ *   COL8_848484=15 dark gray (raised BR / sunken TL)
+ *   COL8_000000=0 검정
+ */
+#define COL_WHITE        7
+#define COL_LGRAY        8
+#define COL_DGRAY        15
+#define COL_BLACK        0
+#define COL_BG           7    /* white (list/tree 배경) */
+#define COL_TEXT         0
+#define COL_CHROME       8    /* toolbar / status / splitter 면 색 */
 #define COL_BORDER       0
 #define COL_SEL_FOC      4    /* blue    */
 #define COL_SEL_NOF      8    /* gray    */
@@ -351,8 +358,6 @@ static void compute_layout(void)
 
 static int mid_top(void)    { return TOOLBAR_H; }
 static int mid_bot(void)    { return G.ch - STATUS_H; }
-static int mid_h(void)      { return mid_bot() - mid_top(); }
-static int rows_visible(void) { return mid_h() / ROW_H; }
 
 /* ---- 그리기 헬퍼 (client → sheet 좌표) -------------------------------- */
 
@@ -373,6 +378,48 @@ static void cli_refresh(int x0, int y0, int x1, int y1)
 {
     api_refreshwin(G.win, s_x(x0), s_y(y0), s_x(x1), s_y(y1));
 }
+
+/* ── 3D 베벨 헬퍼 (Win95 / haribote make_textbox8 스타일) ─────────────────
+ *   raised : top/left = white, bottom/right = dark gray
+ *   sunken : top/left = dark gray, bottom/right = white
+ *   2px outset/inset 두께. 내부는 호출자가 별도로 채우거나 fill=col 로 동시 채움.
+ *   좌표는 모두 client-area 기준 (s_x/s_y 가 frame offset 적용).               */
+static void bevel_raised(int x0, int y0, int x1, int y1, int fill)
+{
+    if (fill >= 0) cli_box(x0 + 1, y0 + 1, x1 - 1, y1 - 1, fill);
+    /* 바깥 1px: light TL, dark BR */
+    cli_box(x0,     y0,     x1,     y0,     COL_WHITE);
+    cli_box(x0,     y0,     x0,     y1,     COL_WHITE);
+    cli_box(x0,     y1,     x1,     y1,     COL_DGRAY);
+    cli_box(x1,     y0,     x1,     y1,     COL_DGRAY);
+}
+
+static void bevel_sunken(int x0, int y0, int x1, int y1, int fill)
+{
+    if (fill >= 0) cli_box(x0 + 1, y0 + 1, x1 - 1, y1 - 1, fill);
+    /* 바깥 1px: dark TL, light BR */
+    cli_box(x0,     y0,     x1,     y0,     COL_DGRAY);
+    cli_box(x0,     y0,     x0,     y1,     COL_DGRAY);
+    cli_box(x0,     y1,     x1,     y1,     COL_WHITE);
+    cli_box(x1,     y0,     x1,     y1,     COL_WHITE);
+}
+
+/* 깊은 sunken (textbox 처럼 2겹). 안쪽 1px: 진한 검정/light gray */
+static void bevel_sunken2(int x0, int y0, int x1, int y1, int fill)
+{
+    if (fill >= 0) cli_box(x0 + 2, y0 + 2, x1 - 2, y1 - 2, fill);
+    /* 바깥 1px: dark gray TL, white BR */
+    cli_box(x0,     y0,     x1,     y0,     COL_DGRAY);
+    cli_box(x0,     y0,     x0,     y1,     COL_DGRAY);
+    cli_box(x0,     y1,     x1,     y1,     COL_WHITE);
+    cli_box(x1,     y0,     x1,     y1,     COL_WHITE);
+    /* 안쪽 1px: black TL, light gray BR */
+    cli_box(x0 + 1, y0 + 1, x1 - 1, y0 + 1, COL_BLACK);
+    cli_box(x0 + 1, y0 + 1, x0 + 1, y1 - 1, COL_BLACK);
+    cli_box(x0 + 1, y1 - 1, x1 - 1, y1 - 1, COL_LGRAY);
+    cli_box(x1 - 1, y0 + 1, x1 - 1, y1 - 1, COL_LGRAY);
+}
+
 
 /* 화면 폭에 맞춰 문자열을 잘라 표시. col 갯수만큼 글자만 표시.
  * 실제 폭이 부족하면 마지막 1~2 글자를 ".." 으로 대체.                       */
@@ -404,28 +451,35 @@ static void draw_toolbar(void)
     char tmp[64];
     char path[MAX_PATH];
     int n;
-    /* background */
-    cli_box(0, 0, G.cw - 1, TOOLBAR_H - 1, COL_TBAR_BG);
-    /* placeholder "buttons": Back / Up / Refresh / New / Del / Ren */
+    /* toolbar 자체를 raised 베벨 띠로 (light gray 면 + 위/아래 라인) */
+    cli_box(0, 0, G.cw - 1, TOOLBAR_H - 1, COL_CHROME);
+    /* 위쪽 1px: 흰색, 아래쪽 1px: 어두운 회색 → 화면에서 살짝 떠 있는 느낌 */
+    cli_box(0, 0, G.cw - 1, 0, COL_WHITE);
+    cli_box(0, TOOLBAR_H - 1, G.cw - 1, TOOLBAR_H - 1, COL_DGRAY);
+    /* 아래쪽 다시 흰선 1px → toolbar/middle 사이 separator (raised line) */
+    cli_box(0, TOOLBAR_H, G.cw - 1, TOOLBAR_H, COL_WHITE);
+    /* placeholder buttons (raised) */
     {
-        int x = 4, w = 26, y0 = 3, y1 = TOOLBAR_H - 4;
+        int x = 4, w = 22, y0 = 3, y1 = TOOLBAR_H - 5;
         const char *labels[6] = { "<-", "..", "R", "N", "D", "M" };
         int j;
         for (j = 0; j < 6; j++) {
-            cli_box(x, y0, x + w - 1, y1, COL_BG);
-            cli_box(x, y0, x + w - 1, y0, COL_BORDER);
-            cli_box(x, y1, x + w - 1, y1, COL_BORDER);
-            cli_box(x, y0, x, y1, COL_BORDER);
-            cli_box(x + w - 1, y0, x + w - 1, y1, COL_BORDER);
-            cli_str(x + 4, y0 + 2, COL_TEXT, 2, labels[j]);
+            bevel_raised(x, y0, x + w - 1, y1, COL_CHROME);
+            cli_str(x + (w - (s_len(labels[j])) * 8) / 2,
+                    y0 + 3, COL_TEXT,
+                    s_len(labels[j]), labels[j]);
             x += w + 2;
         }
-        /* 현재 path 라벨 */
-        s_cpy(path,
-                G.tree_count > 0 ? G.tree[G.tree_sel].path : "/",
-                MAX_PATH);
-        n = trunc_to_cols(tmp, path, (G.cw - x - 8) / 8);
-        cli_str(x + 6, y0 + 2, COL_TEXT, n, tmp);
+        /* path 영역: sunken textbox */
+        {
+            int px0 = x + 4, py0 = 3, px1 = G.cw - 6, py1 = TOOLBAR_H - 5;
+            bevel_sunken(px0, py0, px1, py1, COL_BG);
+            s_cpy(path,
+                    G.tree_count > 0 ? G.tree[G.tree_sel].path : "/",
+                    MAX_PATH);
+            n = trunc_to_cols(tmp, path, (px1 - px0 - 4) / 8);
+            cli_str(px0 + 4, py0 + 3, COL_TEXT, n, tmp);
+        }
     }
 }
 
@@ -435,32 +489,46 @@ static void draw_status(void)
     int y0 = G.ch - STATUS_H, y1 = G.ch - 1;
     int n;
     int col = G.status_err ? COL_ERR : COL_TEXT;
-    cli_box(0, y0, G.cw - 1, y1, COL_STAT_BG);
-    n = trunc_to_cols(tmp, G.status, (G.cw - 8) / 8);
-    cli_str(4, y0 + 2, col, n, tmp);
+    /* 위쪽 separator (raised line) */
+    cli_box(0, y0,     G.cw - 1, y0,     COL_DGRAY);
+    cli_box(0, y0 + 1, G.cw - 1, y0 + 1, COL_WHITE);
+    /* status panel: light gray 면 + 안쪽에 sunken text 영역 */
+    cli_box(0, y0 + 2, G.cw - 1, y1, COL_CHROME);
+    bevel_sunken(4, y0 + 3, G.cw - 5, y1 - 2, COL_BG);
+    n = trunc_to_cols(tmp, G.status, (G.cw - 16) / 8);
+    cli_str(8, y0 + 5, col, n, tmp);
 }
 
 static void draw_tree(void)
 {
     int top = mid_top(), bot = mid_bot();
-    int x0 = 0, x1 = G.tree_w - 1;
-    int rows = rows_visible();
+    int rows;
     int i, r;
     int max_cols;
+    /* tree 패널 = sunken textbox 식 베벨. 안쪽 영역(2px inset)을 row 영역으로. */
+    int outer_x0 = 2, outer_y0 = top + 2;
+    int outer_x1 = G.tree_w - 3, outer_y1 = bot - 3;
+    int inner_x0 = outer_x0 + 2, inner_y0 = outer_y0 + 2;
+    int inner_x1 = outer_x1 - 2, inner_y1 = outer_y1 - 2;
+    int row_w = inner_x1 - inner_x0 + 1;
 
+    rows = (inner_y1 - inner_y0 + 1) / ROW_H;
     /* clamp top */
     if (G.tree_sel < G.tree_top) G.tree_top = G.tree_sel;
     if (G.tree_sel >= G.tree_top + rows) G.tree_top = G.tree_sel - rows + 1;
     if (G.tree_top < 0) G.tree_top = 0;
 
-    cli_box(x0, top, x1, bot - 1, COL_BG);
-    max_cols = (G.tree_w - 4) / 8;
+    /* 바깥 chrome 면 + sunken 베벨 */
+    cli_box(0, top, G.tree_w - 1, bot - 1, COL_CHROME);
+    bevel_sunken2(outer_x0, outer_y0, outer_x1, outer_y1, COL_BG);
+
+    max_cols = row_w / 8;
     for (r = 0; r < rows; r++) {
         i = G.tree_top + r;
         if (i >= G.tree_count) break;
         {
             struct ExpNode *nd = &G.tree[i];
-            int row_y = top + r * ROW_H;
+            int row_y = inner_y0 + r * ROW_H;
             int indent = nd->depth * TREE_INDENT;
             const char *bn = (nd->depth == 0) ? "/" : path_basename(nd->path);
             char tmp[40];
@@ -470,52 +538,74 @@ static void draw_tree(void)
             int sel_col = (G.focus == FOCUS_TREE) ? COL_SEL_FOC : COL_SEL_NOF;
             int fg = sel ? COL_SEL_FG : COL_TEXT;
             if (sel) {
-                cli_box(x0, row_y, x1, row_y + ROW_H - 1, sel_col);
+                cli_box(inner_x0, row_y,
+                        inner_x1, row_y + ROW_H - 1, sel_col);
             }
-            /* expand marker */
+            /* expand marker (작은 + / - 박스 풍) */
             {
                 char m[2]; m[1] = 0;
                 m[0] = nd->expanded ? '-' : '+';
-                cli_str(2 + indent, row_y + 1, fg, 1, m);
+                cli_str(inner_x0 + 2 + indent, row_y + 1, fg, 1, m);
             }
             if (avail < 1) avail = 1;
             n = trunc_to_cols(tmp, bn, avail);
-            cli_str(2 + indent + 16, row_y + 1, fg, n, tmp);
+            cli_str(inner_x0 + 2 + indent + 12, row_y + 1, fg, n, tmp);
         }
     }
-    /* splitter */
-    cli_box(G.tree_w, top, G.tree_w + SPLIT_W - 1, bot - 1, COL_GRAY);
+    /* splitter — raised vertical bar */
+    {
+        int sx0 = G.tree_w, sx1 = G.tree_w + SPLIT_W - 1;
+        cli_box(sx0, top, sx1, bot - 1, COL_CHROME);
+        cli_box(sx0,     top, sx0,     bot - 1, COL_WHITE);
+        cli_box(sx1,     top, sx1,     bot - 1, COL_DGRAY);
+    }
 }
 
 static void draw_list(void)
 {
     int top = mid_top(), bot = mid_bot();
-    int x0 = G.tree_w + SPLIT_W, x1 = G.cw - 1;
-    int rows = rows_visible();
-    int max_cols;
+    int pane_x0 = G.tree_w + SPLIT_W;
+    int pane_x1 = G.cw - 1;
+    /* sunken textbox 안쪽에 헤더 + row 들 */
+    int outer_x0 = pane_x0 + 2, outer_y0 = top + 2;
+    int outer_x1 = pane_x1 - 2, outer_y1 = bot - 3;
+    int inner_x0 = outer_x0 + 2, inner_y0 = outer_y0 + 2;
+    int inner_x1 = outer_x1 - 2, inner_y1 = outer_y1 - 2;
+    int row_w = inner_x1 - inner_x0 + 1;
+    int header_y = inner_y0;
+    int header_h = ROW_H;
+    int rows;
     int r, i;
+    int size_col_x;
+    int show_size;
 
+    /* 바깥 chrome + sunken 베벨 */
+    cli_box(pane_x0, top, pane_x1, bot - 1, COL_CHROME);
+    bevel_sunken2(outer_x0, outer_y0, outer_x1, outer_y1, COL_BG);
+
+    show_size = (row_w >= 18 * 8);
+    /* size 컬럼 위치: 우측 끝에서 8 글자 폭 (+ 4 px 패딩). */
+    size_col_x = inner_x1 - 8 * 8 + 1;
+
+    /* 헤더 (raised) */
+    bevel_raised(inner_x0, header_y, inner_x1, header_y + header_h - 1, COL_CHROME);
+    cli_str(inner_x0 + 4, header_y + 2, COL_TEXT, 4, "Name");
+    if (show_size) {
+        cli_str(size_col_x, header_y + 2, COL_TEXT, 4, "Size");
+    }
+
+    /* row 영역 */
+    rows = (inner_y1 - (header_y + header_h) + 1) / ROW_H;
     if (G.files_sel < G.files_top) G.files_top = G.files_sel;
     if (G.files_sel >= G.files_top + rows) G.files_top = G.files_sel - rows + 1;
     if (G.files_top < 0) G.files_top = 0;
 
-    cli_box(x0, top, x1, bot - 1, COL_BG);
-    max_cols = (x1 - x0 - 4) / 8;
-    /* 헤더 (간단히) */
-    if (rows > 0) {
-        cli_box(x0, top, x1, top + ROW_H - 1, COL_GRAY);
-        cli_str(x0 + 4, top + 1, COL_TEXT, 4, "Name");
-        if (max_cols > 18) {
-            cli_str(x0 + 4 + (max_cols - 8) * 8, top + 1, COL_TEXT,
-                    4, "Size");
-        }
-    }
-    for (r = 1; r < rows; r++) {
-        i = G.files_top + (r - 1);
+    for (r = 0; r < rows; r++) {
+        i = G.files_top + r;
         if (i >= G.files_count) break;
         {
             struct BX_DIRINFO *ent = &G.files[i];
-            int row_y = top + r * ROW_H;
+            int row_y = header_y + header_h + r * ROW_H;
             int sel = (i == G.files_sel);
             int sel_col = (G.focus == FOCUS_LIST) ? COL_SEL_FOC : COL_SEL_NOF;
             int isdir = (ent->attr & 0x10) != 0;
@@ -524,16 +614,16 @@ static void draw_list(void)
             int n;
             char sz[16];
             if (sel) {
-                cli_box(x0, row_y, x1, row_y + ROW_H - 1, sel_col);
+                cli_box(inner_x0, row_y,
+                        inner_x1, row_y + ROW_H - 1, sel_col);
             }
             n = trunc_to_cols(nm, ent->name, 12);
-            cli_str(x0 + 4, row_y + 1, fg, n, nm);
+            cli_str(inner_x0 + 4, row_y + 1, fg, n, nm);
             if (isdir) {
-                cli_str(x0 + 4 + 13 * 8, row_y + 1, fg, 5, "<DIR>");
-            } else if (max_cols > 18) {
+                cli_str(inner_x0 + 4 + 13 * 8, row_y + 1, fg, 5, "<DIR>");
+            } else if (show_size) {
                 int_to_str(ent->size, sz);
-                cli_str(x0 + 4 + (max_cols - 8) * 8, row_y + 1,
-                        fg, s_len(sz), sz);
+                cli_str(size_col_x, row_y + 1, fg, s_len(sz), sz);
             }
         }
     }

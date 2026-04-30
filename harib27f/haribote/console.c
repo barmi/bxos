@@ -1633,7 +1633,16 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		sht->flags |= 0x10;	/* 어플리케이션이 만든 윈도우           */
 		sht->flags &= ~SHEET_FLAG_RESIZABLE; /* 앱 buffer 고정크기 → 리사이즈 금지 */
 		sheet_setbuf(sht, (char *) ebx + ds_base, esi, edi, eax);
-		make_window8((char *) ebx + ds_base, esi, edi, (char *) ecx + ds_base, 0);
+		/* work4 Phase 3: title 을 sheet 에 캐시. api_resizewin 시 frame 재그리기. */
+		{
+			char *ut = (char *) ecx + ds_base;
+			int t;
+			for (t = 0; t < (int) sizeof sht->title - 1 && ut[t] != 0; t++) {
+				sht->title[t] = ut[t];
+			}
+			sht->title[t] = 0;
+		}
+		make_window8((char *) ebx + ds_base, esi, edi, sht->title, 0);
 		sheet_slide(sht, ((shtctl->xsize - esi) / 2) & ~3, (shtctl->ysize - edi) / 2);
 		sheet_updown(sht, shtctl->top); /* 지금의 마우스와 같은 높이가 되도록 지정： 마우스는 이 위가 된다 */
 		reg[7] = (int) sht;
@@ -2053,14 +2062,22 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		}
 	} else if (edx == 41) {
 		// api_resizewin(win, new_buf, new_w, new_h, col_inv) → 0/-1
-		// 호출자가 새 buffer 를 미리 그려서 (frame, 배경 포함) 넘긴다.
-		// sheet_resize 가 buf/bxsize/bysize 를 교체하고 다시 그린다.
-		// 이전 buf 의 free 책임은 호출자 (앱) 에 있다.
+		// 앱이 새 buffer 를 alloc 해서 넘기고, 커널이 frame(make_window8)을
+		// 새 buffer 에 다시 그린 뒤 sheet_resize 로 교체한다. 앱은 이후
+		// client area 만 redraw 하면 된다. 이전 buf 의 free 는 앱 책임.
 		struct SHEET *rsht = (struct SHEET *) (ebx & 0xfffffffe);
 		char *new_buf = (char *) ecx + ds_base;
 		reg[7] = -1;
 		if (rsht != 0 && (rsht->flags & SHEET_FLAG_USE) != 0 &&
 				rsht->task == task && esi > 0 && edi > 0) {
+			/* App window (frame=make_window8) 이면 새 buffer 에도 frame 을
+			 * 다시 그려준다. 그 외 종류(콘솔/디버그)는 호출자 자신이 frame 처리. */
+			if ((rsht->flags & SHEET_FLAG_APP_WIN) != 0) {
+				make_window8((unsigned char *) new_buf, esi, edi,
+						rsht->title,
+						(shtctl->top >= 0 &&
+								shtctl->sheets[shtctl->top] == rsht) ? 1 : 0);
+			}
 			sheet_resize(rsht, (unsigned char *) new_buf, esi, edi);
 			rsht->col_inv = eax;
 			reg[7] = 0;
