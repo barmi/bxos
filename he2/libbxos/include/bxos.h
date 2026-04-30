@@ -80,6 +80,30 @@ int   api_rmdir(const char *path);                            /* 0/<0       */
 int   api_rename(const char *oldpath, const char *newpath);   /* 0/<0       */
 int   api_exec(const char *path, int flags);                  /* 0/<0       */
 
+/* ---- window events / resize (work4 Phase 2) ------------------------------ */
+struct BX_EVENT {
+    int type;
+    int win;
+    int x, y;
+    int button;
+    int key;
+    int w, h;
+};
+#define BX_EVENT_KEY            1
+#define BX_EVENT_MOUSE_DOWN     2
+#define BX_EVENT_MOUSE_UP       3
+#define BX_EVENT_MOUSE_MOVE     4
+#define BX_EVENT_MOUSE_DBLCLK   5
+#define BX_EVENT_RESIZE         6
+
+#define BX_WIN_EV_MOUSE         0x01
+#define BX_WIN_EV_RESIZE        0x02
+#define BX_WIN_EV_DBLCLK        0x04
+
+int   api_getevent(struct BX_EVENT *out, int mode);
+int   api_resizewin(int win, char *new_buf, int new_w, int new_h, int col_inv);
+int   api_set_winevent(int win, int flags);
+
 /* ---- window events / resize (work4 Phase 2) ----------------------------- */
 struct BX_EVENT {
     int type;

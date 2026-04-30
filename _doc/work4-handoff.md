@@ -12,9 +12,9 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
 
 ## 2. 현재 위치 (2026-04-30 기준)
 
-- work4 는 **Phase 0~2 구현 완료, QEMU smoke 대기 → Phase 3 explorer 본 구현 진입 직전** 단계다.
-- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 §3 Phase 0 마지막, Phase 1/2 구현 노트는 각 phase 끝에 있다.
-- 이 handoff 문서는 다음 세션이 바로 Phase 3 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- work4 는 **Phase 0~3 구현 완료, QEMU smoke 대기 → Phase 4 (resize 대응 layout polish) 진입 직전** 단계다.
+- [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 §3 Phase 0 마지막, Phase 1/2/3 구현 노트는 각 phase 끝에 있다.
+- 이 handoff 문서는 다음 세션이 바로 Phase 4 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
 - Phase 0 에서 잠근 핵심:
   - syscall 번호 32~39 (파일관리), 40~43 (윈도우 이벤트/리사이즈) 확정.
   - 사용자 구조체 `BX_DIRINFO`, `BX_EVENT` 필드 확정 (필드 추가는 가능, 의미 보존).
@@ -132,10 +132,8 @@ struct BX_EVENT {
 | 0. 요구사항 / 인터페이스 확정 ☑ | 0.5d | 2-pane UI, mouse/resize, syscall 번호 확정 (2026-04-29 완료) |
 | 1. 커널 디렉터리 API / 파일관리 syscall ☑ | 2d | `api_opendir`~`api_exec` (edx 32~39), libbxos wrapper, lsdir 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 2. 앱 윈도우 mouse / resize event API ☑ | 2d | `api_getevent`/`api_resizewin`/`api_set_winevent` (edx 40~42), `BX_EVENT` 큐 + fifo wakeup marker, evtest 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
-| 1. 커널 디렉터리 API / 파일관리 syscall | 2d | `api_opendir`~`api_exec`, libbxos wrapper |
-| 2. 앱 윈도우 mouse / resize event API | 2d | `api_getevent`, `api_resizewin`, app client mouse event |
-| 3. 2-pane explorer 읽기 전용 MVP | 2d | toolbar/tree/list/status, keyboard+mouse selection |
-| 4. 리사이즈 대응 레이아웃 | 1.5d | 비율 기반 layout, splitter ratio 유지, redraw |
+| 3. 2-pane explorer 읽기 전용 MVP ☑ | 2d | `EXPLORER.HE2`, toolbar/tree/list/status, keyboard+mouse selection, lazy expand, resize 대응 (2026-04-30 코드 완료, QEMU smoke 대기) |
+| 4. 리사이즈 대응 레이아웃 polish | 1.5d | splitter drag, 비율 보존, 긴 path/text 잘라쓰기 |
 | 5. 파일 열기 / 앱 실행 / preview | 1.5d | `.HE2` 실행, text/raw preview |
 | 6. 파일관리 동작 | 2d | mkdir, delete, rename/move |
 | 7. UI polish / 오류 처리 | 1d | 긴 목록, 긴 path, mouse/keyboard focus 안정화 |
@@ -183,22 +181,21 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
-Phase 0/1/2 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 3 explorer MVP 로 진입한다.
+Phase 0~3 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 4 (resize layout polish) 로 진입한다.
 
 1. `git status --short` 로 현재 작업트리 확인.
-2. **Phase 1/2 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
+2. **Phase 1/2/3 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
    - Phase 1: `lsdir /` 가 root entries 끝까지 출력. `lsdir /sub` (mkdir /sub 후 진입) 정상. 회귀: `dir /`, `mkdir/rmdir`, `cd`, `pwd`, `type hangul.utf` 변화 없음.
    - Phase 2: `start evtest` 후 client click → 점/박스 표시. drag → 점선. 우하단 모서리 drag-release → 새 크기로 frame 재배치. 회귀: tetris 키보드 입력, title bar drag, 콘솔 resize 동작 변화 없음.
-3. **Phase 3 진입 — explorer 2-pane 읽기 전용 MVP**:
-   - work4.md §3 Phase 3 참조.
-   - [harib27f/explorer/explorer.c](../harib27f/explorer/explorer.c) 신규 (HE2 window subsystem 앱).
-   - 시작 경로 처리: `api_cmdline` 인자 우선, 없으면 `api_getcwd`.
-   - `api_set_winevent(win, BX_WIN_EV_MOUSE | BX_WIN_EV_RESIZE)` 호출 후 `api_getevent` 단일 stream 으로 키/마우스/리사이즈 처리.
-   - `api_opendir/readdir/closedir` 로 entries 수집, 정렬 (디렉터리 우선 + 이름순).
-   - 2-pane 레이아웃: toolbar(고정 24px), 왼쪽 tree (30~35% 폭, 최소 96px), splitter (4~6px), 오른쪽 file list, 하단 status (16~20px).
-   - 키보드: ↑↓←→ Enter Backspace Tab r q. 마우스: tree/list click selection, double-click open (앱 내부 시간/좌표 판정).
-   - CMake `BXOS_HE2_APPS_WINDOW` 에 `explorer` 추가하면 `EXPLORER.HE2` 가 data.img 에 자동 포함.
-4. Phase 3 가 끝나면 Phase 4 (resize 대응 layout 함수 분리) 로 진입한다.
+   - Phase 3: `explorer` 실행 시 왼쪽 tree(`/` + 자식들), 오른쪽 file list. ↑↓/Tab/Enter/`r`/`q` 키보드 동작. row click 선택, 같은 row 재click → open(tree expand 또는 list dir 진입). `mkdir /sub` → `explorer /sub` 시 chain expand.
+3. **Phase 4 진입 — resize 대응 layout polish**:
+   - work4.md §3 Phase 4 참조.
+   - 현재 explorer.c 의 `compute_layout()` 은 첫 호출 때 tree_w 를 비율로 잡고 그 후엔 보존한다. resize 시 비율 보존 로직 보강 필요 (현 코드는 한 번 잡힌 절대값 유지).
+   - splitter drag: `BX_EVENT_MOUSE_DOWN` 이 splitter 영역(`G.tree_w ≤ cx < G.tree_w + SPLIT_W`)에 떨어지면 capture 모드 진입 → `MOUSE_MOVE` 동안 `tree_w` 갱신 + redraw → `MOUSE_UP` 으로 종료. `api_capturemouse` 가 없으므로 drag 중 release 를 놓치면 다음 click 으로 풀리도록 안전장치(예: 새 click 시 무조건 capture 종료) 둠.
+   - 긴 path/이름 잘라쓰기: 현재 `trunc_to_cols` 는 끝부분 ".." 만 지원. 가운데 줄임 또는 path 압축 (예: `/a/b/.../zzz/file`) 추가 검토.
+   - resize 시 `redraw_all()` 이 frame 도 다시 그리는지 확인. 현재는 client area 만 칠하고 frame 은 `make_window8` 가 처음 한 번 그린 그대로 유지된다 — `api_resizewin` 이 sheet_resize 후 새 영역을 col_inv(=-1) 로 채우므로 frame 도 다시 그려야 함. 필요하면 explorer 가 `api_boxfilwin` 으로 frame 색을 직접 칠한다.
+   - 검증: 창을 크게/작게 20회 이상 반복 후에도 멈춤/메모리 오염 없음.
+4. Phase 4 끝나면 Phase 5 (`.HE2` 실행 + preview), Phase 6 (mkdir/rmdir/rename/delete) 순서로 진행.
 
 ## 9. 함정으로 미리 알아둘 것
 

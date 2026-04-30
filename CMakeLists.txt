@@ -275,6 +275,7 @@ set(BXOS_HE2_APPS_WINDOW
     color color2 noodle
     tetris
     evtest
+    explorer
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")
