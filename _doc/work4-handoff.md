@@ -10,18 +10,18 @@ work1 (쓰기 가능 FAT16 + OS/앱 분리) → work2 (서브디렉터리 / cwd 
 
 BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색기 앱 `explorer.he2`** 를 추가한다. 왼쪽에는 디렉터리 트리, 오른쪽에는 파일 목록을 표시하고, 상단에는 메뉴/아이콘 바를 배치한다. 창 크기 변경 시 tree/list/status 영역이 비율에 맞게 재배치되어야 한다.
 
-## 2. 현재 위치 (2026-04-30 기준)
+## 2. 현재 위치 (2026-05-01 기준)
 
-- work4 는 **Phase 0~4 구현 완료, QEMU smoke 대기 → Phase 5 (파일 열기 / 앱 실행 / preview) 진입 직전** 단계다.
+- work4 는 **Phase 0~5 구현 완료, QEMU smoke 대기 → Phase 6 (파일관리 동작) 진입 직전** 단계다.
 - [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 §3 Phase 0 마지막, Phase 1/2/3 구현 노트는 각 phase 끝에 있다.
-- 이 handoff 문서는 다음 세션이 바로 Phase 5 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
+- 이 handoff 문서는 다음 세션이 QEMU smoke 를 거쳐 바로 Phase 6 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
 - Phase 0 에서 잠근 핵심:
   - syscall 번호 32~39 (파일관리), 40~43 (윈도우 이벤트/리사이즈) 확정.
   - 사용자 구조체 `BX_DIRINFO`, `BX_EVENT` 필드 확정 (필드 추가는 가능, 의미 보존).
   - explorer MVP 범위, 기본/최소 창 크기, tree 폭 정책, Enter/double-click 분기, `api_exec` cwd 상속 정책 확정.
   - work2 §161 의 “`api_mkdir`/`api_rmdir` 미도입” 결정을 의도적으로 뒤집음(콘솔 built-in 은 유지하면서 사용자 syscall 만 추가).
   - app window resize opt-in 정책(`api_set_winevent` flags + 앱 buffer 교체 절차) 을 work4.md Phase 2 머리에 메모로 기록.
-  - Phase 4까지의 후속 결정: double-click 판정은 현재 앱 측 같은-row 재click, `api_capturemouse` 대신 edx=43 `api_setcursor(shape)` 도입, `api_rename` 은 같은 부모 file/dir rename 지원(cross-parent move 는 -2).
+  - Phase 5까지의 후속 결정: double-click 판정은 현재 앱 측 같은-row 재click, `api_capturemouse` 대신 edx=43 `api_setcursor(shape)` 도입, `api_rename` 은 같은 부모 file/dir rename 지원(cross-parent move 는 -2), preview 는 list pane 재사용, toolbar Back/Up/Refresh slot 은 Phase 5 에서 연결하지 않고 keyboard 동작을 유지.
 - 현재 코드 상태에서 가능한 것:
   - 콘솔에서 `dir`, `cd`, `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `type` 가능.
   - HE2 앱에서 파일 read/write/delete 가능.
@@ -30,9 +30,10 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
   - HE2 앱에서 디렉터리 열람, stat, mkdir/rmdir/rename, 앱 실행 syscall 호출 가능.
   - HE2 window 앱에서 mouse/resize event 수신 가능.
   - `explorer.he2` 가 2-pane tree/list UI, 키보드/마우스 선택, live resize layout, splitter drag, pane scrollbar 를 제공.
+  - explorer list Enter/Right 와 list double-click 으로 directory 진입, `.HE2` 실행, text/hex preview 진입 가능.
+  - preview mode 에서 ESC/Backspace/Enter/Left 로 목록 복귀, Up/Down 및 preview scrollbar 로 preview scroll 가능.
+  - `api_exec(path, 0)` 는 실행 파일의 부모 디렉터리를 새 앱 cwd 로 설정하고 basename 만 command fifo 에 주입.
 - 현재 코드 상태에서 부족한 것:
-  - explorer 에서 `.HE2` 실행 동작 연결 전.
-  - explorer preview mode 전.
   - explorer 내부 mkdir/delete/rename 입력 UI 전.
   - 긴 목록 paging/scroll polish 전.
 
@@ -135,7 +136,7 @@ struct BX_EVENT {
 | 2. 앱 윈도우 mouse / resize event API ☑ | 2d | `api_getevent`/`api_resizewin`/`api_set_winevent` (edx 40~42), `BX_EVENT` 큐 + fifo wakeup marker, evtest 검증앱 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 3. 2-pane explorer 읽기 전용 MVP ☑ | 2d | `EXPLORER.HE2`, toolbar/tree/list/status, keyboard+mouse selection, lazy expand, resize 대응 (2026-04-30 코드 완료, QEMU smoke 대기) |
 | 4. 리사이즈 대응 레이아웃 polish ☑ | 1.5d | `layout_compute` rect 산출, live app resize, splitter drag/cursor, tree/list scrollbar, tree ratio 보존, 긴 path/text 잘라쓰기 (2026-04-30 코드 완료, QEMU smoke 대기) |
-| 5. 파일 열기 / 앱 실행 / preview | 1.5d | `.HE2` 실행, text/raw preview |
+| 5. 파일 열기 / 앱 실행 / preview ☑ | 1.5d | `.HE2` 실행, text/hex preview, 실행 cwd 보정 (2026-05-01 코드 완료, QEMU smoke 대기) |
 | 6. 파일관리 동작 | 2d | mkdir, delete, rename/move |
 | 7. UI polish / 오류 처리 | 1d | 긴 목록, 긴 path, mouse/keyboard focus 안정화 |
 | 8. 문서 / 회귀 검증 | 1d | BXOS-COMMANDS/README/SETUP 갱신, clean build, QEMU smoke |
@@ -182,21 +183,21 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
-Phase 0~4 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 5 (`.HE2` 실행 + preview) 로 진입한다.
+Phase 0~5 는 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 6 (mkdir/delete/rename) 으로 진입한다.
 
 1. `git status --short` 로 현재 작업트리 확인.
-2. **Phase 1~4 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
+2. **Phase 1~5 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
    - Phase 1: `lsdir /` 가 root entries 끝까지 출력. `lsdir /sub` (mkdir /sub 후 진입) 정상. 회귀: `dir /`, `mkdir/rmdir`, `cd`, `pwd`, `type hangul.utf` 변화 없음.
    - Phase 2: `start evtest` 후 client click → 점/박스 표시. drag → 점선. 우하단 모서리 drag-release → 새 크기로 frame 재배치. 회귀: tetris 키보드 입력, title bar drag, 콘솔 resize 동작 변화 없음.
    - Phase 3: `explorer` 실행 시 왼쪽 tree(`/` + 자식들), 오른쪽 file list. ↑↓/Tab/Enter/`r`/`q` 키보드 동작. row click 선택, 같은 row 재click → open(tree expand 또는 list dir 진입). `mkdir /sub` → `explorer /sub` 시 chain expand.
    - Phase 4: splitter drag 로 tree/list 폭 변경. splitter hover 에서 좌우 resize 커서가 보이는지 확인. 창을 크게/작게 resize 하는 동안 explorer layout 이 즉시 따라오는지 확인. console/explorer 의 resize edge 에 hover 할 때 방향별 resize 커서가 보이는지 확인. tree/list 항목이 표시 영역보다 많을 때 scrollbar thumb drag/track click 이 동작하는지 확인. 최소 크기에서 toolbar/path/status/list text 가 겹치지 않는지 확인. resize 20회 반복.
-3. **Phase 5 진입 — 파일 열기 / 앱 실행 / preview**:
-   - work4.md §3 Phase 5 참조.
-   - `on_key()` 의 list Enter/Right 경로와 `on_mouse_down()` 의 list 같은-row 재click 경로를 공통 `open_selected_file()` 류 helper 로 묶는다.
-   - 디렉터리는 기존 `enter_dir_path()` 유지, `.HE2` 파일은 `api_exec(selected_path, 0)` 로 실행, 그 외 파일은 preview mode 로 전환한다.
-   - preview mode 는 우선 같은 창의 list 영역을 재사용해 text/hex lines 를 그리면 된다. ESC/Backspace 로 목록으로 복귀.
-   - 실행 실패와 preview read 실패는 status bar 에 표시하고 list/tree state 를 유지한다.
-4. Phase 5 끝나면 Phase 6 (mkdir/rmdir/rename/delete), Phase 7 (긴 목록/오류 처리), Phase 8 (문서/회귀 검증) 순서로 진행.
+   - Phase 5: `explorer` 에서 `TETRIS.HE2` 선택 후 Enter/double-click 실행. `explorer /sub` 에서 `pwd.he2` 또는 검증 앱이 `/sub` 를 cwd 로 보는지 확인. `HANGUL.UTF` preview, 큰 파일 truncation status, binary size/cluster + hex preview, preview scrollbar, ESC/Backspace 목록 복귀 확인.
+3. **Phase 6 진입 — 파일관리 동작**:
+   - work4.md §3 Phase 6 참조.
+   - `n` 또는 toolbar New 로 새 디렉터리 생성 입력 UI 를 붙이고 `api_mkdir(current_path/name)` 을 호출한다.
+   - `d` 또는 toolbar Delete 는 선택 항목 삭제 전 confirm 을 거친다. 파일은 `api_fdelete`, 디렉터리는 `api_rmdir` 를 사용한다.
+   - `m` 또는 toolbar Rename 은 새 이름 입력 후 `api_rename` 을 호출하고 tree/file list reload 및 selection 보정을 수행한다.
+4. Phase 6 끝나면 Phase 7 (긴 목록/오류 처리), Phase 8 (문서/회귀 검증) 순서로 진행.
 
 ## 9. 함정으로 미리 알아둘 것
 

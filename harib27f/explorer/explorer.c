@@ -1,4 +1,4 @@
-/* explorer.c — BxOS work4 Phase 3: 2-pane 파일 탐색기 (읽기 전용 MVP).
+/* explorer.c — BxOS work4: 2-pane 파일 탐색기.
  *
  *   상단    : toolbar placeholder + 현재 path 표시
  *   왼쪽    : directory tree (lazy expand)
@@ -10,7 +10,7 @@
  *   ↑/↓    selection 이동
  *   ← / Backspace   부모 디렉터리(트리) / collapse
  *   →      tree 노드 expand (또는 file list 진입)
- *   Enter  디렉터리 진입 / 그 외 항목은 status 표시 (Phase 5 에서 preview/exec)
+ *   Enter  디렉터리 진입 / .HE2 실행 / 파일 preview
  *   Tab    tree ↔ list focus 전환
  *   r      현재 디렉터리 reload
  *   q      종료
@@ -27,6 +27,7 @@
 #define MAX_TREE_NODES   256
 #define MAX_FILES        256
 #define MAX_PATH         128
+#define PREVIEW_MAX      1024
 
 #define WIN_W_DEF        420
 #define WIN_H_DEF        280
@@ -84,6 +85,9 @@
 #define SCROLL_NONE      0
 #define SCROLL_TREE      1
 #define SCROLL_LIST      2
+#define SCROLL_PREVIEW   3
+#define MODE_LIST        0
+#define MODE_PREVIEW     1
 
 /* ---- 상태 ----------------------------------------------------------------- */
 
@@ -126,6 +130,15 @@ struct AppState {
     int  files_sel;
     int  files_top;
 
+    int  mode;
+    char preview_path[MAX_PATH];
+    char preview_buf[PREVIEW_MAX + 1];
+    int  preview_len;
+    int  preview_size;
+    int  preview_trunc;
+    int  preview_binary;
+    int  preview_top;
+
     int  focus;
     char status[80];
     int  status_err;
@@ -141,6 +154,7 @@ struct AppState {
 };
 
 static struct AppState G;
+static int preview_text_line_count(void);
 
 /* ---- 일반 유틸 ------------------------------------------------------------ */
 
@@ -248,6 +262,39 @@ static int is_dot_or_dotdot(const char *name)
 {
     return name[0] == '.' &&
             (name[1] == 0 || (name[1] == '.' && name[2] == 0));
+}
+
+static int has_he2_ext(const char *name)
+{
+    int n = s_len(name);
+    if (n < 4) return 0;
+    return name[n - 4] == '.' && name[n - 3] == 'H' &&
+            name[n - 2] == 'E' && name[n - 1] == '2';
+}
+
+static void append_text(char *dst, int max, const char *src)
+{
+    int i = s_len(dst), j;
+    for (j = 0; src[j] != 0 && i < max - 1; j++) dst[i++] = src[j];
+    dst[i] = 0;
+}
+
+static char hex_digit(int v)
+{
+    v &= 15;
+    return (v < 10) ? ('0' + v) : ('A' + v - 10);
+}
+
+static int is_binary_preview(const char *buf, int len)
+{
+    int i, ctrl = 0;
+    if (len == 0) return 0;
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char) buf[i];
+        if (c == 0) return 1;
+        if (c < 32 && c != '\n' && c != '\r' && c != '\t') ctrl++;
+    }
+    return ctrl > len / 20;
 }
 
 /* ---- 파일 목록 --------------------------------------------------------- */
@@ -632,6 +679,17 @@ static int list_visible_rows(void)
     return rows < 0 ? 0 : rows;
 }
 
+static int preview_visible_rows(void)
+{
+    return list_visible_rows();
+}
+
+static int preview_total_lines(void)
+{
+    if (G.preview_binary) return (G.preview_len + 7) / 8;
+    return preview_text_line_count();
+}
+
 static void ensure_tree_sel_visible(void)
 {
     int rows = tree_visible_rows();
@@ -909,12 +967,134 @@ static void draw_list(void)
     }
 }
 
+static int preview_line_pos(int target)
+{
+    int pos = 0, line = 0;
+    while (pos < G.preview_len && line < target) {
+        unsigned char c = (unsigned char) G.preview_buf[pos++];
+        if (c == '\n') line++;
+    }
+    return pos;
+}
+
+static int preview_text_line(char *out, int max, int line_no)
+{
+    int pos = preview_line_pos(line_no);
+    int n = 0;
+    while (pos < G.preview_len && n < max - 1) {
+        unsigned char c = (unsigned char) G.preview_buf[pos++];
+        if (c == '\n') break;
+        if (c == '\r') continue;
+        if (c == '\t') c = ' ';
+        if (c < 32) c = '.';
+        out[n++] = (char) c;
+    }
+    out[n] = 0;
+    return n;
+}
+
+static int preview_text_line_count(void)
+{
+    int pos, lines = 1;
+    if (G.preview_len <= 0) return 0;
+    for (pos = 0; pos < G.preview_len; pos++)
+        if (G.preview_buf[pos] == '\n') lines++;
+    return lines;
+}
+
+static void preview_hex_line(char *out, int max, int offset)
+{
+    int i, p = 0;
+    if (max < 8) { out[0] = 0; return; }
+    out[p++] = hex_digit(offset >> 12);
+    out[p++] = hex_digit(offset >> 8);
+    out[p++] = hex_digit(offset >> 4);
+    out[p++] = hex_digit(offset);
+    out[p++] = ':';
+    out[p++] = ' ';
+    for (i = 0; i < 8 && offset + i < G.preview_len && p < max - 4; i++) {
+        unsigned char c = (unsigned char) G.preview_buf[offset + i];
+        out[p++] = hex_digit(c >> 4);
+        out[p++] = hex_digit(c);
+        out[p++] = ' ';
+    }
+    while (i++ < 8 && p < max - 4) {
+        out[p++] = ' ';
+        out[p++] = ' ';
+        out[p++] = ' ';
+    }
+    out[p++] = ' ';
+    for (i = 0; i < 8 && offset + i < G.preview_len && p < max - 1; i++) {
+        unsigned char c = (unsigned char) G.preview_buf[offset + i];
+        out[p++] = (c >= 32 && c < 127) ? (char) c : '.';
+    }
+    out[p] = 0;
+}
+
+static void draw_preview(void)
+{
+    int top = mid_top(), bot = mid_bot();
+    int pane_x0 = G.layout.list.x;
+    int pane_x1 = G.layout.list.x + G.layout.list.w - 1;
+    int outer_x0 = pane_x0 + 2, outer_y0 = top + 2;
+    int outer_x1 = pane_x1 - 2, outer_y1 = bot - 3;
+    int inner_x0 = outer_x0 + 2, inner_y0 = outer_y0 + 2;
+    int inner_x1 = outer_x1 - 2, inner_y1 = outer_y1 - 2;
+    int header_h = ROW_H;
+    int rows = (inner_y1 - (inner_y0 + header_h) + 1) / ROW_H;
+    int cols = (inner_x1 - inner_x0 - 8) / 8;
+    int r, total;
+    char line[80];
+    char path[64];
+    if (cols > 79) cols = 79;
+    if (cols < 1) cols = 1;
+
+    cli_box(pane_x0, top, pane_x1, bot - 1, COL_CHROME);
+    bevel_sunken2(outer_x0, outer_y0, outer_x1, outer_y1, COL_BG);
+
+    bevel_raised(inner_x0, inner_y0, inner_x1, inner_y0 + header_h - 1, COL_CHROME);
+    trunc_path_to_cols(path, G.preview_path, (inner_x1 - inner_x0 - 72) / 8, sizeof path);
+    s_cpy(line, G.preview_binary ? "Hex: " : "Text: ", sizeof line);
+    append_text(line, sizeof line, path);
+    cli_str(inner_x0 + 4, inner_y0 + 2, COL_TEXT,
+            trunc_to_cols(path, line, cols, sizeof path), path);
+
+    if (G.preview_binary) {
+        total = (G.preview_len + 7) / 8;
+        if (G.preview_top > total - rows) G.preview_top = total - rows;
+        if (G.preview_top < 0) G.preview_top = 0;
+        for (r = 0; r < rows; r++) {
+            int line_no = G.preview_top + r;
+            if (line_no >= total) break;
+            preview_hex_line(line, sizeof line, line_no * 8);
+            cli_str(inner_x0 + 4, inner_y0 + header_h + r * ROW_H + 1,
+                    COL_TEXT, trunc_to_cols(path, line, cols, sizeof path), path);
+        }
+        draw_scrollbar(inner_x1 - SCROLL_W + 1, inner_y0 + header_h,
+                inner_y1 - (inner_y0 + header_h) + 1, G.preview_top, total, rows);
+    } else {
+        total = preview_text_line_count();
+        if (G.preview_top > total - rows) G.preview_top = total - rows;
+        if (G.preview_top < 0) G.preview_top = 0;
+        for (r = 0; r < rows; r++) {
+            int line_no = G.preview_top + r;
+            if (line_no >= total) break;
+            preview_text_line(line, sizeof line, line_no);
+            cli_str(inner_x0 + 4, inner_y0 + header_h + r * ROW_H + 1,
+                    COL_TEXT, trunc_to_cols(path, line, cols, sizeof path), path);
+        }
+        draw_scrollbar(inner_x1 - SCROLL_W + 1, inner_y0 + header_h,
+                inner_y1 - (inner_y0 + header_h) + 1, G.preview_top, total, rows);
+    }
+}
+
 static void redraw_all(void)
 {
     /* 외곽 frame 은 make_window8 가 이미 그림. client 영역 재칠.            */
     draw_toolbar();
     draw_tree();
-    draw_list();
+    if (G.mode == MODE_PREVIEW) draw_preview();
+    else                        draw_list();
     draw_status();
     cli_refresh(0, 0, G.cw, G.ch);
 }
@@ -960,11 +1140,104 @@ static void enter_dir_path(const char *path)
     update_files_for_selection();
 }
 
+static void leave_preview(void)
+{
+    G.mode = MODE_LIST;
+    G.preview_len = 0;
+    G.preview_top = 0;
+    status_set("back to list", 0);
+}
+
+static void load_preview(const char *path, const struct BX_DIRINFO *ent)
+{
+    int h, n, want;
+    char num[12];
+    h = api_fopen((char *) path);
+    if (h == 0) {
+        status_set("preview open failed", 1);
+        return;
+    }
+    G.preview_size = api_fsize(h, 0);
+    want = G.preview_size;
+    if (want > PREVIEW_MAX) want = PREVIEW_MAX;
+    n = api_fread(G.preview_buf, want, h);
+    api_fclose(h);
+    if (n < 0) n = 0;
+    G.preview_len = n;
+    G.preview_buf[n] = 0;
+    G.preview_trunc = (G.preview_size > n);
+    G.preview_binary = is_binary_preview(G.preview_buf, n);
+    G.preview_top = 0;
+    G.mode = MODE_PREVIEW;
+    s_cpy(G.preview_path, path, sizeof G.preview_path);
+    s_cpy(G.status, G.preview_binary ? "binary preview: " : "preview: ",
+            sizeof G.status);
+    append_text(G.status, sizeof G.status, ent->name);
+    append_text(G.status, sizeof G.status, " ");
+    int_to_str((unsigned int) G.preview_size, num);
+    append_text(G.status, sizeof G.status, num);
+    append_text(G.status, sizeof G.status, "B");
+    if (G.preview_binary) {
+        append_text(G.status, sizeof G.status, " clus ");
+        int_to_str(ent->clustno, num);
+        append_text(G.status, sizeof G.status, num);
+    }
+    if (G.preview_trunc) append_text(G.status, sizeof G.status, " (truncated)");
+    G.status_err = 0;
+}
+
+static void open_selected_file(void)
+{
+    struct BX_DIRINFO *e;
+    char child[MAX_PATH];
+    int r;
+    if (G.files_count <= 0 || G.files_sel < 0 || G.files_sel >= G.files_count) {
+        status_set("nothing selected", 1);
+        return;
+    }
+    e = &G.files[G.files_sel];
+    path_join(child, G.tree[G.tree_sel].path, e->name);
+    if ((e->attr & 0x10) != 0) {
+        enter_dir_path(child);
+        return;
+    }
+    if (has_he2_ext(e->name)) {
+        r = api_exec(child, 0);
+        if (r == 0) {
+            status_set("launched", 0);
+        } else {
+            status_set("launch failed", 1);
+        }
+        return;
+    }
+    load_preview(child, e);
+}
+
 /* ---- 입력 처리 ---------------------------------------------------------- */
 
 static void on_key(int key)
 {
     char parent[MAX_PATH];
+    if (G.mode == MODE_PREVIEW) {
+        if (key == 'q') {
+            api_closewin(G.win);
+            api_end();
+        }
+        if (key == KEY_ESC || key == KEY_BS || key == KEY_ENTER ||
+                key == KEY_LEFT) {
+            leave_preview();
+            return;
+        }
+        if (key == KEY_UP && G.preview_top > 0) {
+            G.preview_top--;
+            return;
+        }
+        if (key == KEY_DOWN) {
+            G.preview_top++;
+            return;
+        }
+        return;
+    }
     if (key == 'q' || key == KEY_ESC) {
         api_closewin(G.win);
         api_end();
@@ -1024,31 +1297,7 @@ static void on_key(int key)
             path_parent(G.tree[G.tree_sel].path, parent);
             enter_dir_path(parent);
         } else if (key == KEY_ENTER || key == KEY_RIGHT) {
-            if (G.files_count > 0) {
-                struct BX_DIRINFO *e = &G.files[G.files_sel];
-                if ((e->attr & 0x10) != 0) {
-                    char child[MAX_PATH];
-                    path_join(child, G.tree[G.tree_sel].path, e->name);
-                    enter_dir_path(child);
-                } else {
-                    char tmp[80];
-                    int n = s_len(e->name);
-                    if (n > 12) n = 12;
-                    s_cpy(tmp, "open: ", sizeof tmp);
-                    {
-                        int i = s_len(tmp), j;
-                        for (j = 0; j < n && i < (int) sizeof tmp - 1; j++)
-                            tmp[i++] = e->name[j];
-                        if (i < (int) sizeof tmp - 1) tmp[i++] = ' ';
-                        if (i < (int) sizeof tmp - 1) tmp[i++] = '(';
-                        if (i < (int) sizeof tmp - 1) tmp[i++] = 'P';
-                        if (i < (int) sizeof tmp - 1) tmp[i++] = '5';
-                        if (i < (int) sizeof tmp - 1) tmp[i++] = ')';
-                        tmp[i] = 0;
-                    }
-                    status_set(tmp, 0);
-                }
-            }
+            open_selected_file();
         }
     }
 }
@@ -1101,6 +1350,17 @@ static int hit_list_scroll(int cx, int cy)
     return (sx0 <= cx && cx < sx0 + SCROLL_W && sy0 <= cy && cy < r.y + r.h);
 }
 
+static int hit_preview_scroll(int cx, int cy)
+{
+    struct Rect r = list_inner_rect();
+    int rows = preview_visible_rows();
+    int total = preview_total_lines();
+    int sx0 = r.x + r.w - SCROLL_W;
+    int sy0 = r.y + ROW_H;
+    if (rows <= 0 || total <= rows) return 0;
+    return (sx0 <= cx && cx < sx0 + SCROLL_W && sy0 <= cy && cy < r.y + r.h);
+}
+
 static void begin_scroll_drag(int pane, int cy)
 {
     struct Rect r;
@@ -1115,8 +1375,13 @@ static void begin_scroll_drag(int pane, int cy)
     } else {
         r = list_inner_rect();
         rows = (r.h - ROW_H) / ROW_H;
-        count = G.files_count;
-        top = G.files_top;
+        if (pane == SCROLL_PREVIEW) {
+            count = preview_total_lines();
+            top = G.preview_top;
+        } else {
+            count = G.files_count;
+            top = G.files_top;
+        }
         track_y = r.y + ROW_H + 1;
         track_h = r.h - ROW_H - 2;
     }
@@ -1134,7 +1399,8 @@ static void begin_scroll_drag(int pane, int cy)
     }
     top = clamp_int(top, 0, count - rows);
     if (pane == SCROLL_TREE) G.tree_top = top;
-    else                    G.files_top = top;
+    else if (pane == SCROLL_PREVIEW) G.preview_top = top;
+    else                             G.files_top = top;
 }
 
 static void update_scroll_drag(int cy)
@@ -1159,12 +1425,34 @@ static void update_scroll_drag(int cy)
         top = scroll_top_from_y(cy, G.scroll_drag_y, G.scroll_drag_top,
                 count, rows, track_y, track_h);
         G.files_top = top;
+    } else if (G.dragging_scroll == SCROLL_PREVIEW) {
+        r = list_inner_rect();
+        rows = (r.h - ROW_H) / ROW_H;
+        count = preview_total_lines();
+        track_y = r.y + ROW_H + 1;
+        track_h = r.h - ROW_H - 2;
+        top = scroll_top_from_y(cy, G.scroll_drag_y, G.scroll_drag_top,
+                count, rows, track_y, track_h);
+        G.preview_top = top;
     }
 }
 
 static void on_mouse_down(int cx, int cy)
 {
     int pane = hit_pane(cx, cy);
+    if (G.mode == MODE_PREVIEW) {
+        G.dragging_splitter = 0;
+        G.dragging_scroll = SCROLL_NONE;
+        G.last_click_pane = -1;
+        if (pane == HIT_SPLITTER) {
+            G.dragging_splitter = 1;
+            set_cursor_shape(BX_CURSOR_RESIZE_WE);
+            set_tree_width_from_mouse(cx);
+        } else if (pane == FOCUS_LIST && hit_preview_scroll(cx, cy)) {
+            begin_scroll_drag(SCROLL_PREVIEW, cy);
+        }
+        return;
+    }
     if (pane == HIT_SPLITTER) {
         G.dragging_splitter = 1;
         G.dragging_scroll = SCROLL_NONE;
@@ -1213,12 +1501,7 @@ static void on_mouse_down(int cx, int cy)
             int dbl = (G.last_click_pane == FOCUS_LIST && G.last_click_idx == idx);
             G.files_sel = idx;
             if (dbl) {
-                struct BX_DIRINFO *e = &G.files[G.files_sel];
-                if ((e->attr & 0x10) != 0) {
-                    char child[MAX_PATH];
-                    path_join(child, G.tree[G.tree_sel].path, e->name);
-                    enter_dir_path(child);
-                }
+                open_selected_file();
                 G.last_click_pane = -1;
             } else {
                 G.last_click_pane = FOCUS_LIST;
@@ -1329,6 +1612,13 @@ void HariMain(void)
     G.tree_w = 0;
     G.tree_ratio = TREE_RATIO_DEF;
     G.focus = FOCUS_TREE;
+    G.mode = MODE_LIST;
+    G.preview_path[0] = 0;
+    G.preview_len = 0;
+    G.preview_size = 0;
+    G.preview_trunc = 0;
+    G.preview_binary = 0;
+    G.preview_top = 0;
     G.last_click_pane = -1;
     G.last_click_idx = -1;
     G.dragging_splitter = 0;

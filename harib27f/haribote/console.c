@@ -2125,23 +2125,49 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		}
 	} else if (edx == 39) {
 		// api_exec(path, flags) → 0=launched, <0=error
-		// 호출자의 cwd 를 상속하는 새 console task 를 spawn 하고
-		// 파일명을 cmdline 으로 주입한다.
+		// 실행 파일의 부모 디렉터리를 cwd 로 하는 새 console task 를
+		// spawn 하고 파일명만 cmdline 으로 주입한다.
 		char *path = (char *) ebx + ds_base;
 		struct FS_FILE efile;
+		unsigned int parent_clus;
+		unsigned char leaf_name83[11];
+		struct FILEINFO leaf;
+		struct DIR_SLOT slot;
 		struct TASK *etask;
 		struct FIFO32 *efifo;
-		int j;
+		char norm[MAX_PATH], parent_path[MAX_PATH], exec_name[MAX_PATH];
+		char *slash;
+		int i, j;
 		reg[7] = -1;
-		if (ebx != 0 && fs_data_open_path(task->cwd_clus, path, &efile) == 0) {
+		if (ebx != 0 &&
+				fs_data_open_path(task->cwd_clus, path, &efile) == 0 &&
+				fs_resolve_path(task->cwd_clus, path, &parent_clus,
+					leaf_name83, &leaf, &slot) == 0 &&
+				leaf.name[0] != 0 &&
+				normalize_path(task->cwd_path[0] != 0 ? task->cwd_path : "/",
+					path, norm) == 0) {
+			slash = norm;
+			for (i = 0; norm[i] != 0; i++) {
+				if (norm[i] == '/') {
+					slash = norm + i;
+				}
+			}
+			if (slash == norm) {
+				strcpy(parent_path, "/");
+			} else {
+				for (i = 0; norm + i < slash && i < MAX_PATH - 1; i++) {
+					parent_path[i] = norm[i];
+				}
+				parent_path[i] = 0;
+			}
+			strcpy(exec_name, slash + 1);
 			etask = open_constask(0, g_memtotal);
 			if (etask != 0) {
-				etask->cwd_clus = task->cwd_clus;
-				strcpy(etask->cwd_path,
-						task->cwd_path[0] != 0 ? task->cwd_path : "/");
+				etask->cwd_clus = parent_clus;
+				strcpy(etask->cwd_path, parent_path);
 				efifo = &etask->fifo;
-				for (j = 0; path[j] != 0; j++) {
-					fifo32_put(efifo, path[j] + 256);
+				for (j = 0; exec_name[j] != 0; j++) {
+					fifo32_put(efifo, exec_name[j] + 256);
 				}
 				fifo32_put(efifo, 10 + 256);   /* Enter */
 				reg[7] = 0;
