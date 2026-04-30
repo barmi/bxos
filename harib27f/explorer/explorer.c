@@ -13,6 +13,7 @@
  *   Enter  디렉터리 진입 / .HE2 실행 / 파일 preview
  *   Tab    tree ↔ list focus 전환
  *   r      현재 디렉터리 reload
+ *   n/d/m  새 디렉터리 / 삭제 / rename
  *   q      종료
  *
  * 마우스 (Phase 3 MVP):
@@ -88,6 +89,12 @@
 #define SCROLL_PREVIEW   3
 #define MODE_LIST        0
 #define MODE_PREVIEW     1
+#define MODE_INPUT       2
+#define MODE_CONFIRM     3
+#define ACT_NONE         0
+#define ACT_MKDIR        1
+#define ACT_DELETE       2
+#define ACT_RENAME       3
 
 /* ---- 상태 ----------------------------------------------------------------- */
 
@@ -138,6 +145,15 @@ struct AppState {
     int  preview_trunc;
     int  preview_binary;
     int  preview_top;
+
+    int  action;
+    char input_prompt[24];
+    char input_buf[MAX_PATH];
+    int  input_len;
+    char op_path[MAX_PATH];
+    char op_name[13];
+    unsigned char op_attr;
+    int  op_sel;
 
     int  focus;
     char status[80];
@@ -216,6 +232,69 @@ static const char *path_basename(const char *p)
     for (i = n - 1; i >= 0; i--)
         if (p[i] == '/') return p + i + 1;
     return p;
+}
+
+static int path_has_slash(const char *p)
+{
+    int i;
+    for (i = 0; p[i] != 0; i++)
+        if (p[i] == '/') return 1;
+    return 0;
+}
+
+static char upper_char(char c)
+{
+    if ('a' <= c && c <= 'z') return c - 0x20;
+    return c;
+}
+
+static int valid_83_char(char c)
+{
+    c = upper_char(c);
+    if ('A' <= c && c <= 'Z') return 1;
+    if ('0' <= c && c <= '9') return 1;
+    if (c == '$' || c == '%' || c == '\'' || c == '-' || c == '_' ||
+            c == '@' || c == '~' || c == '`' || c == '!' || c == '(' ||
+            c == ')' || c == '{' || c == '}' || c == '^' || c == '#' ||
+            c == '&') return 1;
+    return 0;
+}
+
+static int normalize_83(char *out, const char *in, int max)
+{
+    int i, j = 0, base = 0, ext = 0, dot = 0;
+    if (in[0] == 0) return -1;
+    if ((in[0] == '.' && in[1] == 0) ||
+            (in[0] == '.' && in[1] == '.' && in[2] == 0)) return -1;
+    for (i = 0; in[i] != 0; i++) {
+        char c = upper_char(in[i]);
+        if (c == '.' && !dot) {
+            if (base <= 0) return -1;
+            dot = 1;
+            if (j < max - 1) out[j++] = '.';
+            continue;
+        }
+        if (c == '.' || !valid_83_char(c)) return -1;
+        if (dot) {
+            ext++;
+            if (ext > 3) return -1;
+        } else {
+            base++;
+            if (base > 8) return -1;
+        }
+        if (j >= max - 1) return -1;
+        out[j++] = c;
+    }
+    if (base <= 0) return -1;
+    if (dot && ext <= 0) return -1;
+    out[j] = 0;
+    return 0;
+}
+
+static void path_leaf(char *out, const char *path, int max)
+{
+    const char *leaf = path_basename(path);
+    s_cpy(out, leaf, max);
 }
 
 static void int_to_str(unsigned int v, char *out)
@@ -1107,6 +1186,53 @@ static void status_set(const char *s, int err)
     G.status_err = err ? 1 : 0;
 }
 
+static void refresh_input_status(void)
+{
+    s_cpy(G.status, G.input_prompt, sizeof G.status);
+    append_text(G.status, sizeof G.status, G.input_buf);
+    append_text(G.status, sizeof G.status, "_");
+    G.status_err = 0;
+}
+
+static void select_file_by_name(const char *name, int fallback)
+{
+    int i;
+    if (name != 0 && name[0] != 0) {
+        for (i = 0; i < G.files_count; i++) {
+            if (s_eq(G.files[i].name, name)) {
+                G.files_sel = i;
+                ensure_file_sel_visible();
+                return;
+            }
+        }
+    }
+    if (G.files_count <= 0) {
+        G.files_sel = 0;
+        G.files_top = 0;
+        return;
+    }
+    G.files_sel = clamp_int(fallback, 0, G.files_count - 1);
+    ensure_file_sel_visible();
+}
+
+static void reload_current_dir_select(const char *select_name, int fallback)
+{
+    char cur[MAX_PATH];
+    int idx;
+    s_cpy(cur, G.tree_count > 0 ? G.tree[G.tree_sel].path : "/", sizeof cur);
+    tree_init(cur);
+    idx = tree_find(cur);
+    if (idx < 0) {
+        tree_init("/");
+        idx = tree_find("/");
+    }
+    if (idx < 0) idx = 0;
+    G.tree_sel = idx;
+    ensure_tree_sel_visible();
+    files_load(G.tree[G.tree_sel].path);
+    select_file_by_name(select_name, fallback);
+}
+
 static void update_files_for_selection(void)
 {
     if (G.tree_count == 0) return;
@@ -1213,11 +1339,196 @@ static void open_selected_file(void)
     load_preview(child, e);
 }
 
+static int selected_path(char *out, struct BX_DIRINFO **ent)
+{
+    if (G.files_count <= 0 || G.files_sel < 0 || G.files_sel >= G.files_count) {
+        status_set("nothing selected", 1);
+        return -1;
+    }
+    if (ent != 0) *ent = &G.files[G.files_sel];
+    path_join(out, G.tree[G.tree_sel].path, G.files[G.files_sel].name);
+    return 0;
+}
+
+static void cancel_action(void)
+{
+    G.mode = MODE_LIST;
+    G.action = ACT_NONE;
+    G.input_len = 0;
+    G.input_buf[0] = 0;
+    status_set("cancelled", 0);
+}
+
+static void start_input_action(int action, const char *prompt, const char *initial)
+{
+    G.mode = MODE_INPUT;
+    G.action = action;
+    G.input_len = 0;
+    G.input_buf[0] = 0;
+    G.input_prompt[0] = 0;
+    s_cpy(G.input_prompt, prompt, sizeof G.input_prompt);
+    if (initial != 0) {
+        s_cpy(G.input_buf, initial, sizeof G.input_buf);
+        G.input_len = s_len(G.input_buf);
+    }
+    G.last_click_pane = -1;
+    refresh_input_status();
+}
+
+static void start_mkdir(void)
+{
+    if (G.tree_count <= 0) {
+        status_set("no current directory", 1);
+        return;
+    }
+    start_input_action(ACT_MKDIR, "New dir: ", "");
+}
+
+static void start_rename(void)
+{
+    struct BX_DIRINFO *e;
+    if (selected_path(G.op_path, &e) != 0) return;
+    G.op_attr = e->attr;
+    G.op_sel = G.files_sel;
+    s_cpy(G.op_name, e->name, sizeof G.op_name);
+    start_input_action(ACT_RENAME, "Rename to: ", e->name);
+}
+
+static void start_delete(void)
+{
+    struct BX_DIRINFO *e;
+    char msg[80];
+    if (selected_path(G.op_path, &e) != 0) return;
+    G.mode = MODE_CONFIRM;
+    G.action = ACT_DELETE;
+    G.op_attr = e->attr;
+    G.op_sel = G.files_sel;
+    s_cpy(G.op_name, e->name, sizeof G.op_name);
+    s_cpy(msg, "Delete ", sizeof msg);
+    append_text(msg, sizeof msg, e->name);
+    append_text(msg, sizeof msg, "? y/n");
+    status_set(msg, 1);
+    G.last_click_pane = -1;
+}
+
+static void finish_mkdir(void)
+{
+    char name[13], path[MAX_PATH];
+    if (normalize_83(name, G.input_buf, sizeof name) != 0 ||
+            path_has_slash(G.input_buf)) {
+        status_set("invalid 8.3 directory name", 1);
+        return;
+    }
+    path_join(path, G.tree[G.tree_sel].path, name);
+    if (api_mkdir(path) != 0) {
+        status_set("mkdir failed", 1);
+        return;
+    }
+    G.mode = MODE_LIST;
+    G.action = ACT_NONE;
+    reload_current_dir_select(name, G.files_sel);
+    status_set("directory created", 0);
+}
+
+static void finish_rename(void)
+{
+    char leaf[13], newpath[MAX_PATH], newleaf[13];
+    path_leaf(leaf, G.input_buf, sizeof leaf);
+    if (normalize_83(newleaf, leaf, sizeof newleaf) != 0) {
+        status_set("invalid 8.3 name", 1);
+        return;
+    }
+    if (G.input_buf[0] == '/') {
+        s_cpy(newpath, G.input_buf, sizeof newpath);
+    } else if (path_has_slash(G.input_buf)) {
+        path_join(newpath, G.tree[G.tree_sel].path, G.input_buf);
+    } else {
+        path_join(newpath, G.tree[G.tree_sel].path, newleaf);
+    }
+    if (api_rename(G.op_path, newpath) != 0) {
+        status_set("rename failed", 1);
+        return;
+    }
+    G.mode = MODE_LIST;
+    G.action = ACT_NONE;
+    reload_current_dir_select(newleaf, G.op_sel);
+    status_set("renamed", 0);
+}
+
+static void finish_delete(void)
+{
+    int r;
+    if ((G.op_attr & 0x10) != 0) r = api_rmdir(G.op_path);
+    else                         r = api_fdelete(G.op_path);
+    if (r != 0) {
+        status_set((G.op_attr & 0x10) != 0 ?
+                "delete failed (dir not empty?)" : "delete failed", 1);
+        G.mode = MODE_LIST;
+        G.action = ACT_NONE;
+        return;
+    }
+    G.mode = MODE_LIST;
+    G.action = ACT_NONE;
+    reload_current_dir_select(0, G.op_sel);
+    status_set("deleted", 0);
+}
+
+static void finish_input_action(void)
+{
+    if (G.action == ACT_MKDIR) {
+        finish_mkdir();
+    } else if (G.action == ACT_RENAME) {
+        finish_rename();
+    }
+}
+
+static void on_input_key(int key)
+{
+    if (key == KEY_ESC) {
+        cancel_action();
+        return;
+    }
+    if (key == KEY_ENTER) {
+        finish_input_action();
+        return;
+    }
+    if (key == KEY_BS) {
+        if (G.input_len > 0) {
+            G.input_buf[--G.input_len] = 0;
+            refresh_input_status();
+        }
+        return;
+    }
+    if (key >= 32 && key < 127 && G.input_len < MAX_PATH - 1) {
+        G.input_buf[G.input_len++] = (char) key;
+        G.input_buf[G.input_len] = 0;
+        refresh_input_status();
+    }
+}
+
+static void on_confirm_key(int key)
+{
+    if (key == 'y' || key == 'Y') {
+        if (G.action == ACT_DELETE) finish_delete();
+    } else if (key == 'n' || key == 'N' || key == KEY_ESC ||
+            key == KEY_BS || key == KEY_ENTER) {
+        cancel_action();
+    }
+}
+
 /* ---- 입력 처리 ---------------------------------------------------------- */
 
 static void on_key(int key)
 {
     char parent[MAX_PATH];
+    if (G.mode == MODE_INPUT) {
+        on_input_key(key);
+        return;
+    }
+    if (G.mode == MODE_CONFIRM) {
+        on_confirm_key(key);
+        return;
+    }
     if (G.mode == MODE_PREVIEW) {
         if (key == 'q') {
             api_closewin(G.win);
@@ -1248,6 +1559,18 @@ static void on_key(int key)
     }
     if (key == 'r') {
         update_files_for_selection();
+        return;
+    }
+    if (key == 'n' || key == 'N') {
+        start_mkdir();
+        return;
+    }
+    if (key == 'd' || key == 'D') {
+        start_delete();
+        return;
+    }
+    if (key == 'm' || key == 'M') {
+        start_rename();
         return;
     }
     if (G.focus == FOCUS_TREE) {
@@ -1437,9 +1760,57 @@ static void update_scroll_drag(int cy)
     }
 }
 
+static int toolbar_button_at(int cx, int cy)
+{
+    int x = 4, w = 22, gap = 2, j;
+    if (cy < 3 || cy > TOOLBAR_H - 5) return -1;
+    for (j = 0; j < 6; j++) {
+        if (cx >= x && cx <= x + w - 1) return j;
+        x += w + gap;
+    }
+    return -1;
+}
+
+static void activate_toolbar_button(int btn)
+{
+    char parent[MAX_PATH];
+    if (G.mode == MODE_INPUT || G.mode == MODE_CONFIRM) return;
+    if (G.mode == MODE_PREVIEW) {
+        leave_preview();
+        if (btn < 3) return;
+    }
+    if (btn == 0 || btn == 1) {
+        path_parent(G.tree[G.tree_sel].path, parent);
+        enter_dir_path(parent);
+    } else if (btn == 2) {
+        reload_current_dir_select(0, G.files_sel);
+        status_set("refreshed", 0);
+    } else if (btn == 3) {
+        start_mkdir();
+    } else if (btn == 4) {
+        start_delete();
+    } else if (btn == 5) {
+        start_rename();
+    }
+}
+
 static void on_mouse_down(int cx, int cy)
 {
     int pane = hit_pane(cx, cy);
+    if (cy >= 0 && cy < TOOLBAR_H) {
+        int btn = toolbar_button_at(cx, cy);
+        G.dragging_splitter = 0;
+        G.dragging_scroll = SCROLL_NONE;
+        G.last_click_pane = -1;
+        if (btn >= 0) activate_toolbar_button(btn);
+        return;
+    }
+    if (G.mode == MODE_INPUT || G.mode == MODE_CONFIRM) {
+        G.dragging_splitter = 0;
+        G.dragging_scroll = SCROLL_NONE;
+        G.last_click_pane = -1;
+        return;
+    }
     if (G.mode == MODE_PREVIEW) {
         G.dragging_splitter = 0;
         G.dragging_scroll = SCROLL_NONE;
@@ -1619,6 +1990,14 @@ void HariMain(void)
     G.preview_trunc = 0;
     G.preview_binary = 0;
     G.preview_top = 0;
+    G.action = ACT_NONE;
+    G.input_prompt[0] = 0;
+    G.input_buf[0] = 0;
+    G.input_len = 0;
+    G.op_path[0] = 0;
+    G.op_name[0] = 0;
+    G.op_attr = 0;
+    G.op_sel = 0;
     G.last_click_pane = -1;
     G.last_click_idx = -1;
     G.dragging_splitter = 0;
