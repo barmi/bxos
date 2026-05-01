@@ -194,12 +194,14 @@ static int menu_parse_handler(struct MENU_ITEM_DEF *def, char *value)
 static void menu_parse_items_line(struct KERNEL_MENU *menu, char *value)
 {
 	char *p = value, *comma, *tok;
+	int has_comma;
 	menu->n_items = 0;
 	for (;;) {
 		comma = p;
 		while (*comma != 0 && *comma != ',') {
 			comma++;
 		}
+		has_comma = (*comma == ',');
 		if (*comma == ',') {
 			*comma = 0;
 		}
@@ -213,7 +215,7 @@ static void menu_parse_items_line(struct KERNEL_MENU *menu, char *value)
 						KMENU_HANDLER_NONE, 0, 0, 0);
 			}
 		}
-		if (*comma == 0) {
+		if (!has_comma) {
 			break;
 		}
 		p = comma + 1;
