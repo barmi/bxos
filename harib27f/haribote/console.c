@@ -133,7 +133,9 @@ void console_task(struct SHEET *sheet, int memtotal)
 	task->event_count = 0;
 	task->event_p = 0;
 	task->fat = fat;
-	if (nihongo[4096] != 0xff) {	/* 일본어 폰트 파일을 읽어들일 수 있었는지?  */
+	if (0 <= g_default_langmode && g_default_langmode <= 4) {
+		task->langmode = g_default_langmode;
+	} else if (nihongo[4096] != 0xff) {	/* 일본어 폰트 파일을 읽어들일 수 있었는지?  */
 		task->langmode = 1;
 	} else {
 		task->langmode = 0;

@@ -634,8 +634,11 @@ int tek_decomp(unsigned char *p, char *q, int size);
 extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: api_exec 용) */
 extern struct SHEET *g_sht_mouse;   /* system sheets place menus directly below cursor */
 extern int g_background_color;       /* work5 Phase 1: desktop background color */
+extern int g_default_langmode;        /* work5 Phase 5: boot default langmode */
 extern int g_start_menu_open;        /* work5 Phase 1: Start button/menu toggle state */
-extern int g_clock_minutes;          /* work5 Phase 4: uptime clock, minutes since 00:00 */
+extern int g_clock_seconds;          /* work5 Phase 5: uptime clock, seconds since 00:00 */
+extern int g_clock_show_seconds;     /* work5 Phase 5: tray clock format */
+extern int g_clock_minutes;          /* work5 Phase 4 compat: minutes since 00:00 */
 void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, int scrny);
 void start_menu_toggle(void);
 void start_menu_close_all(void);

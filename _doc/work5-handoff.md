@@ -296,9 +296,13 @@ python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/MENU.CFG HOST:/
 6. ~~Phase 4 진입~~ — 구현 완료 (2026-05-01). handler dispatcher,
    `system_start_command()`, 60s tray clock, Run/About modal, builtin
    console/taskmgr/settings/shutdown/restart 연결 반영. QEMU smoke 는 아직 남아 있다.
-7. Phase 6 에서 기존 Tab→window-cycle (`bootpack.c:288`) 을 제거하고 Alt+Tab 으로 옮길 때,
+7. ~~Phase 5 진입~~ — 구현 완료 (2026-05-01). `SETTINGS.HE2` window app,
+   schema-driven Display/Language/Time/About UI, `/SYSTEM/SETTINGS.CFG` read/write,
+   boot-time settings apply, `time.show_seconds` clock format 반영. QEMU smoke 는 아직 남아 있다.
+8. Phase 6 에서 기존 Tab→window-cycle (`bootpack.c:288`) 을 제거하고 Alt+Tab 으로 옮길 때,
    explorer Tab(tree↔list focus) 와 tetris Tab(미사용) 회귀를 같이 검증.
-8. Settings 카테고리/키 추가 시 work5.md §3 Phase 5 의 spec 표 한 줄과 `g_settings[]` 한 줄을 같이 갱신.
+9. Settings 카테고리/키 추가 시 work5.md §3 Phase 5 의 spec 표 한 줄과
+   `harib27f/settings/settings.c` 의 `g_settings[]`/`g_categories[]` 를 같이 갱신.
 
 ## 9. 함정으로 미리 알아둘 것
 

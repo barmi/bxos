@@ -6,6 +6,8 @@
 
 #define KEYCMD_LED		0xed
 #define TIMER_CLOCK		2281
+#define SETTINGS_CFG_PATH	"/SYSTEM/SETTINGS.CFG"
+#define SETTINGS_CFG_BUF_MAX	512
 #define RUN_DIALOG_W	320
 #define RUN_DIALOG_H	100
 #define ABOUT_DIALOG_W	280
@@ -36,6 +38,108 @@ struct SYSTEM_DIALOG {
 static struct SYSTEM_DIALOG g_run_dialog = { 0 };
 static struct SYSTEM_DIALOG g_about_dialog = { 0 };
 static struct SHEET *g_pending_key_win = 0;
+static char g_settings_cfg_buf[SETTINGS_CFG_BUF_MAX];
+
+static char *settings_trim(char *s)
+{
+	char *e;
+	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') {
+		s++;
+	}
+	e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) {
+		*--e = 0;
+	}
+	return s;
+}
+
+static int settings_streq(char *a, char *b)
+{
+	return strcmp(a, b) == 0;
+}
+
+static void settings_apply_pair(char *key, char *value)
+{
+	if (settings_streq(key, "display.background")) {
+		if (settings_streq(value, "black")) {
+			g_background_color = COL8_000000;
+		} else if (settings_streq(value, "gray")) {
+			g_background_color = COL8_848484;
+		} else if (settings_streq(value, "green")) {
+			g_background_color = COL8_008400;
+		} else {
+			g_background_color = COL8_008484;
+		}
+	} else if (settings_streq(key, "language.mode")) {
+		if ('0' <= value[0] && value[0] <= '4') {
+			g_default_langmode = value[0] - '0';
+		}
+	} else if (settings_streq(key, "time.boot_offset_min")) {
+		int i, v = 0;
+		for (i = 0; '0' <= value[i] && value[i] <= '9'; i++) {
+			v = v * 10 + value[i] - '0';
+		}
+		if (0 <= v && v < 24 * 60) {
+			g_clock_seconds = v * 60;
+			g_clock_minutes = v;
+		}
+	} else if (settings_streq(key, "time.show_seconds")) {
+		g_clock_show_seconds = settings_streq(value, "true") || settings_streq(value, "1");
+	}
+	return;
+}
+
+static void system_settings_load_boot(void)
+{
+	struct FS_FILE file;
+	int size, n;
+	char *p, *line, *eq, *end, *key, *value;
+
+	if (fs_data_open_path(0, SETTINGS_CFG_PATH, &file) != 0) {
+		return;
+	}
+	size = file.finfo.size;
+	if (size <= 0 || size >= SETTINGS_CFG_BUF_MAX) {
+		return;
+	}
+	n = fs_file_read(&file, 0, g_settings_cfg_buf, size);
+	if (n != size) {
+		return;
+	}
+	g_settings_cfg_buf[size] = 0;
+	p = g_settings_cfg_buf;
+	while (*p != 0) {
+		line = p;
+		while (*p != 0 && *p != '\n') {
+			p++;
+		}
+		if (*p == '\n') {
+			*p++ = 0;
+		}
+		for (end = line; *end != 0; end++) {
+			if (*end == '#' || *end == ';') {
+				*end = 0;
+				break;
+			}
+		}
+		line = settings_trim(line);
+		if (line[0] == 0) {
+			continue;
+		}
+		eq = line;
+		while (*eq != 0 && *eq != '=') {
+			eq++;
+		}
+		if (*eq != '=') {
+			continue;
+		}
+		*eq = 0;
+		key = settings_trim(line);
+		value = settings_trim(eq + 1);
+		settings_apply_pair(key, value);
+	}
+	return;
+}
 
 static void system_raise_sheet(struct SHEET *sht)
 {
@@ -429,6 +533,7 @@ void HariMain(void)
 	 * FAT/루트디렉터리를 메모리에 캐시한다. 이후 콘솔의 `dir` 과 앱 실행은
 	 * 이 마운트(g_data_mount)를 통한다. memman 초기화 직후에 호출. */
 	fs_mount_data(0);
+	system_settings_load_boot();
 
 	init_palette();
 	shtctl = shtctl_init(memman, binfo->vram, binfo->scrnx, binfo->scrny);
@@ -436,7 +541,7 @@ void HariMain(void)
 	fifo.task = task_a;
 	task_run(task_a, 1, 2);
 	*((int *) 0x0fe4) = (int) shtctl;
-	task_a->langmode = 0;
+	task_a->langmode = g_default_langmode;
 
 	/* sht_back */
 	sht_back  = sheet_alloc(shtctl);
@@ -512,7 +617,7 @@ void HariMain(void)
 	fifo32_put(&keycmd, key_leds);
 	clock_timer = timer_alloc();
 	timer_init(clock_timer, &fifo, TIMER_CLOCK);
-	timer_settime(clock_timer, 60 * 100);
+	timer_settime(clock_timer, g_clock_show_seconds ? 100 : 60 * 100);
 
 	// skshin 
 	dbg_init(shtctl);
@@ -1056,8 +1161,13 @@ void HariMain(void)
 			} else if (i == 2280) {	/* task manager를 닫는다 */
 				close_taskmgr();
 			} else if (i == TIMER_CLOCK) {
-				g_clock_minutes = (g_clock_minutes + 1) % (24 * 60);
-				timer_settime(clock_timer, 60 * 100);
+				if (g_clock_show_seconds) {
+					g_clock_seconds = (g_clock_seconds + 1) % (24 * 60 * 60);
+					timer_settime(clock_timer, 100);
+				} else {
+					g_clock_seconds = (g_clock_seconds + 60) % (24 * 60 * 60);
+					timer_settime(clock_timer, 60 * 100);
+				}
 				taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
 						start_hover, start_pressed);
 				sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,

@@ -4,7 +4,10 @@
 #include "../../tools/modern/euckr_map.h"
 
 int g_background_color = COL8_008484;
+int g_default_langmode = 0;
 int g_start_menu_open = 0;
+int g_clock_seconds = 0;
+int g_clock_show_seconds = 0;
 int g_clock_minutes = 0;
 
 void init_palette(void)
@@ -89,24 +92,34 @@ static void taskbar_putascii(char *vram, int xsize, int x, int y,
 
 void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed)
 {
-	char clock[6];
+	char clock[9];
 	int sx0 = TASKBAR_START_X0, sx1 = TASKBAR_START_X1;
 	int sy0 = y - TASKBAR_START_Y_PAD_TOP, sy1 = y - TASKBAR_START_Y_PAD_BOT;
-	int tx0 = x - TASKBAR_TRAY_R_PAD - TASKBAR_TRAY_W;
+	int tray_w = g_clock_show_seconds ? 68 : TASKBAR_TRAY_W;
+	int tx0 = x - TASKBAR_TRAY_R_PAD - tray_w;
 	int tx1 = x - TASKBAR_TRAY_R_PAD - 1;
 	int ty0 = sy0, ty1 = sy1;
 	int start_down = start_pressed || g_start_menu_open;
 	int label_x = 12 + (start_down ? 1 : 0);
 	int label_y = y - 21 + (start_down ? 1 : 0);
-	int clock_min = g_clock_minutes % (24 * 60);
+	int clock_min = (g_clock_seconds / 60) % (24 * 60);
+	int ss = g_clock_seconds % 60;
 	int hh = clock_min / 60;
 	int mm = clock_min % 60;
+	g_clock_minutes = clock_min;
 	clock[0] = '0' + hh / 10;
 	clock[1] = '0' + hh % 10;
 	clock[2] = ':';
 	clock[3] = '0' + mm / 10;
 	clock[4] = '0' + mm % 10;
-	clock[5] = 0;
+	if (g_clock_show_seconds) {
+		clock[5] = ':';
+		clock[6] = '0' + ss / 10;
+		clock[7] = '0' + ss % 10;
+		clock[8] = 0;
+	} else {
+		clock[5] = 0;
+	}
 
 	boxfill8(vram, x, COL8_C6C6C6,  0,     y - 28, x -  1, y - 28);
 	boxfill8(vram, x, COL8_FFFFFF,  0,     y - 27, x -  1, y - 27);

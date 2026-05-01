@@ -276,6 +276,7 @@ set(BXOS_HE2_APPS_WINDOW
     tetris
     evtest
     explorer
+    settings
 )
 foreach(_a IN LISTS BXOS_HE2_APPS_WINDOW)
     set(_src "${BXOS_HARIB}/${_a}/${_a}.c")

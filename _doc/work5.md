@@ -375,11 +375,11 @@ handler = builtin:taskmgr
 - ☐ Start → Programs → Console → 새 콘솔 창.
 - ☐ tray 시계가 분 단위로 갱신.
 
-### Phase 5 — Settings 앱 (선언적 스키마 기반) (2일)
+### Phase 5 — Settings 앱 (선언적 스키마 기반) (2일) — ☑ 구현 완료, QEMU smoke 대기 (2026-05-01)
 **목표**: 모던 Settings 앱처럼 선언으로부터 자동 생성되는 설정 UI 를 만든다.
 
-- ☐ 새 HE2 window 앱 `harib27f/settings/settings.c` (`SETTINGS.HE2`).
-- ☐ 스키마 (settings.c 내 `static const`):
+- ☑ 새 HE2 window 앱 `harib27f/settings/settings.c` (`SETTINGS.HE2`).
+- ☑ 스키마 (settings.c 내 `static const`):
 
 ```c
 enum { SET_TYPE_ENUM, SET_TYPE_BOOL, SET_TYPE_INT, SET_TYPE_STR, SET_TYPE_ACTION };
@@ -409,27 +409,42 @@ static const struct SettingSpec g_settings[] = {
       0, 0, 0, 0, 0 },
 };
 ```
-- ☐ 좌측 카테고리 리스트, 우측 페이지. 페이지는 해당 카테고리 entry 만 그린다.
-- ☐ 위젯 자동 생성:
-  - ENUM → 원형 라디오 + 라벨.
-  - BOOL → 체크박스.
-  - INT → `[ - ] N [ + ]` 버튼.
-  - STR → 한 줄 input.
-  - ACTION → 버튼 (현재는 About 만).
-- ☐ 값 변경 즉시:
-  - 시스템 변수 갱신 (`language.mode` → kernel 의 current task->langmode 정책 변경 메시지 또는
+- ☑ 좌측 카테고리 리스트, 우측 페이지. 페이지는 해당 카테고리 entry 만 그린다.
+- ☑ 위젯 자동 생성:
+  - ☑ ENUM → 라디오 + 라벨.
+  - ☑ BOOL → 체크박스.
+  - ☑ INT → `[ - ] N [ + ]` 버튼.
+  - ☐ STR → 한 줄 input (현재 1차 schema 에 STR 항목 없음).
+  - ☑ ACTION → 버튼 (현재는 About 안내).
+- ☑ 값 변경 즉시:
+  - ☑ 시스템 변수 갱신 (`language.mode` → kernel 의 current task->langmode 정책 변경 메시지 또는
     syscall, 시각적 효과만 반영) — 1차는 “재시작 시 적용” 으로 명시 가능한 항목과
     “즉시 적용” 항목을 spec 에 표기.
-  - `/SYSTEM/SETTINGS.CFG` 재기록 (`api_fopen_w` + `api_fwrite`).
-  - 실패 시 status “save failed”.
-- ☐ 부팅 시 SETTINGS.CFG 를 읽어 spec 의 default 를 덮어쓴 뒤 시스템에 적용.
-  - `display.background` → `init_screen8` 에 사용할 색 변수.
-  - `language.mode` → 부팅 직후 task A 의 langmode.
-  - `time.show_seconds` → tray 시계 포맷.
-- ☐ 카테고리 트리는 현재 4개 → 추가 시 `g_settings[]` 에만 한 줄 추가.
+  - ☑ `/SYSTEM/SETTINGS.CFG` 재기록 (`api_fopen_w` + `api_fwrite`).
+  - ☑ 실패 시 status “save failed”.
+- ☑ 부팅 시 SETTINGS.CFG 를 읽어 spec 의 default 를 덮어쓴 뒤 시스템에 적용.
+  - ☑ `display.background` → `init_screen8` 에 사용할 색 변수.
+  - ☑ `language.mode` → 부팅 직후 task A 와 새 console task 의 langmode.
+  - ☑ `time.show_seconds` → tray 시계 포맷.
+- ☑ 카테고리 트리는 현재 4개 → 추가 시 `g_settings[]` 와 `g_categories[]` 에 추가.
+
+**Phase 5 구현 노트 (2026-05-01)**
+- `harib27f/settings/settings.c` 를 HE2 window app 으로 추가하고, CMake 의
+  `BXOS_HE2_APPS_WINDOW` 에 `settings` 를 등록했다. 결과물은 data.img 루트의
+  `SETTINGS.HE2` 로 설치된다.
+- Settings 앱은 `/SYSTEM/SETTINGS.CFG` 를 읽고, 변경 즉시 전체 설정 파일을
+  `api_fopen_w` + `api_fwrite` 로 재작성한다.
+- 현재 schema 는 Display / Language / Time / About 4개 카테고리다.
+  Display/Language 는 enum, Time 의 offset 은 int stepper, show_seconds 는 bool,
+  About 은 안내 action 이다.
+- 커널은 data drive mount 직후 `/SYSTEM/SETTINGS.CFG` 를 읽는다.
+  `display.background`, `language.mode`, `time.boot_offset_min`,
+  `time.show_seconds` 를 부팅 기본값으로 적용한다.
+- `time.show_seconds=true` 일 때 tray clock 은 `HH:MM:SS` 로 표시하고 1초 timer 로,
+  기본값에서는 `HH:MM` 과 60초 timer 로 동작한다.
 
 **확인할 사항**
-- ☐ build 통과, `bxos_fat.py ls /` 에 `SETTINGS.HE2` 보임.
+- ☑ build 통과, `bxos_fat.py ls /` 에 `SETTINGS.HE2` 보임.
 - ☐ Start → Settings → Language → UTF-8 → tray 시계가 잘 보이고 type hangul.utf 도
   새 콘솔에서 정상.
 - ☐ Settings 변경 후 재부팅 → 변경값 유지 확인.
