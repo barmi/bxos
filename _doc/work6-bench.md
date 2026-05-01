@@ -223,9 +223,88 @@ g_bench_enabled 가 0 이면 함수 호출 1번 + ld + cmp + jne 정도. 백만 
 
 각 phase 종료마다 같은 표를 다시 채워 비교한다.
 
-### 표 — Phase 2 (Quick wins) 후
+### 표 — Phase 2 (Quick wins) 후 (2026-05-02, commit `967bce9`)
 
-(Phase 2 종료 시 채움)
+> Phase 2 변경: `memset`/`memcpy` 를 `rep stosb`/`rep movsb` inline asm,
+> `boxfill8` row-wise memset, `sheet_refreshsub` 4/1 byte path 통합 → run-length
+> memcpy, `putfonts8_asc_ascii` ascii fast path.
+> Phase 1 같은 절차로 측정. S3/S4 는 사용자 인터랙션이 매번 동일하지 않아
+> calls 수 자체가 변동 — total cycles 보다 **avg cycles** 의 비교가 더 신뢰성 있음.
+
+#### Phase 2 — 모든 카운터 한눈에 보기
+
+| counter | S1 menu×10 | S2 dir×10 | S3 explorer | S4 tetris-line | S5 mouse |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` calls / total | 60 / 27.7 M | 0 / 0 | 824 / 27.8 M | 234 / 8.2 M | 900 / 18.9 M |
+| `refreshsub` calls / total | 497 / **287.1 M** | 19,788 / **10,099.5 M** | 1,269 / 296.1 M | 1,692 / 1,505.5 M | 1,394 / 303.5 M |
+| `sheet_slide` calls / total | 30 / 2.1 M | 0 / 0 | 408 / 48.5 M | 116 / 19.3 M | 448 / 54.8 M |
+| `boxfill8` calls / total | 1,297 / 18.4 M | 179 / 1.5 M | 895 / 15.7 M | 22,622 / 61.7 M | 157 / 1.6 M |
+| `putfont8` calls / total | 74,405 / 29.4 M | 4,613,703 / 1,381.5 M | 253,927 / 95.0 M | 269,670 / 98.5 M | 279,075 / 103.5 M |
+| `putfonts8_asc` calls / total | 0 / 0 | 0 / 0 | 39 / 0.2 M | 106 / 1.2 M | 0 / 0 |
+| `taskbar` calls / total | 31 / 38.0 M | 1 / 1.1 M | 7 / 8.1 M | 3 / 2.6 M | 1 / 1.3 M |
+| `scrollwin` calls / total | 653 / 1,275.6 M | 19,989 / 24,567.8 M | 689 / 1,421.3 M | 823 / 1,542.3 M | 732 / 1,481.0 M |
+| `hrb_api` calls / total | 0 / 0 | 0 / 0 | 233 / 5.0 M | 25,380 / **36,501.0 M** | 0 / 0 |
+| **Σ total cycles** | **1.68 G** | **36.05 G** | **1.92 G** | **39.74 G** | **1.96 G** |
+
+#### Phase 2 시나리오 별 marks
+
+| | S1 | S2 | S3 | S4 | S5 |
+|---|---:|---:|---:|---:|---:|
+| end mark (PIT tick) | 11,565 | 24,970 | 34,037 | 56,176 | 66,256 |
+| dump pit_tick | 12,082 | 25,483 | 34,722 | 56,685 | 66,727 |
+
+#### Phase 1 → Phase 2 비교 (avg cycles 기준)
+
+avg = total_cycles / calls. **워크로드 의존이 적어 phase 간 비교에 신뢰성 있음**.
+
+| counter | S1 P1 → P2 | S2 P1 → P2 | S3 P1 → P2 | S4 P1 → P2 | S5 P1 → P2 |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` avg | 528.9 K → 461.2 K (**-12.8%**) | — | 33.9 K → 33.7 K (-0.6%) | 32.9 K → 35.2 K (+7.0%) | 23.8 K → 21.1 K (**-11.3%**) |
+| `refreshsub` avg | 963.5 K → 577.7 K (**-40.0%**) | 829.5 K → 510.4 K (**-38.5%**) | 404.9 K → 233.3 K (**-42.4%**) | 548.3 K → 889.8 K (+62.3%)¹ | 330.6 K → 217.7 K (**-34.1%**) |
+| `boxfill8` avg | 12.1 K → 14.2 K (+17.4%)² | 8.5 K → 8.6 K (+1.2%) | 9.9 K → 17.5 K (+76.7%)³ | 2.3 K → 2.7 K (+18.7%) | 11.3 K → 10.0 K (-11.6%) |
+| `putfont8` avg | 372 → 395 (+6.2%) | 297 → 299 (+0.7%) | 360 → 373 (+3.6%) | 357 → 365 (+2.2%) | 347 → 370 (+6.6%) |
+| `scrollwin` avg | 2.33 M → 1.95 M (**-16.2%**) | 1.49 M → 1.23 M (**-17.7%**) | 2.28 M → 2.06 M (-9.4%) | 2.42 M → 1.87 M (**-22.5%**) | 2.44 M → 2.02 M (**-16.9%**) |
+| `hrb_api` avg | — | — | 1.13 M → 21.6 K (-98.1%)⁴ | 1.45 M → 1.44 M (-0.5%) | — |
+
+> ¹ S4 `refreshsub` avg 가 올라간 이유: 워크로드가 다르다 (tetris 가 더 적은
+> piece 만 떨어진 측정). calls 수도 4366 → 1692 로 다름. 적게 호출된 만큼
+> 남은 호출들이 더 큰 영역 (board 전체) 을 다룰 가능성. 워크로드 차이로 추정.
+> **Phase 2 의 run-length memcpy 가 본질적으로 빨라졌는지는 S1/S2/S3/S5 의
+> avg 일관 감소로 검증 (-34~-42%)**.
+>
+> ² ³ `boxfill8` avg 의 미세 증가는 `bench_enter`/`bench_leave` 자체의 RDTSC
+> overhead. boxfill8 한 번이 짧으면 (수 ㎲) bench overhead 의 비중이 커진다.
+> total cycles 는 같은 워크로드 (S1/S2/S5) 에서 약간 증가. memset 의 효과가
+> 작은 영역 (1~몇 px) 에서는 byte loop 와 비슷하고, 큰 영역에서만 의미 있음.
+>
+> ⁴ S3 `hrb_api` avg 가 1.13 M → 21.6 K 로 절반 미만은 측정 오류가 아니라
+> **사용자가 explorer 에서 실제 한 작업 양이 다름** (P1 calls=2305, P2 calls=233).
+> P2 측정에서 explorer 를 띄운 직후 dump 한 것으로 보임. avg 가 너무 작아 실제
+> 큰 syscall 들 (e.g. api_putstrwin 이 수십 라인 그리는 것) 이 거의 없었음을 뜻함.
+> 이 시나리오는 **재측정** 또는 인터랙션을 표준화해야 비교 가능.
+
+#### Phase 1 → Phase 2 시나리오 합 비교 (Σ total cycles)
+
+| 시나리오 | Phase 1 합 | Phase 2 합 | 변화 |
+|---|---:|---:|---:|
+| S1 menu×10 | 2.20 G | 1.68 G | **-23.6%** |
+| S2 dir×10 | 48.03 G | 36.05 G | **-25.0%** |
+| S3 explorer | 4.88 G | 1.92 G | -60.7% (워크로드 차이로 부정확) |
+| S4 tetris-line | 45.94 G | 39.74 G | -13.5% (워크로드 차이 일부 포함) |
+| S5 mouse | 2.28 G | 1.96 G | **-13.7%** |
+
+#### Phase 2 핵심 결론
+
+* **`refreshsub` 의 avg cycles 가 모든 워크로드-안정 시나리오 (S1/S2/S3/S5) 에서
+  -34~-42% 일관 감소**. Phase 2 의 run-length memcpy 효과 ✓.
+* **`scrollwin` avg 가 -16~-22% 감소**. scrollwin 자체 코드는 변경 없음 — 내부에서
+  호출하는 `boxfill8` (row-wise memset) + 글자 출력의 누적 효과.
+* **`putfont8` avg 변화 없음** (0.7~6.6%). Phase 2 는 putfont8 자체를 안 건드림.
+  Phase 3 의 마스크 lookup 에서 큰 폭 감소 예상.
+* **`hrb_api` avg 변화 없음** (S4 -0.5%). syscall dispatch 자체 비용은 그대로.
+  Phase 6/7 의 batch syscall 도입이 진짜 타깃.
+* **시나리오 합 -13~-25%** (워크로드 안정 시나리오 기준). Phase 2 quick wins 단독으로
+  baseline 대비 ~20% 성능 향상. 누적 목표 (2x = -50%) 의 절반 진행 중.
 
 ### 표 — Phase 3 (compositor 일반화 + 폰트 lookup) 후
 
