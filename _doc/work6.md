@@ -249,25 +249,55 @@
   - `langmode 3 + type hangul.euc`, `langmode 4 + type hangul.utf` 회귀 없음 (한글 폰트는 `putfonts8_asc` 를 쓰지만 안에서 `putfont8` 호출 → 마스크 lookup 동일 적용).
 - ☐ S1~S5 누적 baseline 대비 2.5배 이상.
 
-### Phase 4 — Dirty rect 인프라 (커널 측) (2일)
+### Phase 4 — Dirty rect 인프라 (커널 측) (2일) — ☑ 구현 완료, QEMU 회귀 smoke 대기 (2026-05-02)
 **목표**: sheet 단위 부분 갱신 시스템 도입. 기존 `sheet_refresh` 호출과 호환.
 
-- ☐ [bootpack.h](../harib27f/haribote/bootpack.h) `struct SHEET` 에:
-  - `int dirty_count;` (0~4)
-  - `int dirty_rect[4][4];`  // x0,y0,x1,y1
-- ☐ [sheet.c](../harib27f/haribote/sheet.c) 신규 함수:
-  - `void sheet_dirty_add(struct SHEET *sht, int bx0, int by0, int bx1, int by1)` — 누적, 4개 초과 시 union 합침.
-  - `void sheet_dirty_flush(struct SHEET *sht)` — 누적 영역들을 한 번에 refresh, count=0.
-  - `void sheet_dirty_flush_all(struct SHTCTL *ctl)` — 모든 sheet 의 dirty 비움. HariMain idle 진입 직전 호출.
-- ☐ `sheet_refresh` 의 동작:
-  - 기본은 즉시 refresh 유지 (호환).
-  - 내부 helper `sheet_refresh_now()` 와 `sheet_refresh_deferred()` 로 분기. App syscall 12 (api_refreshwin) 는 즉시.
-- ☐ HariMain 의 main loop 의 idle 분기에 `sheet_dirty_flush_all(shtctl)` 호출.
-- ☐ Phase 1 시나리오 재측정. 이 단계에서는 호환 모드라 큰 변화 없을 수 있음 (기반만 까는 단계).
+- ☑ [bootpack.h](../harib27f/haribote/bootpack.h) `struct SHEET` 에:
+  - `short dirty_count` (0..4)
+  - `short dirty_rect[4][4]` (x0,y0,x1,y1, client 좌표) — 32 byte/sheet × 256 = 8 KB.
+  - `#define SHEET_DIRTY_MAX 4` 매크로.
+- ☑ [sheet.c](../harib27f/haribote/sheet.c) 신규 함수:
+  - `sheet_dirty_add(sht, bx0, by0, bx1, by1)` — 빈 슬롯 있으면 그대로 push.
+    4개 모두 차 있으면 **합치는 비용 (`union 면적 - 두 rect 면적 합` ≈ 새로 추가될
+    픽셀 수)** 이 가장 작은 슬롯과 외접 합집합으로 병합.
+  - `sheet_dirty_flush(sht)` — 누적된 rect 를 sequential `sheet_refreshsub` 호출로
+    한 번에 refresh, count=0. hidden sheet 는 그냥 비움.
+  - `sheet_dirty_flush_all(ctl)` — 모든 sheets0[] 순회해 dirty 가 있는 sheet 만 flush.
+  - `sheet_dirty_pending(sht)` — 누적 개수 (0..4) 반환.
+- ☑ `sheet_alloc`, `sheet_free` 가 dirty_count 0 으로 초기화.
+- ☑ `sheet_refresh` 동작 변경 없음 — 기존 즉시 refresh 그대로 (호환). 새 dirty
+  모델은 **opt-in** — 호출자가 `sheet_dirty_add` + `sheet_dirty_flush` (또는
+  HariMain idle flush) 로 명시적으로 사용.
+- ☑ HariMain main loop 의 idle 분기 (fifo empty + new_mx/new_wx 처리 후) 에
+  `sheet_dirty_flush_all(shtctl)` 호출.
+- ☑ Release / Debug 빌드 통과, fsck clean.
+- ☐ Phase 1 시나리오 재측정 (사용자 직접). 호환 mode 라 측정값 변화 미미해야 정상 (회귀 0건 확인용).
+
+**Phase 4 구현 노트 (2026-05-02)**
+- `dirty_rect` 를 `short[4]` (x0/y0/x1/y1) 로 패킹 — 32 byte/sheet × 256 sheet = 8 KB
+  추가 메모리. `int` 였다면 16 KB. 화면 좌표는 ±32K 안이라 short 충분.
+- 5번째 rect 추가 시 **best-cost union 휴리스틱** — 단순히 첫 슬롯과 합치는 대신,
+  (union 면적 - a 면적 - b 면적) 이 가장 작은 슬롯과 합쳐 새로 그려야 할 픽셀
+  수를 최소화. Phase 5 에서 효과 측정.
+- `sheet_refresh` 와 `sheet_dirty_add+flush` 의 차이:
+  - 전자 = 1회 호출 → 1회 `sheet_refreshsub`.
+  - 후자 = N회 add + 1회 flush → 최대 4회 `sheet_refreshsub`.
+  - **호출자가 작은 영역 N 개를 자주 호출하면 dirty rect 가 이득** (idle flush 한 번).
+  - **호출자가 큰 영역 1 회 호출하면 즉시 sheet_refresh 가 더 효율적**.
+- HariMain idle flush 의 호출 시점: `if (new_mx<0 && new_wx==invalid)` 인 **딴 일
+  없을 때** (즉 진짜 idle 직전) 만. mouse drag 중에는 flush 미룸 → drag 의 last
+  position 이 한 번에 flush.
+- Phase 4 자체로는 `sheet_refresh` 동작 변경 없으므로 회귀 없어야 함. 새 API 는
+  Phase 5 의 taskbar/scrollwin/마우스 부분 redraw 가 본격 사용.
 
 **확인할 사항**
-- ☐ build 통과, 회귀 없음.
-- ☐ dirty_count 4 초과 시 union 동작 확인 (단위 테스트성 시나리오).
+- ☑ Release / Debug 빌드 통과.
+- ☑ `objdump` 에서 `_sheet_dirty_add` / `_sheet_dirty_flush` / `_sheet_dirty_flush_all` / `_sheet_dirty_pending` symbol 정상.
+- ☑ HariMain idle 분기에 `_sheet_dirty_flush_all` 호출 들어감.
+- ☐ QEMU smoke (사용자 직접):
+  - 부팅 / 콘솔 / explorer / tetris / Settings 모두 회귀 없음 (호환 mode 검증).
+  - Phase 3 시나리오 측정값과 거의 동일해야 정상 (idle flush no-op 시).
+- ☐ dirty_count 4 초과 union 동작은 Phase 5 에서 자연스레 노출 — 별도 단위 테스트는 Phase 5 와 함께.
 
 ### Phase 5 — Taskbar / 마우스 / scrollwin 부분 redraw (2일)
 **목표**: Phase 4 인프라 위에서 가장 큰 redraw 들을 부분 갱신으로.

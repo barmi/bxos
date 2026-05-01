@@ -207,6 +207,8 @@ struct SCROLLWIN;
 #define SHEET_FLAG_APP_DBLCLK	0x200
 /* work5 Phase 2: 커널 내부 system widget sheet. 일반 focus/drag/resize 대상 제외. */
 #define SHEET_FLAG_SYSTEM_WIDGET	0x400
+/* work6 Phase 4: dirty rect 누적 한도. 5번째 add 시 외접 합집합 (union) 으로 합침. */
+#define SHEET_DIRTY_MAX	4
 struct SHEET {
 	unsigned char *buf;
 	int bxsize, bysize, vx0, vy0, col_inv, height, flags;
@@ -214,6 +216,12 @@ struct SHEET {
 	struct TASK *task;
 	struct SCROLLWIN *scroll;
 	char title[32];	/* work4 Phase 3: api_openwin 시 저장, api_resizewin 시 frame 재그리기 용 */
+	/* work6 Phase 4: 누적 dirty rect (sheet client 좌표). flush 시 한 번에 refresh.
+	 * 기본은 호환 mode — sheet_refresh() 가 즉시 flush 하므로 일반 코드에서는
+	 * 차이 없음. sheet_dirty_add() 후 명시적 flush 가 필요한 곳 (Phase 5 의
+	 * taskbar/scrollwin 부분 redraw) 에서 사용. */
+	short dirty_count;
+	short dirty_rect[SHEET_DIRTY_MAX][4];	/* x0,y0,x1,y1 (client area) */
 };
 struct SHTCTL {
 	unsigned char *vram, *map;
@@ -228,6 +236,18 @@ void sheet_updown(struct SHEET *sht, int height);
 void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0);
 void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0, int h1);
 void sheet_refresh(struct SHEET *sht, int bx0, int by0, int bx1, int by1);
+/* work6 Phase 4: 부분 갱신 (dirty rect) API. 호출자가 여러 작은 영역을 dirty 로
+ *   누적 → 한 번에 flush 해서 sheet_refreshsub 호출 횟수 / blit 면적을 줄인다.
+ *   - sheet_dirty_add: 새 rect 를 누적. 같은 영역 재추가는 중복 union.
+ *     이미 4개 rect 가 차 있으면 새 rect 를 그 중 하나와 외접 합집합으로 병합
+ *     (가장 가까운 rect 와 합치는 휴리스틱).
+ *   - sheet_dirty_flush: 누적된 rect 를 한 번에 sheet_refresh. count = 0.
+ *   - sheet_dirty_flush_all: 모든 sheet 의 dirty 비움 (HariMain idle 직전).
+ * 호환: 기존 sheet_refresh() 는 그대로 동작. dirty rect 사용은 opt-in. */
+void sheet_dirty_add(struct SHEET *sht, int bx0, int by0, int bx1, int by1);
+void sheet_dirty_flush(struct SHEET *sht);
+void sheet_dirty_flush_all(struct SHTCTL *ctl);
+int  sheet_dirty_pending(struct SHEET *sht);
 void sheet_slide(struct SHEET *sht, int vx0, int vy0);
 void sheet_free(struct SHEET *sht);
 /* 시트 크기 변경. 새 buf 와 새 (xsize,ysize) 로 교체하고 스크린을 갱신.

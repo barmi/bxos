@@ -1074,6 +1074,11 @@ void HariMain(void)
 				sheet_slide(sht, new_wx, new_wy);
 				new_wx = 0x7fffffff;
 			} else {
+				/* work6 Phase 4: idle 진입 직전 누적 dirty rect flush.
+				 * Phase 5 의 부분 redraw 가 sheet_dirty_add 만 호출하고
+				 * flush 를 미루면 여기서 일괄 처리. 호환 mode 에서는 dirty 가
+				 * 거의 비어 있어 no-op. */
+				sheet_dirty_flush_all(shtctl);
 				task_sleep(task_a);
 				io_sti();
 			}

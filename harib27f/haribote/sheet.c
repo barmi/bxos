@@ -49,6 +49,7 @@ struct SHEET *sheet_alloc(struct SHTCTL *ctl)
 			sht->height = -1; /* 비표시중 */
 			sht->task = 0;	/* 자동으로 닫는 기능을 사용하지 않는다 */
 			sht->scroll = 0;
+			sht->dirty_count = 0;	/* work6 Phase 4: 누적 dirty rect 비움 */
 			return sht;
 		}
 	}
@@ -271,7 +272,106 @@ void sheet_free(struct SHEET *sht)
 		sheet_updown(sht, -1); /* 표시중이라면 우선 비표시로 한다 */
 	}
 	sht->flags = 0; /* 미사용 마크 */
+	sht->dirty_count = 0;	/* work6 Phase 4 */
 	return;
+}
+
+/* work6 Phase 4: dirty rect API. 호환 기본값 — 현재는 누적용 자료 구조만 도입.
+ * Phase 5 의 taskbar/scrollwin/마우스 부분 redraw 가 본격 사용. */
+
+int sheet_dirty_pending(struct SHEET *sht)
+{
+	if (sht == 0) return 0;
+	return sht->dirty_count;
+}
+
+/* 두 rect 의 외접 합집합 (bounding union). dst 에 in-place. */
+static void rect_union(short *dst, int bx0, int by0, int bx1, int by1)
+{
+	if (bx0 < dst[0]) dst[0] = (short) bx0;
+	if (by0 < dst[1]) dst[1] = (short) by0;
+	if (bx1 > dst[2]) dst[2] = (short) bx1;
+	if (by1 > dst[3]) dst[3] = (short) by1;
+}
+
+/* 두 rect 사이 거리(외접 합집합 면적 - 두 rect 면적 합) 의 근사값.
+ * 작을수록 합치는 게 효율적. 음수면 이미 겹침. */
+static int rect_merge_cost(short *a, int bx0, int by0, int bx1, int by1)
+{
+	int ux0 = a[0] < bx0 ? a[0] : bx0;
+	int uy0 = a[1] < by0 ? a[1] : by0;
+	int ux1 = a[2] > bx1 ? a[2] : bx1;
+	int uy1 = a[3] > by1 ? a[3] : by1;
+	int union_area = (ux1 - ux0) * (uy1 - uy0);
+	int a_area     = (a[2] - a[0]) * (a[3] - a[1]);
+	int b_area     = (bx1 - bx0) * (by1 - by0);
+	return union_area - a_area - b_area;	/* 합집합 - 두 영역 = 새로 추가될 픽셀 수 */
+}
+
+void sheet_dirty_add(struct SHEET *sht, int bx0, int by0, int bx1, int by1)
+{
+	int i;
+	if (sht == 0 || (sht->flags & SHEET_USE) == 0) return;
+	if (bx0 >= bx1 || by0 >= by1) return;
+	if (bx0 < 0) bx0 = 0;
+	if (by0 < 0) by0 = 0;
+	if (bx1 > sht->bxsize) bx1 = sht->bxsize;
+	if (by1 > sht->bysize) by1 = sht->bysize;
+	if (bx0 >= bx1 || by0 >= by1) return;
+
+	/* 빈 슬롯 있으면 그대로 추가 */
+	if (sht->dirty_count < SHEET_DIRTY_MAX) {
+		sht->dirty_rect[sht->dirty_count][0] = (short) bx0;
+		sht->dirty_rect[sht->dirty_count][1] = (short) by0;
+		sht->dirty_rect[sht->dirty_count][2] = (short) bx1;
+		sht->dirty_rect[sht->dirty_count][3] = (short) by1;
+		sht->dirty_count++;
+		return;
+	}
+
+	/* 4개 모두 차 있음: 합쳤을 때 면적 증가 가장 작은 rect 와 union. */
+	{
+		int best_idx = 0;
+		int best_cost = rect_merge_cost(sht->dirty_rect[0], bx0, by0, bx1, by1);
+		for (i = 1; i < SHEET_DIRTY_MAX; i++) {
+			int c = rect_merge_cost(sht->dirty_rect[i], bx0, by0, bx1, by1);
+			if (c < best_cost) {
+				best_cost = c;
+				best_idx = i;
+			}
+		}
+		rect_union(sht->dirty_rect[best_idx], bx0, by0, bx1, by1);
+	}
+}
+
+void sheet_dirty_flush(struct SHEET *sht)
+{
+	int i;
+	if (sht == 0 || sht->dirty_count == 0) return;
+	if (sht->height < 0) {
+		sht->dirty_count = 0;
+		return;
+	}
+	for (i = 0; i < sht->dirty_count; i++) {
+		short *r = sht->dirty_rect[i];
+		sheet_refreshsub(sht->ctl,
+				sht->vx0 + r[0], sht->vy0 + r[1],
+				sht->vx0 + r[2], sht->vy0 + r[3],
+				sht->height, sht->height);
+	}
+	sht->dirty_count = 0;
+}
+
+void sheet_dirty_flush_all(struct SHTCTL *ctl)
+{
+	int i;
+	if (ctl == 0) return;
+	for (i = 0; i < MAX_SHEETS; i++) {
+		struct SHEET *sht = &ctl->sheets0[i];
+		if ((sht->flags & SHEET_USE) != 0 && sht->dirty_count > 0) {
+			sheet_dirty_flush(sht);
+		}
+	}
 }
 
 /* 시트의 buffer 와 크기를 교체. 위치(vx0,vy0) 는 유지.
