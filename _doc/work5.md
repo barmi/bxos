@@ -526,26 +526,28 @@ static const struct SettingSpec g_settings[] = {
 - ☑ 메뉴 라벨 길이 한계 — 폭에 맞춰 자르고 마지막 글자를 `.` 로 대체
   (`menu_label_fit`). 너비 = `menu->w - 16(좌pad) - 16(arrow)` 기준.
 
-### Phase 8 — 문서 / 회귀 검증 / 마무리 (1일)
-- ☐ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 Start Menu / Run / Settings 사용법, MENU.CFG / SETTINGS.CFG 포맷 추가.
-- ☐ [README.utf8.md](../README.utf8.md) 에 “시작 버튼 / 설정” 한 단락.
-- ☐ [SETUP-MAC.md](../SETUP-MAC.md) 에 SYSTEM/ 디렉터리 검증 단락.
-- ☐ [he2/README.md](../he2/README.md) 에 settings 앱이 신규 syscall 을 추가하지 않았음을 명시.
-- ☐ 신규 문서 [_doc/menu-config.md](menu-config.md): MENU.CFG / SETTINGS.CFG 스펙.
-- ☐ work5.md / work5-handoff.md 체크박스 갱신.
+### Phase 8 — 문서 / 회귀 검증 / 마무리 (1일) — ☑ 문서 완료, QEMU full smoke 대기 (2026-05-01)
+- ☑ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 Start Menu / Run / Settings 사용법, MENU.CFG / SETTINGS.CFG 포맷 추가.
+- ☑ [README.utf8.md](../README.utf8.md) 에 "시작 버튼 / 설정" 한 단락.
+- ☑ [SETUP-MAC.md](../SETUP-MAC.md) 2.5 검증 절에 `/SYSTEM/` 디렉터리 검증 단락.
+- ☑ [he2/README.md](../he2/README.md) 에 work5 가 신규 syscall 0개임을 명시.
+- ☑ 신규 문서 [_doc/menu-config.md](menu-config.md): MENU.CFG / SETTINGS.CFG 스펙 + 호스트 검증 + fallback 정책.
+- ☑ work5.md / work5-handoff.md 체크박스 갱신.
 
 **확인할 사항**
-- ☐ clean build / `fsck_msdos -n` 통과.
+- ☑ clean build / `fsck_msdos -n` 통과.
 - ☐ QEMU smoke:
-  - ☐ 부팅 직후 Start 버튼 visible, 시계 동작.
-  - ☐ Start → Programs → 모든 1차 항목 실행.
+  - ☐ 부팅 직후 Start 버튼 visible, 시계 동작 (기본 `00:00`).
+  - ☐ Start → Programs → 모든 1차 항목 실행 (Notepad/Calc 는 work6 이라 disabled 표시 가능).
   - ☐ Start → Settings → 4 카테고리 모두 페이지가 뜸.
-  - ☐ Run… → `explorer /sub` 정상 실행.
-  - ☐ Alt+Tab 으로 윈도우 순환, taskbar 버튼 클릭으로 focus 이동.
-  - ☐ Settings 변경 후 재부팅 → 값 유지.
+  - ☐ Run… → `explorer /sub` 정상 실행. Tab 으로 input ↔ OK ↔ Cancel focus 순환.
+  - ☐ Alt+Tab / Alt+Shift+Tab 으로 윈도우 순환, taskbar 버튼 클릭으로 focus 이동.
+  - ☐ Settings 변경 후 재부팅 → 값 유지 (`time.show_seconds` 가 좋은 검증 지표).
   - ☐ Shutdown / Restart 메시지 동작.
+  - ☐ MENU.CFG 한 줄 망가뜨려 부팅 → 그 항목만 빠지고 debug 창에 경고.
   - ☐ 기존 콘솔 명령(`langmode 0~4`, `dir`, `cd`, …) 회귀 없음.
   - ☐ explorer / tetris / winhelo3 / lines / evtest 회귀 없음.
+  - ☐ 단독 Tab 으로 explorer tree↔list focus 정상.
 
 ## 4. 마일스톤 / 검증 시나리오
 

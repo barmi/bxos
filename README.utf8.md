@@ -28,7 +28,7 @@
 
 ## 빠른 시작 (macOS Apple Silicon)
 
-자세한 안내는 `SETUP-MAC.md`, 콘솔 명령은 `BXOS-COMMANDS.md`, 디스크 구조는 `_doc/storage.md` 참고. 부팅 후 콘솔에서 `explorer` 를 입력하면 2-pane 파일 탐색기가 뜹니다 — 자세한 조작은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#explorer-사용법) 참고.
+자세한 안내는 `SETUP-MAC.md`, 콘솔 명령은 `BXOS-COMMANDS.md`, 디스크 구조는 `_doc/storage.md` 참고. 부팅 직후 화면 하단에 **Start 버튼 + 시스템 트레이 시계** 만 보입니다 — 좌측 Start (또는 `Ctrl+Esc`) 로 메뉴를 띄워 Explorer / Console / Settings / Run / Tetris 등을 실행합니다. 자세한 조작은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#start-menu--run--settings-work5) 참고.
 
 ```bash
 # 1. 사전 도구 설치 (한 번만)
@@ -48,7 +48,15 @@ cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
 | 이미지 | 위치 | 내용 |
 |---|---|---|
 | 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 28개 (`explorer` 포함) + 데이터 파일 11개 |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 (`explorer`, `settings` 등) + 데이터 파일 + `/SYSTEM/MENU.CFG`, `/SYSTEM/SETTINGS.CFG` |
+
+### 시작 버튼 / 설정 (work5)
+
+* `Ctrl+Esc` 또는 좌측 `Start` 버튼 → cascading 메뉴. 항목의 밑줄 글자는 hotkey.
+* `Ctrl+R` 또는 `Start → Run...` → 모달 다이얼로그. `Tab` 으로 입력란 ↔ OK ↔ Cancel focus.
+* `Start → Settings` → 카테고리 트리(Display/Language/Time/About) + 자동 생성 위젯. 변경값은 `/SYSTEM/SETTINGS.CFG` 에 즉시 저장, 시스템 변수는 다음 부팅부터 적용.
+* `Alt+Tab` / `Alt+Shift+Tab` 으로 visible 윈도우 순환. taskbar 가운데 버튼 클릭으로도 focus 이동.
+* 메뉴 트리는 `/SYSTEM/MENU.CFG` 에 INI-like 로 선언 — 자세한 형식은 [`_doc/menu-config.md`](_doc/menu-config.md).
 
 ### 한글 표시 (EUC-KR / UTF-8)
 

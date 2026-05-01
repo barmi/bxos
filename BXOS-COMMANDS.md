@@ -2,6 +2,8 @@
 
 이 문서는 `./run-qemu.sh` 로 부팅한 뒤 콘솔 창에서 입력할 수 있는 명령을 정리합니다. 기본 구성은 `build/cmake/haribote.img` 를 FDD(`A:`)로 부팅하고 `build/cmake/data.img` 를 HDD(`C:`) 데이터 디스크로 붙입니다.
 
+work5 부터는 부팅 직후 데스크톱이 비어 있고 화면 하단에 **Start 버튼 + 시스템 트레이 시계** 만 보입니다. 콘솔/탐색기/설정 등은 좌측 Start 버튼(또는 `Ctrl+Esc`)을 눌러 열거나, **Start → Run...** (또는 `Ctrl+R`) 으로 명령을 실행할 수 있습니다. 자세한 조작은 아래 ["Start Menu / Run / Settings"](#start-menu--run--settings-work5) 단락 참고.
+
 명령 이름은 기본적으로 소문자로 입력하는 것을 권장합니다. 앱 파일은 FAT 8.3 이름으로 저장되어 있으며, `.he2` 확장자는 생략할 수 있습니다. 예를 들어 `winhelo` 와 `winhelo.he2` 는 같은 앱을 실행합니다.
 
 파일 경로는 데이터 디스크(`C:`) 안에서 `/` 로 구분합니다. 절대 경로(`/sub/a.txt`)와 현재 작업 디렉터리 기준 상대 경로(`sub/a.txt`, `../top.txt`)를 모두 사용할 수 있습니다. 파일/디렉터리 이름은 FAT 8.3 형식으로 저장되며, 긴 이름은 호스트 도구/게스트 모두 단순 절단 + 대문자 변환 규칙을 따릅니다.
@@ -18,7 +20,7 @@
 | `mkdir <경로>` | 빈 디렉터리를 만듭니다. 부모 디렉터리는 이미 있어야 합니다 (`mkdir -p` 미지원). |
 | `rmdir <경로>` | 빈 디렉터리를 삭제합니다. `.`/`..` 외 파일이나 하위 디렉터리가 있으면 실패합니다. |
 | `task` | 실행 중인 태스크 목록을 Debug Window에 표시합니다. |
-| `taskmgr` | 태스크 매니저 창을 엽니다. |
+| `taskmgr` | 태스크 매니저 창을 엽니다. (Start → Programs → Task Manager 와 동일.) |
 | `disk` | ATA 디스크 인식 정보와 데이터 디스크 부트 섹터를 표시합니다. |
 | `touch <경로>` | 빈 파일을 만듭니다. 이미 있으면 그대로 둡니다. |
 | `rm <경로>` | 파일을 삭제하고 FAT 클러스터를 해제합니다. 디렉터리는 `rmdir` 로 지웁니다. |
@@ -162,3 +164,107 @@ start explorer      # 새 콘솔에서 실행 (콘솔이 종료를 기다리지 
 창을 여는 앱은 실행 후 Enter를 눌러 닫는 경우가 많습니다. 일부 앱은 커서키, Space, 숫자 키를 사용합니다.
 
 기본 콘솔에서 앱을 실행하면 콘솔이 앱 종료를 기다릴 수 있습니다. 앱을 별도 콘솔에서 실행하려면 `start <앱명>`, 창만 필요한 앱을 조용히 실행하려면 `ncst <앱명>`을 사용해 보세요.
+
+## Start Menu / Run / Settings (work5)
+
+work5 부터 화면 하단에 win95 스타일 **taskbar** 가 추가됩니다. 좌측에 Start 버튼, 중앙에 실행 중 윈도우 목록 버튼, 우측에 시계가 있습니다.
+
+### Start 버튼
+
+* `Ctrl+Esc` 또는 좌측 `Start` 버튼 클릭으로 토글.
+* `↑` / `↓` 로 항목 이동, `→` / `Enter` 로 submenu 진입, `←` / `Esc` 로 한 단계 닫기.
+* 메뉴 항목 라벨에 **밑줄** 이 표시된 글자는 hotkey — 그 글자를 누르면 즉시 실행 (Win95 스타일).
+* 메뉴 밖을 클릭하면 닫힙니다.
+
+기본 트리 (Phase 8 시점):
+
+```
+Programs ▶  Explorer (E)
+            Console (C)
+            Notepad (N) — 미구현 (Calc 와 함께 work6)
+            Calc (L) — 미구현
+            Games ▶  Tetris (T)
+            ---
+            Task Manager (T)
+            Debug (D)
+Settings (S)
+---
+Run... (R)            ← Ctrl+R
+About BxOS (A)
+---
+Restart (R)
+Shutdown (U)
+```
+
+### Run 다이얼로그
+
+* `Ctrl+R` 또는 `Start → Run…` 으로 모달 다이얼로그.
+* 입력 → `Enter` 또는 `OK` 로 실행. cwd 는 부팅 시점의 루트 (`/`).
+* `Tab` 으로 입력란 ↔ `OK` ↔ `Cancel` focus 순환. 포커스된 버튼은 1px 점선 테두리.
+* `Esc` 로 닫기. `Cancel` focus 시 `Enter` 도 닫기.
+
+```text
+Open: /EXPLORER.HE2          ← 직접 경로
+Open: explorer /sub          ← 콘솔 이름 + 인수
+```
+
+### Settings 앱
+
+* `Start → Settings` 또는 콘솔에서 `/SETTINGS.HE2`.
+* 좌측 카테고리 (`Display` / `Language` / `Time` / `About`), 우측 자동 생성 페이지.
+* 변경 즉시 `/SYSTEM/SETTINGS.CFG` 에 저장. 시스템 변수는 다음 부팅부터 적용 (Settings 앱 미리보기는 즉시).
+
+| 카테고리 | 키 | 위젯 / 값 |
+|---|---|---|
+| Display | `display.background` | enum: `navy` / `black` / `gray` / `green` |
+| Language | `language.mode` | enum: 0(ASCII) / 1(EUC-JP) / 2(SJIS) / 3(EUC-KR) / 4(UTF-8) |
+| Time | `time.boot_offset_min` | int 0..1439 (분) — 부팅 시각 오프셋 |
+| Time | `time.show_seconds` | bool — true 면 시계가 `HH:MM:SS` 와 1초 갱신 |
+| About | `about` | action — 정보 안내 |
+
+### Taskbar 윈도우 목록 / Alt+Tab
+
+* taskbar 가운데 영역에 visible 한 app sheet 들이 버튼으로 표시됩니다 (최대 8개).
+* focus 중인 창의 버튼은 sunken (눌린) 상태로 표시.
+* 버튼 click → 해당 창을 top + focus.
+* `Alt+Tab` / `Alt+Shift+Tab` 으로 윈도우 순환 (system widget 제외).
+* 단독 `Tab` 은 focused app 으로 char(0x09) 전달 (explorer tree↔list focus 등).
+
+### 시스템 트레이 시계
+
+* 부팅 시각 = `time.boot_offset_min` (기본 0 → `00:00`). RTC 는 사용하지 않습니다.
+* 분 단위 갱신, `time.show_seconds=true` 일 때 초 단위 갱신 + `HH:MM:SS` 표시.
+
+### MENU.CFG / SETTINGS.CFG 형식
+
+자세한 스펙은 [`_doc/menu-config.md`](_doc/menu-config.md) 참고. 요약:
+
+```ini
+# /SYSTEM/MENU.CFG
+[start]
+items = Programs, Settings, ---, Run..., About BxOS, ---, Restart, Shutdown
+
+[item:Explorer]
+handler = exec:/EXPLORER.HE2
+hotkey  = E
+```
+
+* 핸들러 URI: `exec:<경로>` / `builtin:<id>` / `settings:<key>` / `submenu:<섹션>`.
+* 빌트인 id: `console`, `taskmgr`, `run`, `about`, `shutdown`, `restart`, `settings`, `debug`.
+* 잘못된 line 은 skip 되고 `[menu] bad handler: ...` 같은 경고가 **debug 창**에 누적 — `Start → Programs → Debug` 로 확인.
+
+```ini
+# /SYSTEM/SETTINGS.CFG
+display.background = navy
+language.mode = 0
+time.boot_offset_min = 0
+time.show_seconds = false
+```
+
+호스트에서 직접 확인:
+
+```bash
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/SYSTEM
+python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/MENU.CFG /tmp/m.cfg && cat /tmp/m.cfg
+python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/SETTINGS.CFG /tmp/s.cfg && cat /tmp/s.cfg
+```

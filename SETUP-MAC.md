@@ -159,6 +159,28 @@ python3 tools/modern/bxos_fat.py rm build/cmake/data.img:/sub/tetris.he2
 python3 tools/modern/bxos_fat.py rmdir build/cmake/data.img:/sub
 ```
 
+#### `/SYSTEM/` 디렉터리 검증 (work5)
+
+work5 부터 부팅 시 Start Menu / Settings 가 데이터 디스크의 `/SYSTEM/MENU.CFG` 와 `/SYSTEM/SETTINGS.CFG` 를 읽습니다. `data-img` 빌드는 `mkfat12.py` 로 root flat 이미지를 만든 뒤 `bxos_fat.py mkdir/cp` 로 두 파일을 install 합니다 (CMake 가 자동 처리). 호스트 검증:
+
+```bash
+# /SYSTEM/ 디렉터리 안 파일 목록
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/SYSTEM
+# 기대 출력: MENU.CFG, SETTINGS.CFG
+
+# 설치된 본이 default 와 일치하는지 확인
+python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/MENU.CFG /tmp/m.cfg
+diff _doc/system/menu.cfg.default /tmp/m.cfg && echo MENU.CFG OK
+
+python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/SETTINGS.CFG /tmp/s.cfg
+diff _doc/system/settings.cfg.default /tmp/s.cfg && echo SETTINGS.CFG OK
+
+# 사용자가 GUI 에서 설정을 바꾸면 SETTINGS.CFG 가 다시 기록됩니다.
+# 부팅된 게스트 안에서 `type /SYSTEM/SETTINGS.CFG` 로도 직접 확인 가능.
+```
+
+자세한 메뉴/설정 포맷은 [`_doc/menu-config.md`](_doc/menu-config.md) 와 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#start-menu--run--settings-work5) 참고.
+
 ---
 
 ### 2.6 파일 탐색기 (`explorer`) 빌드 / 실행 / 검증
