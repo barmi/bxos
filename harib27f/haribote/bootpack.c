@@ -48,6 +48,7 @@ struct SYSTEM_DIALOG {
 	int w, h;
 	char input[CONS_CMDLINE_MAX];
 	int len;
+	int focus;	/* work5 Phase 7: 0=input, 1=OK, 2=Cancel */
 };
 
 static struct SYSTEM_DIALOG g_run_dialog = { 0 };
@@ -73,6 +74,25 @@ static int settings_streq(char *a, char *b)
 	return strcmp(a, b) == 0;
 }
 
+static void settings_warn(const char *key, const char *value, const char *msg)
+{
+	char buf[96];
+	int n = 0;
+	const char *prefix = "[settings] ";
+	while (*prefix && n < (int) sizeof(buf) - 1) buf[n++] = *prefix++;
+	while (key && *key && n < (int) sizeof(buf) - 4) buf[n++] = *key++;
+	if (value != 0) {
+		buf[n++] = ' '; buf[n++] = '=';  buf[n++] = ' ';
+		while (*value && n < (int) sizeof(buf) - 4) buf[n++] = *value++;
+	}
+	buf[n++] = ':'; buf[n++] = ' ';
+	while (msg && *msg && n < (int) sizeof(buf) - 2) buf[n++] = *msg++;
+	buf[n++] = '\n';
+	buf[n] = 0;
+	dbg_putstr0(buf, COL8_FF0000);
+	return;
+}
+
 static void settings_apply_pair(char *key, char *value)
 {
 	if (settings_streq(key, "display.background")) {
@@ -82,24 +102,39 @@ static void settings_apply_pair(char *key, char *value)
 			g_background_color = COL8_848484;
 		} else if (settings_streq(value, "green")) {
 			g_background_color = COL8_008400;
+		} else if (settings_streq(value, "navy")) {
+			g_background_color = COL8_008484;
 		} else {
 			g_background_color = COL8_008484;
+			settings_warn(key, value, "unknown color, fell back to navy");
 		}
 	} else if (settings_streq(key, "language.mode")) {
-		if ('0' <= value[0] && value[0] <= '4') {
+		if ('0' <= value[0] && value[0] <= '4' && value[1] == 0) {
 			g_default_langmode = value[0] - '0';
+		} else {
+			settings_warn(key, value, "expected 0..4");
 		}
 	} else if (settings_streq(key, "time.boot_offset_min")) {
 		int i, v = 0;
 		for (i = 0; '0' <= value[i] && value[i] <= '9'; i++) {
 			v = v * 10 + value[i] - '0';
 		}
-		if (0 <= v && v < 24 * 60) {
+		if (value[i] == 0 && 0 <= v && v < 24 * 60) {
 			g_clock_seconds = v * 60;
 			g_clock_minutes = v;
+		} else {
+			settings_warn(key, value, "expected 0..1439 minutes");
 		}
 	} else if (settings_streq(key, "time.show_seconds")) {
-		g_clock_show_seconds = settings_streq(value, "true") || settings_streq(value, "1");
+		if (settings_streq(value, "true") || settings_streq(value, "1")) {
+			g_clock_show_seconds = 1;
+		} else if (settings_streq(value, "false") || settings_streq(value, "0")) {
+			g_clock_show_seconds = 0;
+		} else {
+			settings_warn(key, value, "expected true/false");
+		}
+	} else {
+		settings_warn(key, value, "unknown key");
 	}
 	return;
 }
@@ -524,6 +559,29 @@ static void system_draw_button(struct SYSTEM_DIALOG *dlg,
 	return;
 }
 
+/* work5 Phase 7: 버튼이 keyboard focus 일 때 안쪽 1px 점선 테두리를 그린다.
+ * 1px 점선은 짝수 픽셀만 검정으로 칠하는 패턴. */
+static void system_draw_focus_ring(struct SYSTEM_DIALOG *dlg,
+		int x0, int y0, int w, int h)
+{
+	int x, y;
+	int rx0 = x0 + 3, rx1 = x0 + w - 4;
+	int ry0 = y0 + 3, ry1 = y0 + h - 4;
+	for (x = rx0; x <= rx1; x++) {
+		if (((x - rx0) & 1) == 0) {
+			dlg->buf[ry0 * dlg->w + x] = COL8_000000;
+			dlg->buf[ry1 * dlg->w + x] = COL8_000000;
+		}
+	}
+	for (y = ry0; y <= ry1; y++) {
+		if (((y - ry0) & 1) == 0) {
+			dlg->buf[y * dlg->w + rx0] = COL8_000000;
+			dlg->buf[y * dlg->w + rx1] = COL8_000000;
+		}
+	}
+	return;
+}
+
 static void system_dialog_close(struct SYSTEM_DIALOG *dlg)
 {
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
@@ -549,10 +607,17 @@ static void system_run_redraw(void)
 	putfonts8_asc(dlg->buf, dlg->w, 18, 34, COL8_000000, (unsigned char *) "Open:");
 	make_textbox8(dlg->sht, 62, 32, 240, 18, COL8_FFFFFF);
 	putfonts8_asc(dlg->buf, dlg->w, 66, 34, COL8_000000, (unsigned char *) dlg->input);
-	boxfill8(dlg->buf, dlg->w, COL8_000000,
-			66 + dlg->len * 8, 34, 66 + dlg->len * 8, 49);
+	if (dlg->focus == 0) {
+		boxfill8(dlg->buf, dlg->w, COL8_000000,
+				66 + dlg->len * 8, 34, 66 + dlg->len * 8, 49);
+	}
 	system_draw_button(dlg, 170, 68, 60, 22, "OK");
 	system_draw_button(dlg, 240, 68, 60, 22, "Cancel");
+	if (dlg->focus == 1) {
+		system_draw_focus_ring(dlg, 170, 68, 60, 22);
+	} else if (dlg->focus == 2) {
+		system_draw_focus_ring(dlg, 240, 68, 60, 22);
+	}
 	sheet_refresh(dlg->sht, 0, 0, dlg->w, dlg->h);
 	return;
 }
@@ -579,6 +644,7 @@ static void system_run_open(void)
 	g_run_dialog.h = RUN_DIALOG_H;
 	g_run_dialog.len = 0;
 	g_run_dialog.input[0] = 0;
+	g_run_dialog.focus = 0;
 	g_run_dialog.sht = sheet_alloc(shtctl);
 	g_run_dialog.buf = (unsigned char *) memman_alloc_4k(memman, RUN_DIALOG_W * RUN_DIALOG_H);
 	sheet_setbuf(g_run_dialog.sht, g_run_dialog.buf, RUN_DIALOG_W, RUN_DIALOG_H, -1);
@@ -637,17 +703,34 @@ static int system_modal_handle_key(int key, int chr)
 	if (g_run_dialog.sht != 0) {
 		if (key == 0x01) {
 			system_dialog_close(&g_run_dialog);
+		} else if (key == 0x0f) {
+			/* work5 Phase 7: Tab → focus 순환 input → OK → Cancel → input */
+			g_run_dialog.focus = (g_run_dialog.focus + 1) % 3;
+			system_run_redraw();
 		} else if (key == 0x1c) {
-			system_run_submit();
-		} else if (chr == 0x08) {
+			/* Enter — focus 위치에 따라 동작이 다르다 */
+			if (g_run_dialog.focus == 2) {
+				system_dialog_close(&g_run_dialog);
+			} else {
+				system_run_submit();
+			}
+		} else if (g_run_dialog.focus == 0 && chr == 0x08) {
 			if (g_run_dialog.len > 0) {
 				g_run_dialog.input[--g_run_dialog.len] = 0;
 				system_run_redraw();
 			}
-		} else if (32 <= chr && chr <= 126 && g_run_dialog.len < CONS_CMDLINE_MAX - 1) {
+		} else if (g_run_dialog.focus == 0 &&
+				32 <= chr && chr <= 126 && g_run_dialog.len < CONS_CMDLINE_MAX - 1) {
 			g_run_dialog.input[g_run_dialog.len++] = chr;
 			g_run_dialog.input[g_run_dialog.len] = 0;
 			system_run_redraw();
+		} else if (g_run_dialog.focus != 0 && chr == ' ') {
+			/* Space on a focused button activates it (Win95-style). */
+			if (g_run_dialog.focus == 1) {
+				system_run_submit();
+			} else {
+				system_dialog_close(&g_run_dialog);
+			}
 		}
 		return 1;
 	}
@@ -1074,6 +1157,15 @@ void HariMain(void)
 					if (key_menu_consumed == 0 &&
 							system_modal_handle_key(i - 256, s[0]) != 0) {
 						key_menu_consumed = 1;
+					}
+					/* work5 Phase 7: 메뉴 열린 동안 ANY 키 leak 방지.
+					 * char 가 hotkey 와 매칭되면 항목 invoke. 아니면 그냥 consume. */
+					if (key_menu_consumed == 0 && start_menu_is_open()) {
+						if (s[0] != 0) {
+							start_menu_handle_char(s[0]);
+						}
+						key_menu_consumed = 1;
+						taskbar_full_redraw(start_hover, start_pressed);
 					}
 					if (key_menu_consumed != 0) {
 						s[0] = 0;

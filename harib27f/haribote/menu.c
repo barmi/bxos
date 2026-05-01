@@ -19,6 +19,7 @@ struct MENU_ITEM_DEF {
 	int handler_id;
 	int flags;
 	char arg[KMENU_ARG_MAX];
+	char hotkey;
 };
 
 static struct MENU_ITEM_DEF g_item_defs[MENU_ITEM_DEF_MAX];
@@ -36,6 +37,12 @@ static void menu_putascii(char *vram, int xsize, int x, int y,
 	return;
 }
 
+static char menu_lower_ascii(char c)
+{
+	if ('A' <= c && c <= 'Z') return c + 0x20;
+	return c;
+}
+
 static void menu_set_item(struct MENU_ITEM *item, char *label,
 		int handler_id, int submenu, int flags, char *arg)
 {
@@ -44,12 +51,19 @@ static void menu_set_item(struct MENU_ITEM *item, char *label,
 	item->handler_id = handler_id;
 	item->submenu = submenu;
 	item->flags = flags;
+	item->hotkey = 0;
 	if (arg != 0) {
 		strncpy(item->arg, arg, KMENU_ARG_MAX - 1);
 		item->arg[KMENU_ARG_MAX - 1] = 0;
 	} else {
 		item->arg[0] = 0;
 	}
+	return;
+}
+
+static void menu_set_hotkey(struct MENU_ITEM *item, char hk)
+{
+	item->hotkey = menu_lower_ascii(hk);
 	return;
 }
 
@@ -119,6 +133,7 @@ static int menu_get_section(char *section)
 		return idx;
 	}
 	if (g_menu_count >= KMENU_MAX_MENUS) {
+		dbg_putstr0("[menu] too many sections\n", COL8_FF0000);
 		return -1;
 	}
 	idx = g_menu_count++;
@@ -149,6 +164,7 @@ static struct MENU_ITEM_DEF *menu_get_item_def(char *label)
 		return def;
 	}
 	if (g_item_def_count >= MENU_ITEM_DEF_MAX) {
+		dbg_putstr0("[menu] too many [item:*] definitions\n", COL8_FF0000);
 		return 0;
 	}
 	def = &g_item_defs[g_item_def_count++];
@@ -156,6 +172,7 @@ static struct MENU_ITEM_DEF *menu_get_item_def(char *label)
 	def->handler_id = KMENU_HANDLER_NONE;
 	def->flags = 0;
 	def->arg[0] = 0;
+	def->hotkey = 0;
 	return def;
 }
 
@@ -260,6 +277,7 @@ static int menu_resolve_loaded(void)
 			item->handler_id = def->handler_id;
 			item->flags = def->flags;
 			item->submenu = 0;
+			item->hotkey = def->hotkey;
 			menu_copy(item->arg, KMENU_ARG_MAX, def->arg);
 			if (def->handler_id == KMENU_HANDLER_SUBMENU) {
 				subidx = menu_find_section(def->arg);
@@ -352,7 +370,24 @@ static int menu_load_config(void)
 		if (current_menu >= 0 && menu_streq(key, "items")) {
 			menu_parse_items_line(&g_menus[current_menu], value);
 		} else if (current_item != 0 && menu_streq(key, "handler")) {
-			menu_parse_handler(current_item, value);
+			if (!menu_parse_handler(current_item, value)) {
+				char msg[96];
+				int n = 0;
+				const char *prefix = "[menu] bad handler: ";
+				while (*prefix && n < (int) sizeof(msg) - 1) msg[n++] = *prefix++;
+				{ char *p = current_item->label;
+					while (*p && n < (int) sizeof(msg) - 5) msg[n++] = *p++; }
+				msg[n++] = ' '; msg[n++] = '='; msg[n++] = ' ';
+				{ char *p = value;
+					while (*p && n < (int) sizeof(msg) - 2) msg[n++] = *p++; }
+				msg[n++] = '\n';
+				msg[n] = 0;
+				dbg_putstr0(msg, COL8_FF0000);
+			}
+		} else if (current_item != 0 && menu_streq(key, "hotkey")) {
+			if (value[0] != 0) {
+				current_item->hotkey = menu_lower_ascii(value[0]);
+			}
 		}
 	}
 	return menu_resolve_loaded();
@@ -369,6 +404,39 @@ static int menu_first_selectable(struct KERNEL_MENU *menu)
 	return -1;
 }
 
+/* item->label 안에서 hotkey 와 같은(대소문자 무시) 첫 번째 글자 인덱스를
+ * 돌려준다. hotkey 가 0 이거나 라벨에 없으면 -1. */
+static int menu_hotkey_pos(struct MENU_ITEM *item)
+{
+	int i;
+	if (item->hotkey == 0) return -1;
+	for (i = 0; item->label[i] != 0; i++) {
+		if (menu_lower_ascii(item->label[i]) == item->hotkey) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/* 메뉴 폭에 맞춰 라벨을 자른다. 자를 때 마지막 글자를 '.' 로 대체.
+ * out 은 KMENU_LABEL_MAX 이상이어야 한다. 반환값은 그려질 문자 수. */
+static int menu_label_fit(char *out, char *src, int avail_chars)
+{
+	int len = 0, i;
+	while (src[len] != 0) len++;
+	if (avail_chars < 1) avail_chars = 1;
+	if (avail_chars > KMENU_LABEL_MAX - 1) avail_chars = KMENU_LABEL_MAX - 1;
+	if (len <= avail_chars) {
+		for (i = 0; i < len; i++) out[i] = src[i];
+		out[len] = 0;
+		return len;
+	}
+	for (i = 0; i < avail_chars; i++) out[i] = src[i];
+	out[avail_chars - 1] = '.';
+	out[avail_chars] = 0;
+	return avail_chars;
+}
+
 static void menu_draw_item(struct KERNEL_MENU *menu, int idx)
 {
 	struct MENU_ITEM *item = &menu->items[idx];
@@ -377,6 +445,10 @@ static void menu_draw_item(struct KERNEL_MENU *menu, int idx)
 		((item->flags & (KMENU_FLAG_SEPARATOR | KMENU_FLAG_DISABLED)) == 0);
 	int bg = selected ? COL8_000084 : COL8_C6C6C6;
 	int fg = selected ? COL8_FFFFFF : COL8_000000;
+	int label_x = 8, label_y = y + 3;
+	int avail_chars, drawn;
+	int hk_pos;
+	char fitted[KMENU_LABEL_MAX];
 
 	if ((item->flags & KMENU_FLAG_DISABLED) != 0) {
 		fg = COL8_848484;
@@ -387,7 +459,16 @@ static void menu_draw_item(struct KERNEL_MENU *menu, int idx)
 		boxfill8(menu->sht->buf, menu->sht->bxsize, COL8_FFFFFF, 8, y + 11, menu->w - 9, y + 11);
 		return;
 	}
-	menu_putascii(menu->sht->buf, menu->sht->bxsize, 8, y + 3, fg, (unsigned char *) item->label);
+	avail_chars = (menu->w - 16 - 16) / 8;	/* left 8 + right 16(arrow) */
+	drawn = menu_label_fit(fitted, item->label, avail_chars);
+	menu_putascii(menu->sht->buf, menu->sht->bxsize, label_x, label_y, fg,
+			(unsigned char *) fitted);
+	hk_pos = menu_hotkey_pos(item);
+	if (hk_pos >= 0 && hk_pos < drawn) {
+		int ux = label_x + hk_pos * 8;
+		boxfill8(menu->sht->buf, menu->sht->bxsize, fg,
+				ux, label_y + 14, ux + 7, label_y + 14);
+	}
 	if ((item->flags & KMENU_FLAG_SUBMENU) != 0) {
 		menu_putascii(menu->sht->buf, menu->sht->bxsize, menu->w - 16, y + 3, fg, (unsigned char *) ">");
 	}
@@ -463,20 +544,31 @@ void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, in
 		menu_get_section("start");
 		menu_get_section("start/Programs");
 		menu_set_item(&g_menus[0].items[0], "Programs", KMENU_HANDLER_SUBMENU, 1, KMENU_FLAG_SUBMENU, "start/Programs");
+		menu_set_hotkey(&g_menus[0].items[0], 'P');
 		menu_set_item(&g_menus[0].items[1], "Settings", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "settings");
+		menu_set_hotkey(&g_menus[0].items[1], 'S');
 		menu_set_item(&g_menus[0].items[2], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
 		menu_set_item(&g_menus[0].items[3], "Run...", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "run");
+		menu_set_hotkey(&g_menus[0].items[3], 'R');
 		menu_set_item(&g_menus[0].items[4], "About BxOS", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "about");
+		menu_set_hotkey(&g_menus[0].items[4], 'A');
 		menu_set_item(&g_menus[0].items[5], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
 		menu_set_item(&g_menus[0].items[6], "Restart", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "restart");
+		menu_set_hotkey(&g_menus[0].items[6], 'R');
 		menu_set_item(&g_menus[0].items[7], "Shutdown", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "shutdown");
+		menu_set_hotkey(&g_menus[0].items[7], 'U');
 		g_menus[0].n_items = 8;
 		menu_set_item(&g_menus[1].items[0], "Explorer", KMENU_HANDLER_EXEC, 0, 0, "/EXPLORER.HE2");
+		menu_set_hotkey(&g_menus[1].items[0], 'E');
 		menu_set_item(&g_menus[1].items[1], "Console", KMENU_HANDLER_BUILTIN, 0, 0, "console");
+		menu_set_hotkey(&g_menus[1].items[1], 'C');
 		menu_set_item(&g_menus[1].items[2], "Tetris", KMENU_HANDLER_EXEC, 0, 0, "/TETRIS.HE2");
+		menu_set_hotkey(&g_menus[1].items[2], 'T');
 		menu_set_item(&g_menus[1].items[3], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
 		menu_set_item(&g_menus[1].items[4], "Task Manager", KMENU_HANDLER_BUILTIN, 0, 0, "taskmgr");
+		menu_set_hotkey(&g_menus[1].items[4], 'T');
 		menu_set_item(&g_menus[1].items[5], "Debug", KMENU_HANDLER_BUILTIN, 0, 0, "debug");
+		menu_set_hotkey(&g_menus[1].items[5], 'D');
 		g_menus[1].n_items = 6;
 	}
 	for (i = 0; i < g_menu_count; i++) {
@@ -651,6 +743,31 @@ static void menu_invoke(struct KERNEL_MENU *menu)
 	return;
 }
 
+/* work5 Phase 7: char(=label hotkey) 가 들어왔을 때 매칭되는 enabled 항목으로
+ * selection 을 옮기고, leaf 면 그대로 invoke, submenu 면 child 를 연다.
+ * 매칭에 실패하면 그냥 0 반환. */
+static int menu_try_hotkey(struct KERNEL_MENU *menu, char chr)
+{
+	int i;
+	char target;
+	if (chr == 0) return 0;
+	target = menu_lower_ascii(chr);
+	for (i = 0; i < menu->n_items; i++) {
+		struct MENU_ITEM *it = &menu->items[i];
+		if ((it->flags & (KMENU_FLAG_SEPARATOR | KMENU_FLAG_DISABLED)) != 0) {
+			continue;
+		}
+		if (it->hotkey != 0 && it->hotkey == target) {
+			menu->selected = i;
+			menu_close_child(menu);
+			menu_redraw(menu);
+			menu_invoke(menu);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int start_menu_handle_key(int key)
 {
 	struct KERNEL_MENU *menu;
@@ -692,7 +809,19 @@ int start_menu_handle_key(int key)
 		}
 		return 1;
 	}
+	/* navigation 키가 아니면 0 반환 — 호출자가 char hotkey 매칭으로 넘긴다. */
 	return 0;
+}
+
+int start_menu_handle_char(char chr)
+{
+	struct KERNEL_MENU *menu;
+	if (!g_start_menu_open) return 0;
+	if (chr == 0) return 1;
+	menu = menu_deepest_open();
+	menu_try_hotkey(menu, chr);
+	/* 매칭 실패해도 일단 consume — 메뉴가 열린 동안 char leak 방지. */
+	return 1;
 }
 
 static struct KERNEL_MENU *menu_hit(int mx, int my, int *item_idx)

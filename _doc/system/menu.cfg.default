@@ -11,43 +11,57 @@ items = Tetris
 
 [item:Programs]
 handler = submenu:start/Programs
+hotkey = P
 
 [item:Settings]
 handler = builtin:settings
+hotkey = S
 
 [item:Run...]
 handler = builtin:run
+hotkey = R
 shortcut = Ctrl+R
 
 [item:About BxOS]
 handler = builtin:about
+hotkey = A
 
 [item:Restart]
 handler = builtin:restart
+hotkey = R
 
 [item:Shutdown]
 handler = builtin:shutdown
+hotkey = U
 
 [item:Explorer]
 handler = exec:/EXPLORER.HE2
+hotkey = E
 
 [item:Console]
 handler = builtin:console
+hotkey = C
 
 [item:Notepad]
 handler = exec:/NOTEPAD.HE2
+hotkey = N
 
 [item:Calc]
 handler = exec:/CALC.HE2
+hotkey = L
 
 [item:Games]
 handler = submenu:start/Programs/Games
+hotkey = G
 
 [item:Tetris]
 handler = exec:/TETRIS.HE2
+hotkey = T
 
 [item:Task Manager]
 handler = builtin:taskmgr
+hotkey = T
 
 [item:Debug]
 handler = builtin:debug
+hotkey = D

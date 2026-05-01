@@ -378,6 +378,7 @@ struct MENU_ITEM {
 	int submenu;
 	int flags;
 	char arg[KMENU_ARG_MAX];
+	char hotkey;	/* work5 Phase 7: 0=없음, lowercased ASCII letter/digit */
 };
 struct KERNEL_MENU {
 	struct SHEET *sht;
@@ -655,6 +656,7 @@ void start_menu_toggle(void);
 void start_menu_close_all(void);
 int start_menu_is_open(void);
 int start_menu_handle_key(int key);
+int start_menu_handle_char(char chr);
 int start_menu_handle_mouse(int mx, int my, int btn, int old_btn);
 void start_menu_dispatch(struct MENU_ITEM *item);
 

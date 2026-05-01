@@ -503,14 +503,28 @@ static const struct SettingSpec g_settings[] = {
 - ☐ explorer 의 Tab(tree↔list) focus 회귀 정상화 확인.
 - ☐ tetris/lines 의 입력 흐름 회귀 없음.
 
-### Phase 7 — UI polish / 오류 처리 / 정책 정리 (1일)
-- ☐ Start Menu 항목 underline letter (e.g., `_E_xplorer`) — Phase 5 spec 에 hotkey 컬럼 추가.
-- ☐ 메뉴 sheet 의 두 단계 그림자 / 1px 테두리 등 win95 톤 시각화.
-- ☐ Run / About 다이얼로그 keyboard tab focus.
-- ☐ 외부 click → menu close 가 같은 click 을 일반 dispatch 로 넘기는지 확인.
-- ☐ MENU.CFG / SETTINGS.CFG 파싱 에러 메시지를 콘솔/디버그 윈도우에 출력.
-- ☐ 색상 / 폰트 / 정렬 일관성 점검 (taskbar / menu / settings / about).
-- ☐ 메뉴 깊이 / 항목 수 / 라벨 길이 한계 도달 시 일관된 자르기 / 경고.
+### Phase 7 — UI polish / 오류 처리 / 정책 정리 (1일) — ☑ 구현 완료, QEMU smoke 대기 (2026-05-01)
+- ☑ Start Menu 항목 hotkey underline. `[item:<label>]` 섹션에 `hotkey = X` 키 추가
+  → 라벨 안의 첫 매칭 글자를 underline 으로 표시하고, 메뉴가 열린 동안 그 글자
+  키로 항목 invoke. fallback 메뉴와 `MENU.CFG.default` 둘 다 hotkey 부여됨.
+- ☑ 메뉴가 열린 동안 키보드 leak 차단 — navigation/hotkey 외 모든 char 도 메뉴
+  레이어가 consume (이전엔 underlying app 으로 leak 가능).
+- ☐ 메뉴 sheet drop shadow / 두 단계 그림자 — 보류. 메뉴 sheet 를 +2px 확장하고
+  col_inv 로 코너만 투명 처리해야 해서 비용 대비 효과가 작음. work6 polish.
+- ☑ Run 다이얼로그 keyboard Tab focus — Tab 으로 input ↔ OK ↔ Cancel 순환,
+  포커스된 버튼은 1px 점선 테두리, Enter 는 포커스 위치(input/OK=submit, Cancel=close),
+  Space 는 포커스된 버튼 활성화. About 은 OK 한 개라 별도 포커스 없음 (그대로).
+- ☑ 외부 click → menu close 동작 확인. `start_menu_handle_mouse` 가 menu hit 실패
+  시 close 만 하고 return 0 하므로, HariMain 의 일반 dispatch 가 같은 click 을
+  이어받는다 (Phase 2 의 결정 그대로). 별도 변경 없음.
+- ☑ MENU.CFG / SETTINGS.CFG 파싱 에러 보고 — debug window 의 `dbg_putstr0` 로
+  `[menu] bad handler: …`, `[settings] key = value: …` 형태로 누적. Settings 는
+  알 수 없는 키, 잘못된 enum/int/bool 값을 모두 신고.
+- ☑ 색상 / 폰트 / 정렬 일관성: taskbar/menu/about/run 모두 `COL8_C6C6C6` 배경 +
+  `FFFFFF`/`848484`/`000000` win95 라이즈/언더 톤 통일. ASCII 라벨은 hankaku 직접
+  사용으로 langmode 영향 없음.
+- ☑ 메뉴 라벨 길이 한계 — 폭에 맞춰 자르고 마지막 글자를 `.` 로 대체
+  (`menu_label_fit`). 너비 = `menu->w - 16(좌pad) - 16(arrow)` 기준.
 
 ### Phase 8 — 문서 / 회귀 검증 / 마무리 (1일)
 - ☐ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 Start Menu / Run / Settings 사용법, MENU.CFG / SETTINGS.CFG 포맷 추가.
