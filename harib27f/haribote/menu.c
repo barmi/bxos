@@ -6,8 +6,24 @@
 static struct SHTCTL *g_menu_ctl;
 static struct MEMMAN *g_menu_memman;
 static int g_menu_scrnx, g_menu_scrny;
-static struct KERNEL_MENU g_menu_root;
-static struct KERNEL_MENU g_menu_programs;
+static struct KERNEL_MENU g_menus[KMENU_MAX_MENUS];
+static char g_menu_sections[KMENU_MAX_MENUS][KMENU_SECTION_MAX];
+static int g_menu_count;
+
+#define MENU_CFG_PATH	"/SYSTEM/MENU.CFG"
+#define MENU_CFG_BUF_MAX	4096
+#define MENU_ITEM_DEF_MAX	64
+
+struct MENU_ITEM_DEF {
+	char label[KMENU_LABEL_MAX];
+	int handler_id;
+	int flags;
+	char arg[KMENU_ARG_MAX];
+};
+
+static struct MENU_ITEM_DEF g_item_defs[MENU_ITEM_DEF_MAX];
+static int g_item_def_count;
+static char g_menu_cfg_buf[MENU_CFG_BUF_MAX];
 
 static void menu_putascii(char *vram, int xsize, int x, int y,
 		unsigned char c, unsigned char *s)
@@ -35,6 +51,309 @@ static void menu_set_item(struct MENU_ITEM *item, char *label,
 		item->arg[0] = 0;
 	}
 	return;
+}
+
+static int menu_streq(char *a, char *b)
+{
+	return strcmp(a, b) == 0;
+}
+
+static char *menu_trim(char *s)
+{
+	char *e;
+	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') {
+		s++;
+	}
+	e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) {
+		*--e = 0;
+	}
+	return s;
+}
+
+static void menu_copy(char *dst, int dstsz, char *src)
+{
+	strncpy(dst, src, dstsz - 1);
+	dst[dstsz - 1] = 0;
+	return;
+}
+
+static void menu_clear_loaded(void)
+{
+	int i, j;
+	g_menu_count = 0;
+	g_item_def_count = 0;
+	for (i = 0; i < KMENU_MAX_MENUS; i++) {
+		g_menu_sections[i][0] = 0;
+		g_menus[i].n_items = 0;
+		g_menus[i].selected = -1;
+		g_menus[i].parent = 0;
+		g_menus[i].child = 0;
+		g_menus[i].sht = 0;
+		for (j = 0; j < KMENU_MAX_ITEMS; j++) {
+			g_menus[i].items[j].label[0] = 0;
+			g_menus[i].items[j].arg[0] = 0;
+			g_menus[i].items[j].handler_id = KMENU_HANDLER_NONE;
+			g_menus[i].items[j].submenu = 0;
+			g_menus[i].items[j].flags = 0;
+		}
+	}
+	return;
+}
+
+static int menu_find_section(char *section)
+{
+	int i;
+	for (i = 0; i < g_menu_count; i++) {
+		if (menu_streq(g_menu_sections[i], section)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+static int menu_get_section(char *section)
+{
+	int idx = menu_find_section(section);
+	if (idx >= 0) {
+		return idx;
+	}
+	if (g_menu_count >= KMENU_MAX_MENUS) {
+		return -1;
+	}
+	idx = g_menu_count++;
+	menu_copy(g_menu_sections[idx], KMENU_SECTION_MAX, section);
+	g_menus[idx].level = idx;
+	g_menus[idx].n_items = 0;
+	g_menus[idx].selected = -1;
+	g_menus[idx].parent = 0;
+	g_menus[idx].child = 0;
+	return idx;
+}
+
+static struct MENU_ITEM_DEF *menu_find_item_def(char *label)
+{
+	int i;
+	for (i = 0; i < g_item_def_count; i++) {
+		if (menu_streq(g_item_defs[i].label, label)) {
+			return &g_item_defs[i];
+		}
+	}
+	return 0;
+}
+
+static struct MENU_ITEM_DEF *menu_get_item_def(char *label)
+{
+	struct MENU_ITEM_DEF *def = menu_find_item_def(label);
+	if (def != 0) {
+		return def;
+	}
+	if (g_item_def_count >= MENU_ITEM_DEF_MAX) {
+		return 0;
+	}
+	def = &g_item_defs[g_item_def_count++];
+	menu_copy(def->label, KMENU_LABEL_MAX, label);
+	def->handler_id = KMENU_HANDLER_NONE;
+	def->flags = 0;
+	def->arg[0] = 0;
+	return def;
+}
+
+static int menu_parse_handler(struct MENU_ITEM_DEF *def, char *value)
+{
+	if (strncmp(value, "exec:", 5) == 0) {
+		def->handler_id = KMENU_HANDLER_EXEC;
+		def->flags = 0;
+		menu_copy(def->arg, KMENU_ARG_MAX, value + 5);
+		return 1;
+	}
+	if (strncmp(value, "builtin:", 8) == 0) {
+		def->handler_id = KMENU_HANDLER_BUILTIN;
+		def->flags = 0;
+		menu_copy(def->arg, KMENU_ARG_MAX, value + 8);
+		return 1;
+	}
+	if (strncmp(value, "settings:", 9) == 0) {
+		def->handler_id = KMENU_HANDLER_SETTINGS;
+		def->flags = 0;
+		menu_copy(def->arg, KMENU_ARG_MAX, value + 9);
+		return 1;
+	}
+	if (strncmp(value, "submenu:", 8) == 0) {
+		def->handler_id = KMENU_HANDLER_SUBMENU;
+		def->flags = KMENU_FLAG_SUBMENU;
+		menu_copy(def->arg, KMENU_ARG_MAX, value + 8);
+		return 1;
+	}
+	def->handler_id = KMENU_HANDLER_NONE;
+	def->flags = KMENU_FLAG_DISABLED;
+	def->arg[0] = 0;
+	return 0;
+}
+
+static void menu_parse_items_line(struct KERNEL_MENU *menu, char *value)
+{
+	char *p = value, *comma, *tok;
+	menu->n_items = 0;
+	for (;;) {
+		comma = p;
+		while (*comma != 0 && *comma != ',') {
+			comma++;
+		}
+		if (*comma == ',') {
+			*comma = 0;
+		}
+		tok = menu_trim(p);
+		if (tok[0] != 0 && menu->n_items < KMENU_MAX_ITEMS) {
+			if (menu_streq(tok, "---")) {
+				menu_set_item(&menu->items[menu->n_items++], "",
+						KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
+			} else {
+				menu_set_item(&menu->items[menu->n_items++], tok,
+						KMENU_HANDLER_NONE, 0, 0, 0);
+			}
+		}
+		if (*comma == 0) {
+			break;
+		}
+		p = comma + 1;
+	}
+	return;
+}
+
+static int menu_resolve_loaded(void)
+{
+	int mi, ii, out, subidx, root_idx;
+	struct MENU_ITEM *item;
+	struct MENU_ITEM_DEF *def;
+	struct KERNEL_MENU tmp_menu;
+	char tmp_section[KMENU_SECTION_MAX];
+
+	root_idx = menu_find_section("start");
+	if (root_idx < 0 || g_menus[root_idx].n_items <= 0) {
+		return 0;
+	}
+	if (root_idx != 0) {
+		tmp_menu = g_menus[0];
+		g_menus[0] = g_menus[root_idx];
+		g_menus[root_idx] = tmp_menu;
+		menu_copy(tmp_section, KMENU_SECTION_MAX, g_menu_sections[0]);
+		menu_copy(g_menu_sections[0], KMENU_SECTION_MAX, g_menu_sections[root_idx]);
+		menu_copy(g_menu_sections[root_idx], KMENU_SECTION_MAX, tmp_section);
+	}
+
+	for (mi = 0; mi < g_menu_count; mi++) {
+		out = 0;
+		for (ii = 0; ii < g_menus[mi].n_items; ii++) {
+			item = &g_menus[mi].items[ii];
+			if ((item->flags & KMENU_FLAG_SEPARATOR) != 0) {
+				g_menus[mi].items[out++] = *item;
+				continue;
+			}
+			def = menu_find_item_def(item->label);
+			if (def == 0 || def->handler_id == KMENU_HANDLER_NONE ||
+					(def->flags & KMENU_FLAG_DISABLED) != 0) {
+				continue;
+			}
+			item->handler_id = def->handler_id;
+			item->flags = def->flags;
+			item->submenu = 0;
+			menu_copy(item->arg, KMENU_ARG_MAX, def->arg);
+			if (def->handler_id == KMENU_HANDLER_SUBMENU) {
+				subidx = menu_find_section(def->arg);
+				if (subidx < 0 || g_menus[subidx].n_items <= 0) {
+					continue;
+				}
+				item->submenu = subidx;
+				item->flags |= KMENU_FLAG_SUBMENU;
+			}
+			g_menus[mi].items[out++] = *item;
+		}
+		g_menus[mi].n_items = out;
+	}
+	if (g_menus[0].n_items <= 0) {
+		return 0;
+	}
+	return 1;
+}
+
+static int menu_load_config(void)
+{
+	struct FS_FILE file;
+	int size, n, line_no = 0;
+	char *p, *line, *eq, *section, *key, *value, *end;
+	int current_menu = -1;
+	struct MENU_ITEM_DEF *current_item = 0;
+
+	menu_clear_loaded();
+	if (fs_data_open_path(0, MENU_CFG_PATH, &file) != 0) {
+		return 0;
+	}
+	size = file.finfo.size;
+	if (size <= 0 || size >= MENU_CFG_BUF_MAX) {
+		return 0;
+	}
+	n = fs_file_read(&file, 0, g_menu_cfg_buf, size);
+	if (n != size) {
+		return 0;
+	}
+	g_menu_cfg_buf[size] = 0;
+	p = g_menu_cfg_buf;
+	while (*p != 0) {
+		line = p;
+		while (*p != 0 && *p != '\n') {
+			p++;
+		}
+		if (*p == '\n') {
+			*p++ = 0;
+		}
+		line_no++;
+		(void) line_no;
+		for (end = line; *end != 0; end++) {
+			if (*end == '#' || *end == ';') {
+				*end = 0;
+				break;
+			}
+		}
+		line = menu_trim(line);
+		if (line[0] == 0) {
+			continue;
+		}
+		if (line[0] == '[') {
+			end = line + strlen(line) - 1;
+			if (end <= line || *end != ']') {
+				current_menu = -1;
+				current_item = 0;
+				continue;
+			}
+			*end = 0;
+			section = menu_trim(line + 1);
+			if (strncmp(section, "item:", 5) == 0) {
+				current_item = menu_get_item_def(menu_trim(section + 5));
+				current_menu = -1;
+			} else {
+				current_menu = menu_get_section(section);
+				current_item = 0;
+			}
+			continue;
+		}
+		eq = line;
+		while (*eq != 0 && *eq != '=') {
+			eq++;
+		}
+		if (*eq != '=') {
+			continue;
+		}
+		*eq = 0;
+		key = menu_trim(line);
+		value = menu_trim(eq + 1);
+		if (current_menu >= 0 && menu_streq(key, "items")) {
+			menu_parse_items_line(&g_menus[current_menu], value);
+		} else if (current_item != 0 && menu_streq(key, "handler")) {
+			menu_parse_handler(current_item, value);
+		}
+	}
+	return menu_resolve_loaded();
 }
 
 static int menu_first_selectable(struct KERNEL_MENU *menu)
@@ -131,32 +450,38 @@ static void menu_init_sheet(struct KERNEL_MENU *menu, int level, int n_items)
 
 void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, int scrny)
 {
+	int i;
 	g_menu_ctl = shtctl;
 	g_menu_memman = memman;
 	g_menu_scrnx = scrnx;
 	g_menu_scrny = scrny;
 
-	g_menu_root.sht = sheet_alloc(shtctl);
-	g_menu_root.parent = 0;
-	menu_set_item(&g_menu_root.items[0], "Programs", KMENU_HANDLER_SUBMENU, 1, KMENU_FLAG_SUBMENU, "start/Programs");
-	menu_set_item(&g_menu_root.items[1], "Settings", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "settings");
-	menu_set_item(&g_menu_root.items[2], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
-	menu_set_item(&g_menu_root.items[3], "Run...", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "run");
-	menu_set_item(&g_menu_root.items[4], "About BxOS", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "about");
-	menu_set_item(&g_menu_root.items[5], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
-	menu_set_item(&g_menu_root.items[6], "Restart", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "restart");
-	menu_set_item(&g_menu_root.items[7], "Shutdown", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "shutdown");
-	menu_init_sheet(&g_menu_root, 0, 8);
-
-	g_menu_programs.sht = sheet_alloc(shtctl);
-	g_menu_programs.parent = &g_menu_root;
-	menu_set_item(&g_menu_programs.items[0], "Explorer", KMENU_HANDLER_EXEC, 0, 0, "/EXPLORER.HE2");
-	menu_set_item(&g_menu_programs.items[1], "Console", KMENU_HANDLER_BUILTIN, 0, 0, "console");
-	menu_set_item(&g_menu_programs.items[2], "Tetris", KMENU_HANDLER_EXEC, 0, 0, "/TETRIS.HE2");
-	menu_set_item(&g_menu_programs.items[3], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
-	menu_set_item(&g_menu_programs.items[4], "Task Manager", KMENU_HANDLER_BUILTIN, 0, 0, "taskmgr");
-	menu_init_sheet(&g_menu_programs, 1, 5);
-	g_menu_root.child = 0;
+	if (!menu_load_config()) {
+		menu_clear_loaded();
+		menu_get_section("start");
+		menu_get_section("start/Programs");
+		menu_set_item(&g_menus[0].items[0], "Programs", KMENU_HANDLER_SUBMENU, 1, KMENU_FLAG_SUBMENU, "start/Programs");
+		menu_set_item(&g_menus[0].items[1], "Settings", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "settings");
+		menu_set_item(&g_menus[0].items[2], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
+		menu_set_item(&g_menus[0].items[3], "Run...", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "run");
+		menu_set_item(&g_menus[0].items[4], "About BxOS", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "about");
+		menu_set_item(&g_menus[0].items[5], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
+		menu_set_item(&g_menus[0].items[6], "Restart", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "restart");
+		menu_set_item(&g_menus[0].items[7], "Shutdown", KMENU_HANDLER_BUILTIN, 0, KMENU_FLAG_DISABLED, "shutdown");
+		g_menus[0].n_items = 8;
+		menu_set_item(&g_menus[1].items[0], "Explorer", KMENU_HANDLER_EXEC, 0, 0, "/EXPLORER.HE2");
+		menu_set_item(&g_menus[1].items[1], "Console", KMENU_HANDLER_BUILTIN, 0, 0, "console");
+		menu_set_item(&g_menus[1].items[2], "Tetris", KMENU_HANDLER_EXEC, 0, 0, "/TETRIS.HE2");
+		menu_set_item(&g_menus[1].items[3], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
+		menu_set_item(&g_menus[1].items[4], "Task Manager", KMENU_HANDLER_BUILTIN, 0, 0, "taskmgr");
+		g_menus[1].n_items = 5;
+	}
+	for (i = 0; i < g_menu_count; i++) {
+		g_menus[i].sht = sheet_alloc(shtctl);
+		g_menus[i].parent = 0;
+		g_menus[i].child = 0;
+		menu_init_sheet(&g_menus[i], i, g_menus[i].n_items);
+	}
 	return;
 }
 
@@ -173,9 +498,9 @@ static void menu_close_child(struct KERNEL_MENU *menu)
 
 void start_menu_close_all(void)
 {
-	menu_close_child(&g_menu_root);
-	if (g_menu_root.sht != 0) {
-		sheet_updown(g_menu_root.sht, -1);
+	menu_close_child(&g_menus[0]);
+	if (g_menus[0].sht != 0) {
+		sheet_updown(g_menus[0].sht, -1);
 	}
 	g_start_menu_open = 0;
 	menu_cursor_ensure_visible();
@@ -189,8 +514,8 @@ int start_menu_is_open(void)
 
 static struct KERNEL_MENU *menu_for_submenu(int submenu)
 {
-	if (submenu == 1) {
-		return &g_menu_programs;
+	if (0 <= submenu && submenu < g_menu_count) {
+		return &g_menus[submenu];
 	}
 	return 0;
 }
@@ -245,17 +570,17 @@ static void menu_open_child(struct KERNEL_MENU *parent)
 static void menu_open_root(void)
 {
 	int x = TASKBAR_START_X0;
-	int y = g_menu_scrny - TASKBAR_HEIGHT - g_menu_root.h;
+	int y = g_menu_scrny - TASKBAR_HEIGHT - g_menus[0].h;
 	if (y < 0) {
 		y = 0;
 	}
-	g_menu_root.x = x;
-	g_menu_root.y = y;
-	g_menu_root.selected = menu_first_selectable(&g_menu_root);
-	menu_close_child(&g_menu_root);
-	menu_redraw(&g_menu_root);
-	sheet_slide(g_menu_root.sht, x, y);
-	menu_raise(&g_menu_root);
+	g_menus[0].x = x;
+	g_menus[0].y = y;
+	g_menus[0].selected = menu_first_selectable(&g_menus[0]);
+	menu_close_child(&g_menus[0]);
+	menu_redraw(&g_menus[0]);
+	sheet_slide(g_menus[0].sht, x, y);
+	menu_raise(&g_menus[0]);
 	g_start_menu_open = 1;
 	return;
 }
@@ -272,7 +597,7 @@ void start_menu_toggle(void)
 
 static struct KERNEL_MENU *menu_deepest_open(void)
 {
-	struct KERNEL_MENU *menu = &g_menu_root;
+	struct KERNEL_MENU *menu = &g_menus[0];
 	while (menu->child != 0 && menu->child->sht->height >= 0) {
 		menu = menu->child;
 	}
@@ -368,8 +693,8 @@ static struct KERNEL_MENU *menu_hit(int mx, int my, int *item_idx)
 {
 	struct KERNEL_MENU *menus[2];
 	int i, x, y;
-	menus[0] = &g_menu_root;
-	menus[1] = g_menu_root.child;
+	menus[0] = &g_menus[0];
+	menus[1] = g_menus[0].child;
 	for (i = 1; i >= 0; i--) {
 		struct KERNEL_MENU *menu = menus[i];
 		if (menu == 0 || menu->sht->height < 0) {

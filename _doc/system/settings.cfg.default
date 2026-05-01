@@ -1,0 +1,5 @@
+# /SYSTEM/SETTINGS.CFG -- defaults used by work5 Settings.
+display.background = navy
+language.mode = 0
+time.boot_offset_min = 0
+time.show_seconds = false

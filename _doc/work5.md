@@ -242,12 +242,12 @@
 - ☑ build 통과.
 - ☐ QEMU visual smoke: 임시 fixed menu 로 Phase 1 의 Start 버튼에서 메뉴를 띄워 동작 확인.
 
-### Phase 3 — 메뉴 config 파일 / loader (1.5일)
+### Phase 3 — 메뉴 config 파일 / loader (1.5일) — ☑ 구현 완료, QEMU config smoke 대기 (2026-05-01)
 **목표**: 메뉴 구조를 **`/SYSTEM/MENU.CFG`** 에서 읽어 빌트인 메뉴 트리로 변환한다.
 
-- ☐ `data.img` 빌드 시 `/SYSTEM/` 서브디렉터리 생성, `MENU.CFG` 와 (Phase 5에서) `SETTINGS.CFG` 의 default 본을 install.
+- ☑ `data.img` 빌드 시 `/SYSTEM/` 서브디렉터리 생성, `MENU.CFG` 와 (Phase 5에서) `SETTINGS.CFG` 의 default 본을 install.
   - CMake `BXOS_DATA_IMG_FILES` 또는 별도 `BXOS_SYSTEM_FILES` 리스트에 추가.
-- ☐ menu.cfg 포맷 (예시):
+- ☑ menu.cfg 포맷 (예시):
 
 ```ini
 # /SYSTEM/MENU.CFG — Start Menu 트리. 줄 시작 # 은 주석.
@@ -301,17 +301,32 @@ handler = exec:/TETRIS.HE2
 handler = builtin:taskmgr
 ```
 
-- ☐ loader (`menu_loader.c`):
+- ☑ loader (`menu.c` 내부):
   - 한 줄씩 읽어 section header / key=value / `---`(separator) 파싱.
   - whitespace trim, 주석 제거, comma split.
-  - 알 수 없는 핸들러는 status “invalid menu entry” 로 표시 + skip.
-  - 결과: `struct MENU` 트리.
-- ☐ 부팅 시 1회 적재 (data.img mount 후, key_win 생성 전).
-- ☐ Settings 카테고리는 Phase 5 에서 `submenu:settings` 로 연결되도록 빌트인 entry point 예약.
+  - 알 수 없는 핸들러는 skip.
+  - 결과: `struct KERNEL_MENU` 트리.
+- ☑ 부팅 시 1회 적재 (data.img mount 후, key_win 생성 전).
+- ☑ Settings 는 Phase 5 앱/핸들러 연결을 위해 `builtin:settings` entry point 로 예약.
+
+**Phase 3 구현 노트 (2026-05-01)**
+- 기본 파일은 `_doc/system/menu.cfg.default`, `_doc/system/settings.cfg.default` 에 둔다.
+  CMake 는 `mkfat12.py` 로 `data.img` 를 만든 직후 `bxos_fat.py mkdir/cp` 로
+  `/SYSTEM/MENU.CFG`, `/SYSTEM/SETTINGS.CFG` 를 설치한다.
+- `menu.c` 는 `/SYSTEM/MENU.CFG` 를 `fs_data_open_path()`/`fs_file_read()` 로 읽고
+  static 4KB buffer 에서 INI-like parser 를 돌린다. 지원 범위는 section header,
+  `items = a, b, ---, c`, `[item:<label>] handler = ...`, `#`/`;` 주석,
+  whitespace trim 이다.
+- 파싱 결과는 `struct KERNEL_MENU g_menus[KMENU_MAX_MENUS]` 와 `MENU_ITEM` 배열에
+  적재된다. 잘못된 항목, 알 수 없는 handler, 비어 있는 submenu 는 skip 한다.
+- `/SYSTEM/MENU.CFG` 가 없거나 root `[start]` 가 유효하지 않으면 Phase 2 의
+  hard-coded fallback 메뉴로 부팅한다.
+- Phase 3 에서는 handler dispatch 는 아직 하지 않는다. enabled leaf item 을 invoke 하면
+  메뉴만 닫히며, 실제 `exec:`/`builtin:` 실행은 Phase 4 에서 연결한다.
 
 **확인할 사항**
-- ☐ build 통과, `fsck_msdos -n` clean, `bxos_fat.py ls /SYSTEM/` 에 `MENU.CFG` 보임.
-- ☐ MENU.CFG 의 한 줄을 일부러 망가뜨리고 부팅 → 그 항목만 빠지고 나머지 메뉴는 정상.
+- ☑ build 통과, `fsck_msdos -n` clean, `bxos_fat.py ls /SYSTEM/` 에 `MENU.CFG` 보임.
+- ☐ QEMU config smoke: MENU.CFG 의 한 줄을 일부러 망가뜨리고 부팅 → 그 항목만 빠지고 나머지 메뉴는 정상.
 
 ### Phase 4 — 핸들러 / 시계 / Run… / About (1.5일)
 **목표**: 메뉴 항목 클릭 시 실제 동작을 연결하고, 트레이 시계와 Run / About 다이얼로그를 추가한다.

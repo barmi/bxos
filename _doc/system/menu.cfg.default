@@ -1,0 +1,50 @@
+# /SYSTEM/MENU.CFG -- Start Menu tree.
+
+[start]
+items = Programs, Settings, ---, Run..., About BxOS, ---, Restart, Shutdown
+
+[start/Programs]
+items = Explorer, Console, Notepad, Calc, Games, ---, Task Manager
+
+[start/Programs/Games]
+items = Tetris
+
+[item:Programs]
+handler = submenu:start/Programs
+
+[item:Settings]
+handler = builtin:settings
+
+[item:Run...]
+handler = builtin:run
+shortcut = Ctrl+R
+
+[item:About BxOS]
+handler = builtin:about
+
+[item:Restart]
+handler = builtin:restart
+
+[item:Shutdown]
+handler = builtin:shutdown
+
+[item:Explorer]
+handler = exec:/EXPLORER.HE2
+
+[item:Console]
+handler = builtin:console
+
+[item:Notepad]
+handler = exec:/NOTEPAD.HE2
+
+[item:Calc]
+handler = exec:/CALC.HE2
+
+[item:Games]
+handler = submenu:start/Programs/Games
+
+[item:Tetris]
+handler = exec:/TETRIS.HE2
+
+[item:Task Manager]
+handler = builtin:taskmgr

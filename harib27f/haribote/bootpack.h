@@ -348,10 +348,12 @@ struct MENU {
 
 /* menu.c — work5 Start Menu primitive */
 #define KMENU_MAX_ITEMS		64
+#define KMENU_MAX_MENUS		8
 #define KMENU_ITEM_H		22
 #define KMENU_W			200
 #define KMENU_LABEL_MAX		24
 #define KMENU_ARG_MAX		64
+#define KMENU_SECTION_MAX	32
 #define KMENU_FLAG_SEPARATOR	0x01
 #define KMENU_FLAG_DISABLED	0x02
 #define KMENU_FLAG_SUBMENU	0x04

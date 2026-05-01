@@ -331,6 +331,8 @@ set(BXOS_DATA_IMG_FILES
     "${BXOS_HARIB}/pictdata/fujisan.jpg"
     "${BXOS_HARIB}/pictdata/night.bmp"
 )
+set(BXOS_SYSTEM_MENU_CFG     "${CMAKE_SOURCE_DIR}/_doc/system/menu.cfg.default")
+set(BXOS_SYSTEM_SETTINGS_CFG "${CMAKE_SOURCE_DIR}/_doc/system/settings.cfg.default")
 add_custom_command(
     OUTPUT  "${BXOS_DATA_IMG}"
     COMMAND ${BXOS_PYTHON} "${BXOS_MKFAT12}"
@@ -338,7 +340,17 @@ add_custom_command(
             --label BXOSDATA
             --out  "${BXOS_DATA_IMG}"
             ${BXOS_DATA_IMG_FILES}
+    COMMAND ${BXOS_PYTHON} "${BXOS_FAT_TOOL}" mkdir
+            "${BXOS_DATA_IMG}:/SYSTEM"
+    COMMAND ${BXOS_PYTHON} "${BXOS_FAT_TOOL}" cp
+            "HOST:${BXOS_SYSTEM_MENU_CFG}"
+            "${BXOS_DATA_IMG}:/SYSTEM/MENU.CFG"
+    COMMAND ${BXOS_PYTHON} "${BXOS_FAT_TOOL}" cp
+            "HOST:${BXOS_SYSTEM_SETTINGS_CFG}"
+            "${BXOS_DATA_IMG}:/SYSTEM/SETTINGS.CFG"
     DEPENDS ${BXOS_HE2_OUTS} ${BXOS_DATA_IMG_FILES}
+            "${BXOS_SYSTEM_MENU_CFG}" "${BXOS_SYSTEM_SETTINGS_CFG}"
+            "${BXOS_FAT_TOOL}"
     COMMENT "[mkfat12] data.img (FAT16 32MB HDD)"
     VERBATIM
     COMMAND_EXPAND_LISTS
