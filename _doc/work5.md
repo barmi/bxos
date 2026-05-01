@@ -211,23 +211,36 @@
 - ☐ QEMU visual smoke: Start 버튼 hover/press 가 시각적으로 드러난다.
 - ☐ QEMU regression smoke: 기존 콘솔/explorer/tetris 등 앱의 mouse 동작 회귀 없음.
 
-### Phase 2 — Menu sheet primitive (1.5일)
+### Phase 2 — Menu sheet primitive (1.5일) — ☑ 구현 완료, QEMU visual smoke 대기 (2026-05-01)
 **목표**: cascading sub-menu 를 지원하는 일반 메뉴 sheet 구성요소를 추가한다.
 
-- ☐ 신규 `harib27f/haribote/menu.c` (또는 `window.c` 하단 확장):
+- ☑ 신규 `harib27f/haribote/menu.c`:
   - `struct MENU_ITEM { char label[24]; int handler_id; int submenu; int flags; }`.
-  - `struct MENU { struct SHEET *sht; struct MENU_ITEM items[..]; int selected; struct MENU *child; struct MENU *parent; }`.
-  - `menu_open(parent, items, n, x, y)`, `menu_close(menu)`, `menu_select_next/prev`, `menu_invoke(menu)`.
-- ☐ separator / disabled / submenu marker 그리기.
-- ☐ keyboard navigation (↑/↓/Enter/Esc/←/→).
-- ☐ mouse hover → highlight (이전 hover 항목 redraw), click → invoke.
-- ☐ click-outside → root menu 까지 모두 close.
-- ☐ ESC → 가장 안쪽 메뉴만 close, root 가 닫히면 focus 복귀.
-- ☐ menu sheet z-order 는 cursor 바로 아래.
+  - `struct KERNEL_MENU { struct SHEET *sht; struct MENU_ITEM items[..]; int selected; struct KERNEL_MENU *child; struct KERNEL_MENU *parent; }`.
+  - `start_menu_toggle()`, `start_menu_close_all()`, `start_menu_handle_key()`,
+    `start_menu_handle_mouse()` 를 public entry 로 제공.
+- ☑ separator / disabled / submenu marker 그리기.
+- ☑ keyboard navigation (↑/↓/Enter/Esc/←/→).
+- ☑ mouse hover → highlight (이전 hover 항목 redraw), click → invoke.
+- ☑ click-outside → root menu 까지 모두 close.
+- ☑ ESC → 가장 안쪽 메뉴만 close, root 가 닫히면 focus 복귀.
+- ☑ menu sheet z-order 는 cursor 바로 아래.
+
+**Phase 2 구현 노트 (2026-05-01)**
+- `struct MENU` 이름은 기존 `window.c` legacy 선언과 충돌하므로 새 primitive 는
+  `struct KERNEL_MENU` 로 두었다. Phase 3 config loader 는 `MENU_ITEM` 배열만 채우면 된다.
+- `SHEET_FLAG_SYSTEM_WIDGET` 를 추가해 menu sheet 가 일반 window focus/drag/resize/app-event
+  대상이 되지 않게 했다.
+- Start 메뉴는 임시 hard-coded tree 로 열린다: root `Programs` → child
+  `Explorer`, `Console`, `Tetris`, `Task Manager`. `Settings` 등 아직 handler 가 없는
+  항목은 disabled 로 표시한다.
+- `Ctrl+Esc` 와 Start 버튼 click 은 모두 `start_menu_toggle()` 경로를 탄다.
+  메뉴가 열린 동안 arrow/Enter/Esc 키와 menu 내부 mouse event 는 앱/콘솔로 전달되지 않는다.
+  메뉴 밖 mouse down 은 메뉴를 닫고 같은 click 을 일반 dispatch 로 흘린다.
 
 **확인할 사항**
-- ☐ build 통과.
-- ☐ 임시 fixed menu 로 Phase 1 의 Start 버튼에서 메뉴를 띄워 동작 확인.
+- ☑ build 통과.
+- ☐ QEMU visual smoke: 임시 fixed menu 로 Phase 1 의 Start 버튼에서 메뉴를 띄워 동작 확인.
 
 ### Phase 3 — 메뉴 config 파일 / loader (1.5일)
 **목표**: 메뉴 구조를 **`/SYSTEM/MENU.CFG`** 에서 읽어 빌트인 메뉴 트리로 변환한다.

@@ -192,6 +192,8 @@ struct SCROLLWIN;
 #define SHEET_FLAG_APP_EVENTS	0x100
 /* work4 Phase 2: app 가 더블클릭을 커널에서 합성받겠다고 opt-in 한 창 */
 #define SHEET_FLAG_APP_DBLCLK	0x200
+/* work5 Phase 2: 커널 내부 system widget sheet. 일반 focus/drag/resize 대상 제외. */
+#define SHEET_FLAG_SYSTEM_WIDGET	0x400
 struct SHEET {
 	unsigned char *buf;
 	int bxsize, bysize, vx0, vy0, col_inv, height, flags;
@@ -342,6 +344,37 @@ struct MENU {
 	int level;
 	char name[16], exec[32];
 	struct MENU *next, *sub;
+};
+
+/* menu.c — work5 Start Menu primitive */
+#define KMENU_MAX_ITEMS		64
+#define KMENU_ITEM_H		22
+#define KMENU_W			200
+#define KMENU_LABEL_MAX		24
+#define KMENU_ARG_MAX		64
+#define KMENU_FLAG_SEPARATOR	0x01
+#define KMENU_FLAG_DISABLED	0x02
+#define KMENU_FLAG_SUBMENU	0x04
+enum {
+	KMENU_HANDLER_NONE = 0,
+	KMENU_HANDLER_EXEC,
+	KMENU_HANDLER_BUILTIN,
+	KMENU_HANDLER_SETTINGS,
+	KMENU_HANDLER_SUBMENU
+};
+struct MENU_ITEM {
+	char label[KMENU_LABEL_MAX];
+	int handler_id;
+	int submenu;
+	int flags;
+	char arg[KMENU_ARG_MAX];
+};
+struct KERNEL_MENU {
+	struct SHEET *sht;
+	struct MENU_ITEM items[KMENU_MAX_ITEMS];
+	int n_items, selected;
+	struct KERNEL_MENU *parent, *child;
+	int x, y, w, h, level;
 };
 void make_window8(unsigned char *buf, int xsize, int ysize, char *title, char act);
 void make_menu8(unsigned char *buf, int xsize, int ysize, char *title, struct MENU *menu, int num);
@@ -597,8 +630,15 @@ int tek_decomp(unsigned char *p, char *q, int size);
 
 /* bootpack.c */
 extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: api_exec 용) */
+extern struct SHEET *g_sht_mouse;   /* system sheets place menus directly below cursor */
 extern int g_background_color;       /* work5 Phase 1: desktop background color */
 extern int g_start_menu_open;        /* work5 Phase 1: Start button/menu toggle state */
+void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, int scrny);
+void start_menu_toggle(void);
+void start_menu_close_all(void);
+int start_menu_is_open(void);
+int start_menu_handle_key(int key);
+int start_menu_handle_mouse(int mx, int my, int btn, int old_btn);
 #define MAX_MENU		256
 #define MAX_MNLV		  8
 struct MNLV {

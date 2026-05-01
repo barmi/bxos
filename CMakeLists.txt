@@ -123,7 +123,7 @@ _bxos_assemble_nas("${BXOS_KSRC}/naskfunc.nas" "${BXOS_NASKFUNC_O}" elf32)
 # ─── 4) 커널 C 소스 → object ─────────────────────────────────────────
 set(BXOS_KERNEL_C_NAMES
     bootpack graphic dsctbl int fifo keyboard mouse memory sheet timer
-    mtask window console file tek ata fs_fat
+    mtask window menu console file tek ata fs_fat
 )
 set(BXOS_KERNEL_OBJS
     "${BXOS_NASKFUNC_O}"
