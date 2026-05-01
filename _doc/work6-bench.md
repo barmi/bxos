@@ -306,9 +306,109 @@ avg = total_cycles / calls. **워크로드 의존이 적어 phase 간 비교에 
 * **시나리오 합 -13~-25%** (워크로드 안정 시나리오 기준). Phase 2 quick wins 단독으로
   baseline 대비 ~20% 성능 향상. 누적 목표 (2x = -50%) 의 절반 진행 중.
 
-### 표 — Phase 3 (compositor 일반화 + 폰트 lookup) 후
+### 표 — Phase 3 (compositor 일반화 + 폰트 lookup) 후 (2026-05-02, commit `fc75394`)
 
-(Phase 3 종료 시 채움)
+> Phase 3 변경: `sheet_refreshmap` 4/1 byte path 통합 (opaque → row 한 번 memset,
+> transparent → run-length memset). `putfont8` 256-entry 마스크 lookup
+> (`g_putfont_mask_lo/hi`, 2KB) + branchless 32-bit AND/OR. `putfont_mask_init()`
+> 부팅 시 1회.
+>
+> **주된 타깃은 `putfont8` 와 `refreshmap`** — 두 카운터의 avg cycles 가 모든
+> 시나리오에서 일관되게 하락해야 성공. 그 외 함수는 putfont8/boxfill8 호출의
+> 누적 효과로 약간 더 빨라질 수 있음.
+
+#### Phase 3 — 모든 카운터 한눈에 보기
+
+| counter | S1 menu×10 | S2 dir×10 | S3 explorer | S4 tetris-line | S5 mouse |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` calls / total | 60 / 8.3 M | 0 / 0 | 602 / 16.4 M | 164 / 4.8 M | 982 / 21.3 M |
+| `refreshsub` calls / total | 528 / 285.5 M | 19,920 / 9,698.3 M | 1,204 / 330.6 M | 1,716 / 1,575.0 M | 1,466 / 304.2 M |
+| `sheet_slide` calls / total | 30 / 1.6 M | 0 / 0 | 298 / 33.0 M | 82 / 13.5 M | 491 / 58.6 M |
+| `boxfill8` calls / total | 1,316 / 19.1 M | 177 / 1.7 M | 677 / 9.8 M | 25,726 / 73.2 M | 124 / 1.5 M |
+| `putfont8` calls / total | 75,283 / **20.6 M** | 4,630,840 / **862.4 M** | 270,437 / **67.7 M** | 278,083 / **65.5 M** | 279,599 / **65.2 M** |
+| `putfonts8_asc` calls / total | 0 / 0 | 0 / 0 | 39 / 0.1 M | 92 / 1.0 M | 0 / 0 |
+| `taskbar` calls / total | 31 / 34.4 M | 1 / 1.2 M | 8 / 8.0 M | 3 / 3.1 M | 0 / 0 |
+| `scrollwin` calls / total | 666 / 1,211.3 M | 20,121 / 23,033.8 M | 843 / 1,405.2 M | 782 / 1,421.4 M | 708 / 1,302.7 M |
+| `hrb_api` calls / total | 0 / 0 | 0 / 0 | 233 / 5.4 M | 28,824 / 41,783.7 M | 0 / 0 |
+| **Σ total cycles** | **1.58 G** | **33.60 G** | **1.88 G** | **44.94 G** | **1.75 G** |
+
+#### Phase 3 시나리오 별 marks
+
+| | S1 | S2 | S3 | S4 | S5 |
+|---|---:|---:|---:|---:|---:|
+| end mark (PIT tick) | 9,221 | 22,271 | 31,813 | 43,863 | 53,011 |
+| dump pit_tick | 9,869 | 22,744 | 32,210 | 44,308 | 53,609 |
+
+#### Phase 3 핵심 비교 — `putfont8` avg cycles (Phase 3 의 직접 타깃)
+
+| 시나리오 | P1 | P2 | P3 | P1→P3 | P2→P3 |
+|---|---:|---:|---:|---:|---:|
+| S1 | 372 | 395 | **273** | **-26.6%** | **-30.9%** |
+| S2 | 297 | 299 | **186** | **-37.4%** | **-37.8%** |
+| S3 | 360 | 373 | **250** | **-30.6%** | **-33.0%** |
+| S4 | 357 | 365 | **235** | **-34.2%** | **-35.6%** |
+| S5 | 347 | 370 | **233** | **-32.9%** | **-37.0%** |
+
+> 모든 시나리오에서 **putfont8 cycle/call -27~-38% 일관 감소**. 마스크 lookup +
+> branchless 32-bit blit 이 의도대로 효과를 냄. S2 (`dir × 10`, 4.6 M 호출) 에서
+> 절대값 절감이 가장 큼: **517 M cycles 절감** (P2 1,381 M → P3 862 M).
+
+#### Phase 3 핵심 비교 — `refreshmap` avg cycles (Phase 3 의 두 번째 타깃)
+
+| 시나리오 | P1 | P2 | P3 | P1→P3 | P2→P3 |
+|---|---:|---:|---:|---:|---:|
+| S1 | 528.9 K | 461.2 K | **139.1 K** | **-73.7%** | **-69.8%** |
+| S2 | — (calls=0) | — | — | — | — |
+| S3 | 33.9 K | 33.7 K | 27.2 K | **-19.7%** | -19.3% |
+| S4 | 32.9 K | 35.2 K | 29.5 K | -10.4% | -16.2% |
+| S5 | 23.8 K | 21.1 K | 21.7 K | -8.6% | +2.8% |
+
+> S1 의 `refreshmap` avg 가 가장 극적으로 감소 (-73.7%). 메뉴 sheet 가 큰
+> opaque 영역이라 row-wise memset 의 이득이 큼. S3/S4/S5 는 작은 sheet (마우스
+> 등) 영향이 커 절대값이 작고 상대 변화가 줄어듦. opaque sheet 일반화의 효과 ✓.
+
+#### Phase 3 부수 효과 — 다른 카운터 avg cycles
+
+| counter | S1 P2→P3 | S2 P2→P3 | S3 P2→P3 | S4 P2→P3 | S5 P2→P3 |
+|---|---:|---:|---:|---:|---:|
+| `refreshsub` avg | 577.7 K → 540.7 K (-6.4%) | 510.4 K → 486.9 K (-4.6%) | 233.3 K → 274.6 K (+17.7%)¹ | 889.8 K → 917.9 K (+3.2%) | 217.7 K → 207.5 K (-4.7%) |
+| `boxfill8` avg | 14.2 K → 14.5 K (+2.3%) | 8.6 K → 9.7 K (+12.6%)² | 17.5 K → 14.4 K (-17.7%) | 2.7 K → 2.8 K (+4.3%) | 10.0 K → 11.8 K (+18.1%)² |
+| `scrollwin` avg | 1.95 M → 1.82 M (-6.7%) | 1.23 M → 1.14 M (-6.7%) | 2.06 M → 1.67 M (-19.0%) | 1.87 M → 1.82 M (-2.9%) | 2.02 M → 1.84 M (-9.0%) |
+| `hrb_api` avg | — | — | 21.6 K → 22.9 K (+6.4%) | 1.44 M → 1.45 M (+0.6%) | — |
+
+> ¹ ² 워크로드 차이로 인한 변동. refreshsub/boxfill8 의 avg 는 호출당 작업량 의존.
+> Phase 3 자체는 `refreshsub` 와 `boxfill8` 을 변경하지 않음. `scrollwin` 의 -7~-19%
+> 감소는 내부 putfont8/refreshmap/boxfill8 가속의 누적 효과.
+> `hrb_api` avg 변화 없음 — Phase 6/7 의 syscall batch 가 진짜 타깃임을 재확인.
+
+#### Phase 1 → Phase 3 누적 비교 (Σ total cycles, 워크로드 안정 시나리오)
+
+| 시나리오 | Phase 1 baseline | Phase 2 후 | Phase 3 후 | P1→P3 누적 |
+|---|---:|---:|---:|---:|
+| S1 menu×10 | 2.20 G | 1.68 G | **1.58 G** | **-28.2%** |
+| S2 dir×10 | 48.03 G | 36.05 G | **33.60 G** | **-30.0%** |
+| S3 explorer | 4.88 G | 1.92 G | 1.88 G | -61.6% (워크로드 차) |
+| S4 tetris-line | 45.94 G | 39.74 G | 44.94 G | -2.2% (P3 워크로드 ↑)³ |
+| S5 mouse | 2.28 G | 1.96 G | **1.75 G** | **-23.0%** |
+
+> ³ S4 P3 의 `hrb_api calls=28,824 / boxfill8=25,726` 이 P2 의 `25,380 / 22,622` 보다
+> ~13% 더 많음. 같은 "1 라인 클리어" 시나리오라도 게임 진행이 다른 듯.
+> per-call avg (`hrb_api` 1.44 M → 1.45 M, `boxfill8` 2.7 K → 2.8 K) 는 거의
+> 변화 없음 — Phase 3 가 hrb_api/boxfill8 자체를 안 건드림.
+
+#### Phase 3 핵심 결론
+
+* **`putfont8` 마스크 lookup 효과가 매우 큼** — avg cycles -27~-38% 일관 감소.
+  특히 텍스트 출력 dominant 시나리오 (S2 `dir × 10`) 에서 517 M cycles 절감.
+* **`refreshmap` opaque path memset** 효과는 큰 sheet 시나리오 (S1 = 메뉴 sheet)
+  에서 -74%, 작은 sheet 에서 -10~-20%. 평균 -25% 수준.
+* **`scrollwin` avg -7~-19% 누적 감소** — Phase 2 의 boxfill8 + Phase 3 의 putfont8
+  가 scrollwin 안에서 자주 불려서 간접 효과.
+* **워크로드 안정 시나리오 평균 누적 감소 -27%** (S1 -28%, S2 -30%, S5 -23%).
+  Phase 1~3 만으로 baseline 의 ~73% 시간으로 동작. 목표 2x (-50%) 의 절반 달성.
+* **다음 큰 폭은 Phase 5 (scrollwin 부분 redraw — S2 dominant 36 G cycles 의
+  20 G 절감 가능) 와 Phase 6/7 (hrb_api 41 G — S4 dominant)**. 이 두 phase 가
+  목표 2x 달성의 결정적 단계.
 
 ### 표 — Phase 4 (Dirty rect 인프라) 후
 
