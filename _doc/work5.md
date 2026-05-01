@@ -92,17 +92,77 @@
 
 각 Phase 끝의 ☐ 는 PR/커밋 단위 자연 경계.
 
-### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일)
-- ☐ 본 문서와 [work5-handoff.md](work5-handoff.md) 를 정본으로 두고 MVP 범위 잠금.
-- ☐ 다음 결정을 잠근다:
+### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일) — ☑ 완료 (2026-05-01)
+- ☑ 본 문서와 [work5-handoff.md](work5-handoff.md) 를 정본으로 두고 MVP 범위 잠금.
+- ☑ 다음 결정을 잠근다 (아래 표):
   - Start 버튼 hit zone, Start Menu 펼침 방향, 키보드 단축키.
   - 메뉴 / 설정 config 파일 경로(`/SYSTEM/MENU.CFG`, `/SYSTEM/SETTINGS.CFG`),
     포맷(INI-like), 핸들러 URI scheme, 빌트인 id 셋.
   - 1차 카테고리(Display/Language/Time/About) 와 각 setting key list.
   - 1차 메뉴 트리 (§3 Phase 3 예시 그대로).
-- ☐ 범위 외 명시: 데스크톱 아이콘, drag&drop, theming engine, 다중 사용자,
-  로그인 화면, 시스템 트레이 plugin, 사운드 mixer, 네트워크 설정.
-- ☐ work2/work3/work4 와 충돌 없음 확인 (langmode 정책, FAT path 규칙, syscall 번호).
+- ☑ 범위 외 명시: 데스크톱 아이콘, drag&drop, theming engine, 다중 사용자,
+  로그인 화면, 시스템 트레이 plugin, 사운드 mixer, 네트워크 설정 (§6).
+- ☑ work2/work3/work4 와 충돌 없음 확인:
+  - work2 path resolution(MAX_PATH=128B, 8.3, `/`, `.`, `..`) 그대로 사용.
+    `SYSTEM` (6글자), `MENU.CFG` (4+3), `SETTINGS.CFG` (8+3), `SETTINGS.HE2` (8+3),
+    `NOTEPAD.HE2` (7+3), `CALC.HE2` (4+3) 모두 8.3 적합 — 신규 이름 충돌 없음
+    (현재 data.img 의 40 entries 중 동일명 없음).
+  - work3 langmode 정책 그대로. work5 의 `language.mode` 는 **시스템 부팅 시
+    초기 langmode 기본값** 만 결정. 콘솔의 `langmode N` 명령은 그대로 동작
+    (현재 task 만 변경). Settings 앱의 변경은 즉시 SETTINGS.CFG 에 저장되며,
+    시스템 적용은 다음 부팅부터 (재시작 권장 표기 — 이미 떠 있는 task 의
+    langmode 는 건드리지 않음).
+  - work4 syscall 번호(32~43) 보존. **work5 는 신규 사용자 syscall 0개**.
+    메뉴/taskbar/시계/Run/About 은 모두 커널 내부 widget 으로 처리.
+    Settings 앱은 `api_fopen`/`api_fopen_w`/`api_fread`/`api_fwrite` 등 기존 wrapper
+    만 사용해 SETTINGS.CFG 를 read/write.
+  - work4 `api_exec` 의 cwd 상속/subsystem 분기 정책을 메뉴 `exec:` 핸들러와
+    Run… 핸들러가 그대로 재사용한다.
+
+**Phase 0 추가 검증 노트 (2026-05-01)**
+- mkfat12.py 가 root flat 만 지원 → `/SYSTEM/` 디렉터리 생성과 그 안의 파일
+  install 은 **Phase 3 에서 bxos_fat.py post-processing** (mkdir + cp) 으로 처리.
+  `make data-img` 의 add_custom_command 끝에 SYSTEM 항목용 명령 한 단계 추가.
+  data.img root_entries=512 여유 충분(현재 40).
+- 키보드 modifier 추적: 현재 `bootpack.c` 는 `key_shift` 만 추적, **Ctrl/Alt 미추적**.
+  Phase 1 에서 `key_ctrl`(0x1d/0x9d), `key_alt`(0x38/0xb8) 비트마스크를 추가한다.
+- 기존 Tab(scancode 0x0f) 은 char(0x09) 를 app 으로 보내면서 **동시에 window
+  z-order 를 한 칸 내려 focus 를 옮긴다** ([bootpack.c:288](../harib27f/haribote/bootpack.c)).
+  explorer 가 Tab 으로 tree↔list focus 를 전환하는 것과 충돌하므로 — Phase 6 에서
+  이 Tab → window-cycle 동작을 **제거** 하고 **Alt+Tab** 으로 옮긴다 (회귀
+  점검: explorer Tab 동작 정상화 + tetris/lines 기존 Tab 입력 영향 없음).
+- 부팅 시 `init_screen8` 의 배경색 / taskbar 색은 컴파일타임 상수.
+  Phase 1 에서 `g_background_color` (init=`COL8_008484`), Phase 5 의 `display.background`
+  설정에서 다음 부팅에 적용.
+- 시계는 RTC 가 없으므로 부팅 시각 0:00, Settings → Time 에서 사용자가 set.
+  Phase 4 timer 1개 (60s 또는 1s) + Phase 5 의 `time.boot_offset_min` 으로 모델.
+
+**Phase 0 잠금 결정 요약 (변경 시 work5.md/work5-handoff.md 동시 갱신)**
+
+| 잠금 항목 | 값 |
+|---|---|
+| Start 버튼 hit zone | taskbar 좌측 (x 2..60, y `scrny-24..scrny-4`) |
+| Start Menu sheet 폭 | 200px, 항목 22px, 위로 펼침 (자식 메뉴는 오른쪽으로) |
+| Start 토글 단축키 | Ctrl+Esc / Esc(닫기) |
+| Alt+Tab focus 순환 | system sheet(taskbar/menu/cursor/debug) 제외, visible app sheet 만. 기존 Tab→window-cycle 은 Phase 6 에서 제거 |
+| Run 다이얼로그 단축키 | Ctrl+R (메뉴 열려 있지 않을 때만) |
+| 메뉴 config 경로 | `/SYSTEM/MENU.CFG` (data.img) |
+| 설정 영구 저장 경로 | `/SYSTEM/SETTINGS.CFG` |
+| config 포맷 | INI-like, ASCII (UTF-8/EUC-KR 라벨도 허용), 줄당 1 항목, `#`/`;` 주석, `,` 구분 |
+| 핸들러 URI scheme | `exec:<path>` / `builtin:<id>` / `settings:<key>` / `submenu:<section>` (정확히 4종, 알 수 없는 scheme 은 skip + warn) |
+| 빌트인 id | `console`, `taskmgr`, `run`, `about`, `shutdown`, `restart`, `settings` (총 7개) |
+| 1차 settings 카테고리 | `display`, `language`, `time`, `about` |
+| 1차 settings key | `display.background`(enum: navy/black/gray/green), `language.mode`(enum: 0/1/2/3/4), `time.boot_offset_min`(int 0..1439, 기본 0), `time.show_seconds`(bool), `about`(action, read-only) |
+| 시계 갱신 주기 | 60s timer + 메뉴/Settings 토글 시 즉시 redraw. `time.show_seconds=true` 일 때만 1s |
+| 시계 표기 | `HH:MM` 또는 `HH:MM:SS` (24h ASCII 만) |
+| Settings 적용 정책 | 변경 즉시 SETTINGS.CFG 저장. 시스템 변수(`g_background_color`, `g_default_langmode`, `g_clock_offset_min`, `g_clock_show_seconds`) 는 다음 **부팅 시 적용** (재시작 권장 표기). 단 Settings 앱 자체 미리보기는 즉시 |
+| 메모리 한계 | 메뉴 항목 64, 카테고리당 32, 메뉴 깊이 3 |
+| FAT 8.3 영향 | 신규 이름 모두 적합 (`SYSTEM`/`MENU.CFG`/`SETTINGS.CFG`/`SETTINGS.HE2`/`NOTEPAD.HE2`/`CALC.HE2`) |
+| 신규 사용자 syscall | **없음**. 모든 신규 동작은 커널 내부 widget + 기존 syscall 로 해결 |
+| 신규 커널 globals | `g_background_color`, `g_default_langmode`, `g_clock_offset_min`, `g_clock_show_seconds`, `g_start_menu_open`, `g_running_run_dialog`, `g_running_about_dialog` |
+| 1차 신규 HE2 앱 | `SETTINGS.HE2` (Phase 5), `NOTEPAD.HE2`/`CALC.HE2` (옵션 — Phase 4 후반 또는 work6 으로 미룰 수 있음) |
+| `/SYSTEM/` install 방법 | Phase 3 에서 mkfat12.py 직후 bxos_fat.py 로 mkdir + cp |
+| 일정 | 10~12 작업일. 가장 부담은 Phase 2(menu sheet) + Phase 5(Settings 스키마) |
 
 **Phase 0 잠금 결정 요약 (변경 시 work5.md/work5-handoff.md 동시 갱신)**
 
