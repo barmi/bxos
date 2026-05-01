@@ -395,7 +395,7 @@ if(BXOS_QEMU)
         COMMAND ${BXOS_QEMU} -m 32
                 -fda "${BXOS_HARIBOTE_IMG}" -boot a
                 -hda "${BXOS_DATA_IMG}"
-                -display cocoa,zoom-to-fit=on
+#                -display cocoa,zoom-to-fit=on
         DEPENDS "${BXOS_HARIBOTE_IMG}" "${BXOS_DATA_IMG}"
         USES_TERMINAL
         COMMENT "qemu-system-i386 -fda haribote.img -hda data.img"
