@@ -5,8 +5,8 @@
 # 사용법:
 #   1. 별도 터미널에서 GDB stub 모드로 QEMU 실행:
 #        ./run-qemu.sh --debug         # CPU halt + tcp:1234
-#   2. i686-elf-gdb 시작하고 이 스크립트를 source:
-#        i686-elf-gdb -x tools/debug/bxos.gdb build/cmake-debug/bootpack.elf
+#   2. i386-elf-gdb 시작하고 이 스크립트를 source:
+#        i386-elf-gdb -x tools/debug/bxos.gdb build/cmake-debug/bootpack.elf
 #
 # CLion 의 "GDB Remote Debug" run config 에서는 .gdbinit 또는 "Initial commands"
 # 에 다음만 넣으면 됩니다:

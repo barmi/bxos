@@ -141,11 +141,11 @@ cmake --build build/cmake --target run
 #### CLion / GDB 디버깅 (work5)
 
 `./run-qemu.sh --debug` 로 QEMU 를 GDB stub (tcp:1234) 모드로 띄우고,
-`i686-elf-gdb` (또는 CLion 의 GDB Remote Debug) 로 attach 해서 source-level
+`i386-elf-gdb` (또는 CLion 의 GDB Remote Debug) 로 attach 해서 source-level
 디버깅이 가능합니다. 사전 준비:
 
 ```bash
-brew install i686-elf-gdb
+brew install i386-elf-gdb
 cmake -S . -B build/cmake-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/cmake-debug
 ```
@@ -163,7 +163,7 @@ cmake --build build/cmake-debug
 ./run-qemu.sh --debug
 
 # 터미널 B
-i686-elf-gdb -x tools/debug/bxos.gdb build/cmake-debug/bootpack.elf
+i386-elf-gdb -x tools/debug/bxos.gdb build/cmake-debug/bootpack.elf
 (gdb) bxos-attach
 (gdb) break HariMain
 (gdb) continue

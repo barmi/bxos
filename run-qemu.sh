@@ -13,7 +13,7 @@
 #   ./run-qemu.sh --no-data             # 자동 부착된 data.img 무시
 #   ./run-qemu.sh path.img --data d.img # 부팅 이미지 + 데이터 디스크 동시 지정
 #   ./run-qemu.sh --debug               # GDB stub on tcp:1234 + CPU halt at startup
-#                                       #   (CLion / i686-elf-gdb 가 attach 할 때까지 대기)
+#                                       #   (CLion / i386-elf-gdb 가 attach 할 때까지 대기)
 #   ./run-qemu.sh --debug --no-halt     # GDB stub 만 열고 CPU 는 즉시 실행
 #   QEMU_GDB_PORT=2345 ./run-qemu.sh --debug  # 다른 GDB 포트
 #   QEMU_EXTRA="-d int" ./run-qemu.sh   # 추가 옵션
