@@ -95,6 +95,14 @@ void putblock8_8(char *vram, int vxsize, int pxsize,
 #define TASKBAR_START_Y_PAD_BOT	4
 #define TASKBAR_TRAY_W		44
 #define TASKBAR_TRAY_R_PAD	3
+/* work5 Phase 6: Taskbar window list (가운데 영역) — Start 버튼 우측 4px gap
+ * 부터 tray 좌측 5px gap 까지. 최대 8개 버튼, 각 버튼은 32..160px. */
+#define TASKBAR_WIN_X0		(TASKBAR_START_X1 + 4)
+#define TASKBAR_WIN_BTN_MAX	8
+#define TASKBAR_WIN_BTN_MIN_W	32
+#define TASKBAR_WIN_BTN_MAX_W	160
+#define TASKBAR_WIN_BTN_GAP	2
+#define TASKBAR_WIN_TRAY_GAP	5
 
 #define MAX_MOUSE_CURSOR	4
 #define SIZE_MOUSE_CURSOR	(16*16)
@@ -633,6 +641,8 @@ int tek_decomp(unsigned char *p, char *q, int size);
 /* bootpack.c */
 extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: api_exec 용) */
 extern struct SHEET *g_sht_mouse;   /* system sheets place menus directly below cursor */
+extern struct SHEET *g_sht_back;    /* work5 Phase 6: 데스크톱/taskbar background sheet */
+extern unsigned char *g_buf_back;   /* work5 Phase 6: g_sht_back 의 backing buffer */
 extern int g_background_color;       /* work5 Phase 1: desktop background color */
 extern int g_default_langmode;        /* work5 Phase 5: boot default langmode */
 extern int g_start_menu_open;        /* work5 Phase 1: Start button/menu toggle state */
@@ -646,6 +656,17 @@ int start_menu_is_open(void);
 int start_menu_handle_key(int key);
 int start_menu_handle_mouse(int mx, int my, int btn, int old_btn);
 void start_menu_dispatch(struct MENU_ITEM *item);
+
+/* work5 Phase 6: Taskbar 윈도우 목록 / Alt+Tab.
+ *   taskbar_full_redraw 는 background fill + Start + tray + 윈도우 목록 버튼을
+ *   한 번에 다시 그리고 sht_back 을 refresh 한다.
+ *   taskbar_mark_dirty 는 다음 idle 진입 직전에 redraw 가 필요함을 표시한다.
+ *   alt_tab_cycle(prev) 은 visible app sheet 들 중 다음/이전을 focus 로 올린다. */
+void taskbar_full_redraw(int start_hover, int start_pressed);
+void taskbar_mark_dirty(void);
+void alt_tab_cycle(int prev);
+int taskbar_winlist_hit(int mx, int my);
+struct SHEET *taskbar_winlist_sheet_at(int idx);
 #define MAX_MENU		256
 #define MAX_MNLV		  8
 struct MNLV {

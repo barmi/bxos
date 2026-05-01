@@ -449,19 +449,47 @@ static const struct SettingSpec g_settings[] = {
   새 콘솔에서 정상.
 - ☐ Settings 변경 후 재부팅 → 변경값 유지 확인.
 
-### Phase 6 — Taskbar 윈도우 목록 / Alt+Tab (1일)
+### Phase 6 — Taskbar 윈도우 목록 / Alt+Tab (1일) — ☑ 구현 완료, QEMU smoke 대기 (2026-05-01)
 **목표**: 실행 중 윈도우를 taskbar 가운데 영역에 버튼으로 표시하고 Alt+Tab focus 순환을 지원한다.
 
-- ☐ taskbar 가운데 영역(60..scrnx-50) 균등 분할, 최대 8개 버튼.
-- ☐ visible 한 app sheet (system sheet 제외) 를 enumerate. button label = window title.
-- ☐ click → 해당 sheet 를 top 으로, focus 이동 (`set_keywin`).
-- ☐ Alt+Tab → 다음 visible app sheet, Alt+Shift+Tab → 이전.
-- ☐ 버튼 hover/pressed 색상 구분, focus 중인 윈도우는 sunken 상태.
+- ☑ taskbar 가운데 영역(`TASKBAR_WIN_X0=64 .. tray_left - 5`) 균등 분할, 최대 8개 버튼.
+- ☑ visible 한 app sheet (system sheet 제외) 를 enumerate. button label = window title (없으면 "Console" / task->name / "Debug").
+- ☑ click → 해당 sheet 를 top 으로, focus 이동 (`set_keywin`).
+- ☑ Alt+Tab → 다음 visible app sheet, Alt+Shift+Tab → 이전.
+- ☑ 버튼 hover/pressed 색상 구분, focus 중인 윈도우는 sunken 상태.
+- ☑ 기존 Tab → window z-order swap ([bootpack.c](../harib27f/haribote/bootpack.c) 의 line 746) 제거. Tab(0x0f) 은 `keytable0`/`keytable1` 의 0x09 char 로 변환되어 focused app 에 그대로 전달된다 (explorer tree↔list focus 정상화).
+
+**Phase 6 구현 노트 (2026-05-01)**
+- 신규 globals (bootpack.c): `g_sht_back`, `g_buf_back`, 그리고 static 한
+  `g_taskbar_btns[8]` / `g_taskbar_btn_count` / `g_taskbar_btn_hover` /
+  `g_taskbar_btn_pressed`. layout 계산은 `taskbar_winlist_layout()` 가 한다.
+- `taskbar_full_redraw(start_hover, start_pressed)` 가 background+Start+tray
+  drawing(`taskbar_redraw`) 과 윈도우 목록 버튼을 한 번에 그리고 `sht_back` 을
+  refresh 한다. 기존 `taskbar_redraw + sheet_refresh` 호출 위치는 모두 이 함수로 교체.
+- `taskbar_mark_dirty()` 는 다음 fifo 이벤트 처리 직후 한 번 redraw 가 필요함을
+  표시한다. window close/ open / focus 변경 / start_menu dispatch / 새 sheet
+  open 직후 호출. mouse loop 의 마지막에 `g_taskbar_dirty` 가 set 이면
+  `taskbar_full_redraw` 후 clear.
+- 윈도우 목록 enumeration: `sheets0[]` 인덱스 순서로 안정적. 포함 조건은
+  `SHEET_USE && height>=1 && !SYSTEM_WIDGET && !sht_mouse && !sht_back &&
+   (APP_WIN || HAS_CURSOR || SCROLLWIN || task != 0)`. focus 표시는 z-order
+  최상단 eligible sheet 가 sunken 상태로 표시된다.
+- Alt+Tab/Alt+Shift+Tab: keyboard handler 의 키 분기에서 `i == 256+0x0f &&
+  key_alt`. visible app sheet 들을 z-order 상위→하위 순서로 list 화한 뒤
+  현재 focus(=list[0]) 의 다음/이전 항목을 raise + system_request_keywin.
+  start menu / system modal 가 떠 있으면 무시.
+- Tab char 전달: `keytable0[0x0f] = 0x09`, `keytable1[0x0f] = 0x09` 추가. modal
+  handler 가 Tab 을 현재 무시하므로 Run dialog 입력에는 영향 없음 (32~126 필터로 drop).
+  이전의 Tab → window z-order swap 코드 (HariMain key handler) 는 제거했다.
 
 **확인할 사항**
-- ☐ explorer + tetris + console 동시 실행 시 3개 버튼.
-- ☐ Alt+Tab 으로 순환.
-- ☐ 8개 초과 시 “…” 잘림.
+- ☑ build 통과, `fsck_msdos -n` clean.
+- ☐ QEMU visual smoke: explorer + tetris + console 동시 실행 시 taskbar 에 3개 버튼.
+- ☐ Alt+Tab / Alt+Shift+Tab 순환.
+- ☐ taskbar 버튼 click → focus 이동 + sheet top.
+- ☐ 8개 초과 시 button width 가 min(32) 로 clamp 후 잘림.
+- ☐ explorer 의 Tab(tree↔list) focus 회귀 정상화 확인.
+- ☐ tetris/lines 의 입력 흐름 회귀 없음.
 
 ### Phase 7 — UI polish / 오류 처리 / 정책 정리 (1일)
 - ☐ Start Menu 항목 underline letter (e.g., `_E_xplorer`) — Phase 5 spec 에 hotkey 컬럼 추가.

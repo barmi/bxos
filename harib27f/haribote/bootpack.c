@@ -24,8 +24,23 @@ void scrollwin_window_resize(struct SHEET *sht, int new_w, int new_h, char *titl
 
 unsigned int g_memtotal = 0;	/* HariMain memtest 결과 — work4 api_exec 등에서 참조 */
 struct SHEET *g_sht_mouse = 0;
+struct SHEET *g_sht_back = 0;
+unsigned char *g_buf_back = 0;
 unsigned char *g_mouse_buf = 0;
 int g_mouse_cursor = BX_CURSOR_ARROW;
+static int g_taskbar_dirty = 0;
+static int g_taskbar_start_hover = 0;
+static int g_taskbar_start_pressed = 0;
+/* work5 Phase 6: 윈도우 목록 버튼 layout 캐시. taskbar_full_redraw 시 갱신,
+ * mouse hit-test / Alt+Tab 가 같은 데이터를 참조한다.                       */
+struct TASKBAR_WIN_BTN {
+	struct SHEET *sht;
+	int x0, x1;
+};
+static struct TASKBAR_WIN_BTN g_taskbar_btns[TASKBAR_WIN_BTN_MAX];
+static int g_taskbar_btn_count = 0;
+static int g_taskbar_btn_hover = -1;
+static int g_taskbar_btn_pressed = -1;
 
 struct SYSTEM_DIALOG {
 	struct SHEET *sht;
@@ -164,6 +179,314 @@ static void system_raise_sheet(struct SHEET *sht)
 void system_request_keywin(struct SHEET *sht)
 {
 	g_pending_key_win = sht;
+	taskbar_mark_dirty();
+	return;
+}
+
+/* work5 Phase 6: Taskbar 윈도우 목록 helpers --------------------------------- */
+
+void taskbar_mark_dirty(void)
+{
+	g_taskbar_dirty = 1;
+	return;
+}
+
+static int taskbar_winlist_eligible(struct SHEET *sht)
+{
+	if (sht == 0) return 0;
+	if ((sht->flags & SHEET_FLAG_USE) == 0) return 0;
+	if (sht->height < 1) return 0;
+	if ((sht->flags & SHEET_FLAG_SYSTEM_WIDGET) != 0) return 0;
+	if (sht == g_sht_mouse) return 0;
+	if (sht == g_sht_back) return 0;
+	/* APP_WIN(HE2 앱) / HAS_CURSOR(콘솔) / SCROLLWIN(debug) / 시스템 task 창
+	 * 만 목록에 포함. sht_back / sht_mouse / 메뉴 sheet 등은 위에서 걸러짐.   */
+	if ((sht->flags & SHEET_FLAG_APP_WIN) != 0) return 1;
+	if ((sht->flags & SHEET_FLAG_HAS_CURSOR) != 0) return 1;
+	if ((sht->flags & SHEET_FLAG_SCROLLWIN) != 0) return 1;
+	if (sht->task != 0) return 1;
+	return 0;
+}
+
+static void taskbar_winlist_label(struct SHEET *sht, char *out, int n)
+{
+	int i;
+	const char *src = 0;
+	if ((sht->flags & SHEET_FLAG_APP_WIN) != 0 && sht->title[0] != 0) {
+		src = sht->title;
+	} else if ((sht->flags & SHEET_FLAG_HAS_CURSOR) != 0) {
+		src = "Console";
+	} else if (sht->task != 0 && sht->task->name[0] != 0) {
+		src = sht->task->name;
+	} else if ((sht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
+		src = "Debug";
+	} else {
+		src = "?";
+	}
+	for (i = 0; i < n - 1 && src[i] != 0; i++) {
+		out[i] = src[i];
+	}
+	out[i] = 0;
+	return;
+}
+
+/* sht_back 의 background buffer 에 한 버튼을 그린다. focused=1 → sunken,
+ * pressed=1 → sunken (focus 와 같은 모양), hover=1 → 상단 highlight 1px.    */
+static void taskbar_winlist_draw_button(unsigned char *vram, int scrnx, int scrny,
+		int x0, int x1, char *label, int focused, int hover, int pressed)
+{
+	int sy0 = scrny - TASKBAR_START_Y_PAD_TOP;
+	int sy1 = scrny - TASKBAR_START_Y_PAD_BOT;
+	int sunken = focused || pressed;
+	int label_x, label_y;
+	int label_max_chars, label_len;
+	char buf[32];
+	int i;
+
+	boxfill8(vram, scrnx, COL8_C6C6C6, x0, sy0, x1, sy1);
+	if (sunken) {
+		boxfill8(vram, scrnx, COL8_000000, x0,     sy0,     x1,     sy0);
+		boxfill8(vram, scrnx, COL8_000000, x0,     sy0,     x0,     sy1);
+		boxfill8(vram, scrnx, COL8_848484, x0 + 1, sy0 + 1, x1 - 1, sy0 + 1);
+		boxfill8(vram, scrnx, COL8_848484, x0 + 1, sy0 + 1, x0 + 1, sy1 - 1);
+		boxfill8(vram, scrnx, COL8_FFFFFF, x0 + 1, sy1 - 1, x1 - 1, sy1 - 1);
+		boxfill8(vram, scrnx, COL8_FFFFFF, x1 - 1, sy0 + 1, x1 - 1, sy1 - 1);
+	} else {
+		boxfill8(vram, scrnx, COL8_FFFFFF, x0 + 1, sy0,     x1 - 1, sy0);
+		boxfill8(vram, scrnx, COL8_FFFFFF, x0,     sy0,     x0,     sy1);
+		boxfill8(vram, scrnx, COL8_848484, x0 + 1, sy1,     x1 - 1, sy1);
+		boxfill8(vram, scrnx, COL8_848484, x1 - 1, sy0 + 1, x1 - 1, sy1 - 1);
+		boxfill8(vram, scrnx, COL8_000000, x0,     sy1 + 1, x1 - 1, sy1 + 1);
+		boxfill8(vram, scrnx, COL8_000000, x1,     sy0,     x1,     sy1 + 1);
+		if (hover) {
+			boxfill8(vram, scrnx, COL8_FFFFFF, x0 + 4, sy0 + 3, x1 - 5, sy0 + 3);
+		}
+	}
+	label_max_chars = ((x1 - x0) - 8) / 8;
+	if (label_max_chars < 1) label_max_chars = 1;
+	if (label_max_chars > (int) sizeof(buf) - 1) label_max_chars = sizeof(buf) - 1;
+	label_len = 0;
+	while (label[label_len] != 0) label_len++;
+	if (label_len > label_max_chars) {
+		for (i = 0; i < label_max_chars && i < (int) sizeof(buf) - 1; i++) {
+			buf[i] = label[i];
+		}
+		if (label_max_chars >= 1) buf[label_max_chars - 1] = '.';
+		buf[label_max_chars] = 0;
+	} else {
+		for (i = 0; i < label_len; i++) {
+			buf[i] = label[i];
+		}
+		buf[label_len] = 0;
+	}
+	label_x = x0 + 5 + (sunken ? 1 : 0);
+	label_y = scrny - 21 + (sunken ? 1 : 0);
+	{
+		extern char hankaku[4096];
+		char *p = buf;
+		while (*p != 0) {
+			putfont8((char *) vram, scrnx, label_x, label_y,
+					COL8_000000, hankaku + ((unsigned char) *p) * 16);
+			label_x += 8;
+			p++;
+		}
+	}
+	return;
+}
+
+/* 빈 영역(background 색)을 채워 이전 frame 의 버튼 잔상을 지운다. */
+static void taskbar_winlist_clear(unsigned char *vram, int scrnx, int scrny,
+		int x0, int x1)
+{
+	int sy0 = scrny - TASKBAR_START_Y_PAD_TOP;
+	int sy1 = scrny - TASKBAR_START_Y_PAD_BOT + 1;
+	if (x0 > x1) return;
+	boxfill8(vram, scrnx, COL8_C6C6C6, x0, sy0, x1, sy1);
+	return;
+}
+
+static int taskbar_winlist_collect(struct SHTCTL *ctl, struct SHEET **out, int max_n)
+{
+	int i, n = 0;
+	struct SHEET *sht;
+	if (ctl == 0) return 0;
+	for (i = 0; i < MAX_SHEETS && n < max_n; i++) {
+		sht = &ctl->sheets0[i];
+		if (taskbar_winlist_eligible(sht)) {
+			out[n++] = sht;
+		}
+	}
+	return n;
+}
+
+static int taskbar_winlist_layout(int scrnx, int n, int *out_btn_w)
+{
+	int tray_w = g_clock_show_seconds ? 68 : TASKBAR_TRAY_W;
+	int tray_left = scrnx - TASKBAR_TRAY_R_PAD - tray_w;
+	int avail_x1 = tray_left - TASKBAR_WIN_TRAY_GAP;
+	int avail = avail_x1 - TASKBAR_WIN_X0 + 1;
+	int btn_w;
+	if (n <= 0 || avail <= TASKBAR_WIN_BTN_MIN_W) {
+		*out_btn_w = 0;
+		return 0;
+	}
+	btn_w = (avail - (n - 1) * TASKBAR_WIN_BTN_GAP) / n;
+	if (btn_w > TASKBAR_WIN_BTN_MAX_W) btn_w = TASKBAR_WIN_BTN_MAX_W;
+	if (btn_w < TASKBAR_WIN_BTN_MIN_W) {
+		/* 너무 빡빡 — 가능한 만큼만 그린다 */
+		int max_n = (avail + TASKBAR_WIN_BTN_GAP) /
+				(TASKBAR_WIN_BTN_MIN_W + TASKBAR_WIN_BTN_GAP);
+		if (max_n < 1) max_n = 1;
+		if (max_n > n) max_n = n;
+		btn_w = (avail - (max_n - 1) * TASKBAR_WIN_BTN_GAP) / max_n;
+		if (btn_w > TASKBAR_WIN_BTN_MAX_W) btn_w = TASKBAR_WIN_BTN_MAX_W;
+		*out_btn_w = btn_w;
+		return max_n;
+	}
+	*out_btn_w = btn_w;
+	return n;
+}
+
+void taskbar_full_redraw(int start_hover, int start_pressed)
+{
+	struct SHTCTL *ctl;
+	struct SHEET *key_win_now = 0;
+	struct SHEET *sheets[TASKBAR_WIN_BTN_MAX];
+	char label[32];
+	int n, i, btn_w, x;
+	int prev_clear_x0;
+	int scrnx, scrny;
+
+	if (g_sht_back == 0 || g_buf_back == 0) {
+		return;
+	}
+	g_taskbar_start_hover = start_hover;
+	g_taskbar_start_pressed = start_pressed;
+	scrnx = g_sht_back->bxsize;
+	scrny = g_sht_back->bysize;
+
+	taskbar_redraw((char *) g_buf_back, scrnx, scrny, start_hover, start_pressed);
+
+	ctl = g_sht_back->ctl;
+	n = taskbar_winlist_collect(ctl, sheets, TASKBAR_WIN_BTN_MAX);
+	if (ctl != 0 && ctl->top >= 1) {
+		struct SHEET *top_app = 0;
+		for (i = ctl->top - 1; i >= 1; i--) {
+			struct SHEET *s = ctl->sheets[i];
+			if (taskbar_winlist_eligible(s)) {
+				top_app = s;
+				break;
+			}
+		}
+		key_win_now = top_app;
+	}
+
+	n = taskbar_winlist_layout(scrnx, n, &btn_w);
+
+	prev_clear_x0 = TASKBAR_WIN_X0;
+	x = TASKBAR_WIN_X0;
+	g_taskbar_btn_count = n;
+	for (i = 0; i < n; i++) {
+		int x1 = x + btn_w - 1;
+		int focused = (sheets[i] == key_win_now);
+		int hover = (i == g_taskbar_btn_hover);
+		int pressed = (i == g_taskbar_btn_pressed);
+		taskbar_winlist_label(sheets[i], label, sizeof(label));
+		taskbar_winlist_draw_button(g_buf_back, scrnx, scrny, x, x1, label,
+				focused, hover, pressed);
+		g_taskbar_btns[i].sht = sheets[i];
+		g_taskbar_btns[i].x0 = x;
+		g_taskbar_btns[i].x1 = x1;
+		x = x1 + 1 + TASKBAR_WIN_BTN_GAP;
+	}
+	for (; i < TASKBAR_WIN_BTN_MAX; i++) {
+		g_taskbar_btns[i].sht = 0;
+		g_taskbar_btns[i].x0 = 0;
+		g_taskbar_btns[i].x1 = 0;
+	}
+	{
+		int tray_w = g_clock_show_seconds ? 68 : TASKBAR_TRAY_W;
+		int tray_left = scrnx - TASKBAR_TRAY_R_PAD - tray_w;
+		int clear_x1 = tray_left - 1;
+		int clear_x0 = (n > 0) ? (g_taskbar_btns[n - 1].x1 + 1) : prev_clear_x0;
+		if (clear_x0 <= clear_x1) {
+			taskbar_winlist_clear(g_buf_back, scrnx, scrny, clear_x0, clear_x1);
+		}
+	}
+
+	sheet_refresh(g_sht_back, 0, scrny - TASKBAR_HEIGHT, scrnx, scrny);
+	return;
+}
+
+int taskbar_winlist_hit(int mx, int my)
+{
+	int i;
+	int scrny;
+	if (g_sht_back == 0) return -1;
+	scrny = g_sht_back->bysize;
+	if (my < scrny - TASKBAR_START_Y_PAD_TOP || my > scrny - TASKBAR_START_Y_PAD_BOT) {
+		return -1;
+	}
+	for (i = 0; i < g_taskbar_btn_count; i++) {
+		if (g_taskbar_btns[i].sht == 0) continue;
+		if (g_taskbar_btns[i].x0 <= mx && mx <= g_taskbar_btns[i].x1) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+struct SHEET *taskbar_winlist_sheet_at(int idx)
+{
+	if (idx < 0 || idx >= g_taskbar_btn_count) return 0;
+	return g_taskbar_btns[idx].sht;
+}
+
+void alt_tab_cycle(int prev)
+{
+	struct SHTCTL *ctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct SHEET *list[MAX_SHEETS];
+	int n = 0, i, focus_idx = -1, next_idx;
+	struct SHEET *focus_now = 0;
+	if (ctl == 0) return;
+	/* z-order 상위에서 낮은 순으로 enumerate — 스택 순서. */
+	for (i = ctl->top - 1; i >= 1; i--) {
+		struct SHEET *s = ctl->sheets[i];
+		if (taskbar_winlist_eligible(s)) {
+			list[n++] = s;
+			if (focus_now == 0) {
+				focus_now = s;
+				focus_idx = n - 1;
+			}
+		}
+	}
+	if (n < 1) return;
+	if (n == 1) {
+		/* 단 하나 있는 경우라도 focus 만 다시 set */
+		system_request_keywin(list[0]);
+		return;
+	}
+	if (focus_idx < 0) focus_idx = 0;
+	if (prev) {
+		next_idx = (focus_idx - 1 + n) % n;
+	} else {
+		next_idx = (focus_idx + 1) % n;
+	}
+	{
+		struct SHEET *target = list[next_idx];
+		int h = ctl->top;
+		if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+			h = g_sht_mouse->height;
+		}
+		sheet_updown(target, h);
+		if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+			if (g_sht_mouse->height != ctl->top) {
+				sheet_updown(g_sht_mouse, ctl->top);
+			}
+			sheet_slide(g_sht_mouse, g_sht_mouse->vx0, g_sht_mouse->vy0);
+		}
+		system_request_keywin(target);
+	}
 	return;
 }
 
@@ -407,6 +730,7 @@ void start_menu_dispatch(struct MENU_ITEM *item)
 	if (item == 0) {
 		return;
 	}
+	taskbar_mark_dirty();
 	if (item->handler_id == KMENU_HANDLER_EXEC) {
 		system_start_command(item->arg, g_memtotal);
 		return;
@@ -464,7 +788,7 @@ void HariMain(void)
 	struct SHEET *sht_back, *sht_mouse;
 	struct TASK *task_a, *task;
 	static char keytable0[0x80] = {
-		0,   0,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 0x08,   0,
+		0,   0,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 0x08, 0x09, /* 0x0f=Tab */
 		'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', 0x0a,   0,   'A', 'S',
 		'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', '`',   0,   '\\', 'Z', 'X', 'C', 'V',
 		'B', 'N', 'M', ',', '.', '/', 0,   '*', 0,   ' ', 0,   0,   0,   0,   0,   0,
@@ -474,7 +798,7 @@ void HariMain(void)
 		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
 	};
 	static char keytable1[0x80] = {
-		0,   0,   '!', '@', '#', '$', '%', '&', '^', '*', '(', ')', '_', '+', 0x08,   0,
+		0,   0,   '!', '@', '#', '$', '%', '&', '^', '*', '(', ')', '_', '+', 0x08, 0x09, /* 0x0f=Shift+Tab */
 		'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', 0x0a,   0,   'A', 'S',
 		'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~',   0,   '|', 'Z', 'X', 'C', 'V',
 		'B', 'N', 'M', '<', '>', '?', 0,   '*', 0,   ' ', 0,   0,   0,   0,   0,   0,
@@ -547,6 +871,8 @@ void HariMain(void)
 	sht_back  = sheet_alloc(shtctl);
 	buf_back  = (unsigned char *) memman_alloc_4k(memman, binfo->scrnx * binfo->scrny);
 	sheet_setbuf(sht_back, buf_back, binfo->scrnx, binfo->scrny, -1); /* 투명색없음 */
+	g_sht_back = sht_back;
+	g_buf_back = buf_back;
 	init_screen8(buf_back, binfo->scrnx, binfo->scrny);
 
 	/* nihongo.fnt / hangul.fnt의 read
@@ -666,10 +992,7 @@ void HariMain(void)
 				} else if (key_e0 != 0) {
 					key_e0 = 0;
 					if (start_menu_is_open() && start_menu_handle_key(i - 256) != 0) {
-						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-								start_hover, start_pressed);
-						sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-								binfo->scrnx, binfo->scrny);
+						taskbar_full_redraw(start_hover, start_pressed);
 					} else if (key_win != 0 && key_win->task != 0) {
 						if (i == 256 + 0x48) {	/* ↑ */
 							fifo32_put(&key_win->task->fifo, CONS_KEY_UP + 256);
@@ -702,20 +1025,19 @@ void HariMain(void)
 							!system_modal_is_open()) {	/* Ctrl+Esc */
 						start_menu_toggle();
 						start_pressed = 0;
-						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-								start_hover, start_pressed);
-						sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-								binfo->scrnx, binfo->scrny);
+						taskbar_full_redraw(start_hover, start_pressed);
 						key_menu_consumed = 1;
 					} else if (i == 256 + 0x13 && key_ctrl != 0 &&
 							!start_menu_is_open() && !system_modal_is_open()) {	/* Ctrl+R */
 						system_run_open();
 						key_menu_consumed = 1;
+					} else if (i == 256 + 0x0f && key_alt != 0 &&
+							!start_menu_is_open() && !system_modal_is_open()) {
+						/* work5 Phase 6: Alt+Tab / Alt+Shift+Tab → window-cycle */
+						alt_tab_cycle(key_shift != 0);
+						key_menu_consumed = 1;
 					} else if (start_menu_is_open() && start_menu_handle_key(i - 256) != 0) {
-						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-								start_hover, start_pressed);
-						sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-								binfo->scrnx, binfo->scrny);
+						taskbar_full_redraw(start_hover, start_pressed);
 						key_menu_consumed = 1;
 					}
 					if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
@@ -743,15 +1065,9 @@ void HariMain(void)
 					if (s[0] != 0 && key_win != 0 && key_win->task != 0) { /* 통상 문자, 백 스페이스, Enter */
 						fifo32_put(&key_win->task->fifo, s[0] + 256);
 					}
-					if (key_menu_consumed == 0 && i == 256 + 0x0f && key_win != 0) {	/* Tab */
-						keywin_off(key_win);
-						j = key_win->height - 1;
-						if (j == 0) {
-							j = shtctl->top - 1;
-						}
-						key_win = shtctl->sheets[j];
-						keywin_on(key_win);
-					}
+					/* work5 Phase 6: 기존 Tab → window z-order swap 은 제거.
+					 * window 순환은 Alt+Tab 으로 옮겼고(위), 단독 Tab 은 char(0x09)
+					 * 로 focused app 에 그대로 전달된다(explorer tree↔list 등).      */
 					if (i == 256 + 0x2a) {	/* 왼쪽 쉬프트 ON */
 						key_shift |= 1;
 					}
@@ -841,12 +1157,18 @@ void HariMain(void)
 							(TASKBAR_START_X0 <= mx && mx <= TASKBAR_START_X1 &&
 							 binfo->scrny - TASKBAR_START_Y_PAD_TOP <= my &&
 							 my <= binfo->scrny - TASKBAR_START_Y_PAD_BOT);
+						int next_winlist_hover = taskbar_winlist_hit(mx, my);
+						int dirty = 0;
 						if (next_start_hover != start_hover) {
 							start_hover = next_start_hover;
-							taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-									start_hover, start_pressed);
-							sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-									binfo->scrnx, binfo->scrny);
+							dirty = 1;
+						}
+						if (next_winlist_hover != g_taskbar_btn_hover) {
+							g_taskbar_btn_hover = next_winlist_hover;
+							dirty = 1;
+						}
+						if (dirty) {
+							taskbar_full_redraw(start_hover, start_pressed);
 						}
 					}
 					if (system_modal_is_open()) {
@@ -856,10 +1178,7 @@ void HariMain(void)
 						menu_mouse_consumed = start_menu_handle_mouse(mx, my, mdec.btn, old_btn);
 						if (!start_menu_is_open()) {
 							start_pressed = 0;
-							taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-									start_hover, start_pressed);
-							sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-									binfo->scrnx, binfo->scrny);
+							taskbar_full_redraw(start_hover, start_pressed);
 						}
 					}
 
@@ -905,10 +1224,14 @@ void HariMain(void)
 							taskbar_mouse_consumed = 1;
 							if (start_pressed == 0) {
 								start_pressed = 1;
-								taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-										start_hover, start_pressed);
-								sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-										binfo->scrnx, binfo->scrny);
+								taskbar_full_redraw(start_hover, start_pressed);
+							}
+						} else if (g_taskbar_btn_pressed >= 0 || g_taskbar_btn_hover >= 0) {
+							/* work5 Phase 6: 윈도우 목록 버튼 누름 (release 시 activate) */
+							taskbar_mouse_consumed = 1;
+							if (g_taskbar_btn_pressed != g_taskbar_btn_hover) {
+								g_taskbar_btn_pressed = g_taskbar_btn_hover;
+								taskbar_full_redraw(start_hover, start_pressed);
 							}
 						} else if (mmx < 0) {
 							/* 통상 모드의 경우 */
@@ -928,6 +1251,7 @@ void HariMain(void)
 											key_win = sht;
 											keywin_on(key_win);
 										}
+										taskbar_mark_dirty();
 										if (sht->scroll != 0 &&
 												scrollwin_handle_mouse(sht->scroll, x, y, mdec.btn) != 0) {
 											break;
@@ -1006,10 +1330,35 @@ void HariMain(void)
 							}
 							start_pressed = 0;
 							taskbar_mouse_consumed = 1;
-							taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-									start_hover, start_pressed);
-							sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-									binfo->scrnx, binfo->scrny);
+							taskbar_full_redraw(start_hover, start_pressed);
+						}
+						if (g_taskbar_btn_pressed >= 0) {
+							/* work5 Phase 6: 윈도우 목록 버튼 release → activate */
+							int idx = g_taskbar_btn_pressed;
+							struct SHEET *target = (idx == g_taskbar_btn_hover)
+									? taskbar_winlist_sheet_at(idx) : 0;
+							g_taskbar_btn_pressed = -1;
+							taskbar_mouse_consumed = 1;
+							if (target != 0) {
+								int h = shtctl->top;
+								if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+									h = g_sht_mouse->height;
+								}
+								if (target == key_win) {
+									/* 이미 focus 인 버튼: 최소화 대신 z-order 만 유지 (Phase 6 1차) */
+								} else {
+									sheet_updown(target, h);
+									if (g_sht_mouse != 0 &&
+											g_sht_mouse->height >= 0 &&
+											g_sht_mouse->height != shtctl->top) {
+										sheet_updown(g_sht_mouse, shtctl->top);
+									}
+									keywin_off(key_win);
+									key_win = target;
+									keywin_on(key_win);
+								}
+							}
+							taskbar_full_redraw(start_hover, start_pressed);
 						}
 						if (rsht != 0) {
 							/* 리사이즈 드래그 종료. console/debug 처럼 라이브 리사이즈가
@@ -1160,6 +1509,7 @@ void HariMain(void)
 				sheet_free(sht2);
 			} else if (i == 2280) {	/* task manager를 닫는다 */
 				close_taskmgr();
+				taskbar_mark_dirty();
 			} else if (i == TIMER_CLOCK) {
 				if (g_clock_show_seconds) {
 					g_clock_seconds = (g_clock_seconds + 1) % (24 * 60 * 60);
@@ -1168,10 +1518,11 @@ void HariMain(void)
 					g_clock_seconds = (g_clock_seconds + 60) % (24 * 60 * 60);
 					timer_settime(clock_timer, 60 * 100);
 				}
-				taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
-						start_hover, start_pressed);
-				sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
-						binfo->scrnx, binfo->scrny);
+				taskbar_full_redraw(start_hover, start_pressed);
+			}
+			if (768 <= i && i <= 2279) {
+				/* console / app / taskmgr close 등 윈도우 목록 변동 가능 — 다시 그림 */
+				taskbar_mark_dirty();
 			}
 			if (g_pending_key_win != 0) {
 				if (key_win != 0) {
@@ -1180,6 +1531,11 @@ void HariMain(void)
 				key_win = g_pending_key_win;
 				g_pending_key_win = 0;
 				keywin_on(key_win);
+				taskbar_mark_dirty();
+			}
+			if (g_taskbar_dirty) {
+				taskbar_full_redraw(start_hover, start_pressed);
+				g_taskbar_dirty = 0;
 			}
 		}
 	}
