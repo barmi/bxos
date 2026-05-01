@@ -328,32 +328,47 @@ handler = builtin:taskmgr
 - ☑ build 통과, `fsck_msdos -n` clean, `bxos_fat.py ls /SYSTEM/` 에 `MENU.CFG` 보임.
 - ☐ QEMU config smoke: MENU.CFG 의 한 줄을 일부러 망가뜨리고 부팅 → 그 항목만 빠지고 나머지 메뉴는 정상.
 
-### Phase 4 — 핸들러 / 시계 / Run… / About (1.5일)
+### Phase 4 — 핸들러 / 시계 / Run… / About (1.5일) — ☑ 구현 완료, QEMU smoke 대기 (2026-05-01)
 **목표**: 메뉴 항목 클릭 시 실제 동작을 연결하고, 트레이 시계와 Run / About 다이얼로그를 추가한다.
 
-- ☐ 핸들러 dispatcher:
-  - `exec:<path>` → 기존 `cmd_app` 경로 재사용 (subsystem 분기는 work4 api_exec 와 동일).
-  - `builtin:console` → `open_console(shtctl, memtotal)`.
-  - `builtin:taskmgr` → 기존 `open_taskmgr()`.
-  - `builtin:run` → Phase 4 신규 modal Run 다이얼로그.
-  - `builtin:about` → Phase 4 신규 About 다이얼로그.
-  - `builtin:shutdown` / `builtin:restart` → §2 의 결정대로.
-  - `submenu:<section>` → `menu_open` 자식 메뉴.
-  - `settings:<key>` → settings.he2 를 `<key>` 인자와 함께 실행 (Phase 5 에서).
-- ☐ 시계: 60s timer. PIT timer 큐의 별도 slot 1개 예약.
+- ☑ 핸들러 dispatcher:
+  - ☑ `exec:<path>` → 기존 console/app 경로를 재사용하는 `system_start_command()` 로 실행.
+  - ☑ `builtin:console` → `open_console(shtctl, memtotal)`.
+  - ☑ `builtin:taskmgr` → 기존 `open_taskmgr()`.
+  - ☑ `builtin:run` → Phase 4 신규 modal Run 다이얼로그.
+  - ☑ `builtin:about` → Phase 4 신규 About 다이얼로그.
+  - ☑ `builtin:shutdown` / `builtin:restart` → §2 의 결정대로.
+  - ☑ `submenu:<section>` → `menu_open` 자식 메뉴.
+  - ☑ `settings:<key>` → settings.he2 를 `<key>` 인자와 함께 실행 (Phase 5 에서).
+- ☑ 시계: 60s timer. PIT timer 큐의 별도 slot 1개 예약.
   - “HH:MM” 포맷 (24h). RTC 가 없으므로 부팅 시각 + uptime, 부팅 시각은 0:00 으로 가정 (Phase 5 Time 카테고리에서 사용자 set).
   - 메뉴 토글 시점에도 즉시 redraw.
-- ☐ Run… 다이얼로그:
+- ☑ Run… 다이얼로그:
   - 시스템 modal sheet, 폭 320 / 높이 100. 한 줄 line input + OK/Cancel.
   - OK → cmd_start 와 동일 경로. 빈 입력은 무시.
   - 다이얼로그 떠 있는 동안 키보드 focus 점유, 메뉴는 닫혀 있어야 함.
-- ☐ About BxOS:
+- ☑ About BxOS:
   - 시스템 modal sheet, 폭 280 / 높이 160. 텍스트 6줄: 이름, 버전, 빌드 일자,
     화면 해상도, 메모리, 현재 langmode.
   - OK 또는 Esc 로 닫음.
 
+**Phase 4 구현 노트 (2026-05-01)**
+- `menu.c` 의 leaf invoke 는 선택 항목을 복사한 뒤 menu sheet 를 닫고
+  `start_menu_dispatch()` 로 넘긴다. 메뉴 닫힘과 실행 side effect 가 분리되어
+  submenu/cursor z-order 회귀를 줄인다.
+- `console.c` 에 `system_start_command(cmdline, memtotal)` 를 추가했다.
+  `cmd_start` 와 같은 subsystem 판정을 사용해 window HE2 는 숨은 constask 로,
+  console 앱/명령은 새 console sheet 로 실행한다.
+- absolute path (`/EXPLORER.HE2`) 도 메뉴/Run 에서 실행되도록 `app_find()` 가
+  `cons == 0` 인 경우에도 root 기준 absolute path 를 열 수 있게 했다.
+- Run/About 은 `SHEET_FLAG_SYSTEM_WIDGET` system modal sheet 로 열리며, cursor 바로
+  아래 z-order 로 올린다. modal 이 떠 있는 동안 Ctrl+Esc/일반 mouse routing 은
+  modal 에서 소비된다.
+- tray clock 은 `TIMER_CLOCK` 이벤트를 60초마다 받아 `g_clock_minutes` 를 증가시키고
+  taskbar 를 다시 그린다. RTC 는 아직 쓰지 않으므로 부팅 후 `00:00` 시작이다.
+
 **확인할 사항**
-- ☐ build 통과.
+- ☑ build 통과.
 - ☐ Start → Run… → `explorer` 입력 → 새 explorer 창.
 - ☐ Start → About → 시스템 정보가 정확.
 - ☐ Start → Programs → Games → Tetris → 정상 실행 (콘솔 없이).

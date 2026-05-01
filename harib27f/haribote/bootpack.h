@@ -635,12 +635,14 @@ extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: ap
 extern struct SHEET *g_sht_mouse;   /* system sheets place menus directly below cursor */
 extern int g_background_color;       /* work5 Phase 1: desktop background color */
 extern int g_start_menu_open;        /* work5 Phase 1: Start button/menu toggle state */
+extern int g_clock_minutes;          /* work5 Phase 4: uptime clock, minutes since 00:00 */
 void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, int scrny);
 void start_menu_toggle(void);
 void start_menu_close_all(void);
 int start_menu_is_open(void);
 int start_menu_handle_key(int key);
 int start_menu_handle_mouse(int mx, int my, int btn, int old_btn);
+void start_menu_dispatch(struct MENU_ITEM *item);
 #define MAX_MENU		256
 #define MAX_MNLV		  8
 struct MNLV {
@@ -652,6 +654,9 @@ struct MNLV {
 void keywin_on(struct SHEET *key_win);
 struct TASK *open_constask(struct SHEET *sht, unsigned int memtotal);
 struct SHEET *open_console(struct SHTCTL *shtctl, unsigned int memtotal);
+void system_request_keywin(struct SHEET *sht);
+void system_start_command(char *cmdline, unsigned int memtotal);
+void open_taskmgr(unsigned int memtotal);
 /* console 윈도우를 새 크기로 리사이즈. 새 buffer 를 alloc 해서 sheet_resize.
  * 기존 buffer 는 free 함. 호출 후 sht 의 buf/bxsize/bysize 가 갱신됨.    */
 void console_resize(struct SHEET *sht, int new_w, int new_h);

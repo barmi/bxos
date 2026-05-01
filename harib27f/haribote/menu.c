@@ -633,6 +633,7 @@ static void menu_select_delta(struct KERNEL_MENU *menu, int delta)
 static void menu_invoke(struct KERNEL_MENU *menu)
 {
 	struct MENU_ITEM *item;
+	struct MENU_ITEM invoke_item;
 	if (menu->selected < 0) {
 		return;
 	}
@@ -642,7 +643,9 @@ static void menu_invoke(struct KERNEL_MENU *menu)
 		return;
 	}
 	if ((item->flags & (KMENU_FLAG_SEPARATOR | KMENU_FLAG_DISABLED)) == 0) {
+		invoke_item = *item;
 		start_menu_close_all();
+		start_menu_dispatch(&invoke_item);
 	}
 	return;
 }

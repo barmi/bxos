@@ -1246,6 +1246,7 @@ void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal)
 		task = sht->task;
 		sheet_slide(sht, 32, 4);
 		sheet_updown(sht, shtctl->top);
+		system_request_keywin(sht);
 	}
 	fifo = &task->fifo;
 	/* 커맨드 라인에 입력된 문자열을, 한 글자씩 새로운 콘솔에 입력 */
@@ -1254,6 +1255,35 @@ void cmd_start(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal)
 	}
 	fifo32_put(fifo, 10 + 256);	/* Enter */
 	cons_newline(cons);
+	return;
+}
+
+void system_start_command(char *cmdline, unsigned int memtotal)
+{
+	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct SHEET *sht = 0;
+	struct TASK *task;
+	struct FIFO32 *fifo;
+	int i, subsystem;
+
+	if (cmdline == 0 || cmdline[0] == 0) {
+		return;
+	}
+	subsystem = app_subsystem(0, cmdline, 0);
+	if (subsystem == HE2_SUBSYSTEM_WINDOW) {
+		task = open_constask(0, memtotal);
+	} else {
+		sht = open_console(shtctl, memtotal);
+		task = sht->task;
+		sheet_slide(sht, 32, 4);
+		sheet_updown(sht, shtctl->top);
+		system_request_keywin(sht);
+	}
+	fifo = &task->fifo;
+	for (i = 0; cmdline[i] != 0 && i < CONS_CMDLINE_MAX - 1; i++) {
+		fifo32_put(fifo, cmdline[i] + 256);
+	}
+	fifo32_put(fifo, 10 + 256);
 	return;
 }
 
@@ -1336,6 +1366,9 @@ static struct FILEINFO *app_find(struct CONSOLE *cons, char *cmdline, char *app_
 	if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
 		goto found;
 	}
+	if (name[0] == '/' && fs_data_open_path(0, name, &app_file) == 0) {
+		goto found;
+	}
 	if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {
 		goto found;
 	}
@@ -1348,6 +1381,9 @@ static struct FILEINFO *app_find(struct CONSOLE *cons, char *cmdline, char *app_
 		if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
 			goto found;
 		}
+		if (name[0] == '/' && fs_data_open_path(0, name, &app_file) == 0) {
+			goto found;
+		}
 		if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {
 			goto found;
 		}
@@ -1355,6 +1391,9 @@ static struct FILEINFO *app_find(struct CONSOLE *cons, char *cmdline, char *app_
 		name[i + 2] = 'R';
 		name[i + 3] = 'B';
 		if (cons != 0 && cons_open_file(cons, name, &app_file) == 0) {
+			goto found;
+		}
+		if (name[0] == '/' && fs_data_open_path(0, name, &app_file) == 0) {
 			goto found;
 		}
 		if (has_slash == 0 && fs_data_open_path(0, name, &app_file) == 0) {

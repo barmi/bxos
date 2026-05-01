@@ -5,6 +5,7 @@
 
 int g_background_color = COL8_008484;
 int g_start_menu_open = 0;
+int g_clock_minutes = 0;
 
 void init_palette(void)
 {
@@ -88,6 +89,7 @@ static void taskbar_putascii(char *vram, int xsize, int x, int y,
 
 void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed)
 {
+	char clock[6];
 	int sx0 = TASKBAR_START_X0, sx1 = TASKBAR_START_X1;
 	int sy0 = y - TASKBAR_START_Y_PAD_TOP, sy1 = y - TASKBAR_START_Y_PAD_BOT;
 	int tx0 = x - TASKBAR_TRAY_R_PAD - TASKBAR_TRAY_W;
@@ -96,6 +98,15 @@ void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed
 	int start_down = start_pressed || g_start_menu_open;
 	int label_x = 12 + (start_down ? 1 : 0);
 	int label_y = y - 21 + (start_down ? 1 : 0);
+	int clock_min = g_clock_minutes % (24 * 60);
+	int hh = clock_min / 60;
+	int mm = clock_min % 60;
+	clock[0] = '0' + hh / 10;
+	clock[1] = '0' + hh % 10;
+	clock[2] = ':';
+	clock[3] = '0' + mm / 10;
+	clock[4] = '0' + mm % 10;
+	clock[5] = 0;
 
 	boxfill8(vram, x, COL8_C6C6C6,  0,     y - 28, x -  1, y - 28);
 	boxfill8(vram, x, COL8_FFFFFF,  0,     y - 27, x -  1, y - 27);
@@ -127,7 +138,7 @@ void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed
 	boxfill8(vram, x, COL8_848484, tx0,     ty0,     tx0,     ty1);
 	boxfill8(vram, x, COL8_FFFFFF, tx0,     ty1,     tx1,     ty1);
 	boxfill8(vram, x, COL8_FFFFFF, tx1,     ty0,     tx1,     ty1);
-	taskbar_putascii(vram, x, tx0 + 4, y - 20, COL8_000000, (unsigned char *) "00:00");
+	taskbar_putascii(vram, x, tx0 + 4, y - 20, COL8_000000, (unsigned char *) clock);
 	return;
 }
 

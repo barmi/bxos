@@ -5,6 +5,11 @@
 #include <string.h>
 
 #define KEYCMD_LED		0xed
+#define TIMER_CLOCK		2281
+#define RUN_DIALOG_W	320
+#define RUN_DIALOG_H	100
+#define ABOUT_DIALOG_W	280
+#define ABOUT_DIALOG_H	160
 
 struct TASK *fdc, *inout, *taskmgr;
 
@@ -19,6 +24,226 @@ unsigned int g_memtotal = 0;	/* HariMain memtest 결과 — work4 api_exec 등�
 struct SHEET *g_sht_mouse = 0;
 unsigned char *g_mouse_buf = 0;
 int g_mouse_cursor = BX_CURSOR_ARROW;
+
+struct SYSTEM_DIALOG {
+	struct SHEET *sht;
+	unsigned char *buf;
+	int w, h;
+	char input[CONS_CMDLINE_MAX];
+	int len;
+};
+
+static struct SYSTEM_DIALOG g_run_dialog = { 0 };
+static struct SYSTEM_DIALOG g_about_dialog = { 0 };
+static struct SHEET *g_pending_key_win = 0;
+
+static void system_raise_sheet(struct SHEET *sht)
+{
+	int h;
+	if (sht == 0 || sht->ctl == 0) {
+		return;
+	}
+	h = sht->ctl->top + 1;
+	if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+		h = g_sht_mouse->height;
+	}
+	sheet_updown(sht, h);
+	if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+		if (g_sht_mouse->height != sht->ctl->top) {
+			sheet_updown(g_sht_mouse, sht->ctl->top);
+		}
+		sheet_slide(g_sht_mouse, g_sht_mouse->vx0, g_sht_mouse->vy0);
+	}
+	return;
+}
+
+void system_request_keywin(struct SHEET *sht)
+{
+	g_pending_key_win = sht;
+	return;
+}
+
+static int system_modal_is_open(void)
+{
+	return g_run_dialog.sht != 0 || g_about_dialog.sht != 0;
+}
+
+static void system_draw_button(struct SYSTEM_DIALOG *dlg,
+		int x0, int y0, int w, int h, char *label)
+{
+	boxfill8(dlg->buf, dlg->w, COL8_C6C6C6, x0, y0, x0 + w - 1, y0 + h - 1);
+	boxfill8(dlg->buf, dlg->w, COL8_FFFFFF, x0, y0, x0 + w - 2, y0);
+	boxfill8(dlg->buf, dlg->w, COL8_FFFFFF, x0, y0, x0, y0 + h - 2);
+	boxfill8(dlg->buf, dlg->w, COL8_848484, x0 + 1, y0 + h - 2, x0 + w - 1, y0 + h - 2);
+	boxfill8(dlg->buf, dlg->w, COL8_848484, x0 + w - 2, y0 + 1, x0 + w - 2, y0 + h - 1);
+	boxfill8(dlg->buf, dlg->w, COL8_000000, x0, y0 + h - 1, x0 + w - 1, y0 + h - 1);
+	boxfill8(dlg->buf, dlg->w, COL8_000000, x0 + w - 1, y0, x0 + w - 1, y0 + h - 1);
+	putfonts8_asc(dlg->buf, dlg->w, x0 + (w - (int) strlen(label) * 8) / 2,
+			y0 + 5, COL8_000000, (unsigned char *) label);
+	return;
+}
+
+static void system_dialog_close(struct SYSTEM_DIALOG *dlg)
+{
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	if (dlg->sht == 0) {
+		return;
+	}
+	sheet_updown(dlg->sht, -1);
+	memman_free_4k(memman, (int) dlg->buf, dlg->w * dlg->h);
+	sheet_free(dlg->sht);
+	dlg->sht = 0;
+	dlg->buf = 0;
+	dlg->len = 0;
+	return;
+}
+
+static void system_run_redraw(void)
+{
+	struct SYSTEM_DIALOG *dlg = &g_run_dialog;
+	if (dlg->sht == 0) {
+		return;
+	}
+	make_window8(dlg->buf, dlg->w, dlg->h, "Run", 1);
+	putfonts8_asc(dlg->buf, dlg->w, 18, 34, COL8_000000, (unsigned char *) "Open:");
+	make_textbox8(dlg->sht, 62, 32, 240, 18, COL8_FFFFFF);
+	putfonts8_asc(dlg->buf, dlg->w, 66, 34, COL8_000000, (unsigned char *) dlg->input);
+	boxfill8(dlg->buf, dlg->w, COL8_000000,
+			66 + dlg->len * 8, 34, 66 + dlg->len * 8, 49);
+	system_draw_button(dlg, 170, 68, 60, 22, "OK");
+	system_draw_button(dlg, 240, 68, 60, 22, "Cancel");
+	sheet_refresh(dlg->sht, 0, 0, dlg->w, dlg->h);
+	return;
+}
+
+static void system_run_submit(void)
+{
+	if (g_run_dialog.len > 0) {
+		system_start_command(g_run_dialog.input, g_memtotal);
+	}
+	system_dialog_close(&g_run_dialog);
+	return;
+}
+
+static void system_run_open(void)
+{
+	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	if (g_run_dialog.sht != 0) {
+		system_raise_sheet(g_run_dialog.sht);
+		return;
+	}
+	start_menu_close_all();
+	g_run_dialog.w = RUN_DIALOG_W;
+	g_run_dialog.h = RUN_DIALOG_H;
+	g_run_dialog.len = 0;
+	g_run_dialog.input[0] = 0;
+	g_run_dialog.sht = sheet_alloc(shtctl);
+	g_run_dialog.buf = (unsigned char *) memman_alloc_4k(memman, RUN_DIALOG_W * RUN_DIALOG_H);
+	sheet_setbuf(g_run_dialog.sht, g_run_dialog.buf, RUN_DIALOG_W, RUN_DIALOG_H, -1);
+	g_run_dialog.sht->flags &= ~SHEET_FLAG_RESIZABLE;
+	g_run_dialog.sht->flags |= SHEET_FLAG_SYSTEM_WIDGET;
+	system_run_redraw();
+	sheet_slide(g_run_dialog.sht, (shtctl->xsize - RUN_DIALOG_W) / 2,
+			(shtctl->ysize - TASKBAR_HEIGHT - RUN_DIALOG_H) / 2);
+	system_raise_sheet(g_run_dialog.sht);
+	return;
+}
+
+static void system_about_open(void)
+{
+	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	struct TASK *task = task_now();
+	char s[40];
+	if (g_about_dialog.sht != 0) {
+		system_raise_sheet(g_about_dialog.sht);
+		return;
+	}
+	start_menu_close_all();
+	g_about_dialog.w = ABOUT_DIALOG_W;
+	g_about_dialog.h = ABOUT_DIALOG_H;
+	g_about_dialog.sht = sheet_alloc(shtctl);
+	g_about_dialog.buf = (unsigned char *) memman_alloc_4k(memman, ABOUT_DIALOG_W * ABOUT_DIALOG_H);
+	sheet_setbuf(g_about_dialog.sht, g_about_dialog.buf, ABOUT_DIALOG_W, ABOUT_DIALOG_H, -1);
+	g_about_dialog.sht->flags &= ~SHEET_FLAG_RESIZABLE;
+	g_about_dialog.sht->flags |= SHEET_FLAG_SYSTEM_WIDGET;
+	make_window8(g_about_dialog.buf, ABOUT_DIALOG_W, ABOUT_DIALOG_H, "About BxOS", 1);
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 34, COL8_000000, (unsigned char *) "BxOS");
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 50, COL8_000000, (unsigned char *) "work5 Phase 4");
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 66, COL8_000000, (unsigned char *) __DATE__);
+	sprintf(s, "Screen: %dx%d", shtctl->xsize, shtctl->ysize);
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 82, COL8_000000, (unsigned char *) s);
+	sprintf(s, "Memory: %uMB", g_memtotal / (1024 * 1024));
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 98, COL8_000000, (unsigned char *) s);
+	sprintf(s, "Langmode: %d", task != 0 ? task->langmode : 0);
+	putfonts8_asc(g_about_dialog.buf, ABOUT_DIALOG_W, 18, 114, COL8_000000, (unsigned char *) s);
+	system_draw_button(&g_about_dialog, 110, 132, 60, 22, "OK");
+	sheet_slide(g_about_dialog.sht, (shtctl->xsize - ABOUT_DIALOG_W) / 2,
+			(shtctl->ysize - TASKBAR_HEIGHT - ABOUT_DIALOG_H) / 2);
+	system_raise_sheet(g_about_dialog.sht);
+	return;
+}
+
+static int system_modal_handle_key(int key, int chr)
+{
+	if (g_about_dialog.sht != 0) {
+		if (key == 0x01 || key == 0x1c) {
+			system_dialog_close(&g_about_dialog);
+		}
+		return 1;
+	}
+	if (g_run_dialog.sht != 0) {
+		if (key == 0x01) {
+			system_dialog_close(&g_run_dialog);
+		} else if (key == 0x1c) {
+			system_run_submit();
+		} else if (chr == 0x08) {
+			if (g_run_dialog.len > 0) {
+				g_run_dialog.input[--g_run_dialog.len] = 0;
+				system_run_redraw();
+			}
+		} else if (32 <= chr && chr <= 126 && g_run_dialog.len < CONS_CMDLINE_MAX - 1) {
+			g_run_dialog.input[g_run_dialog.len++] = chr;
+			g_run_dialog.input[g_run_dialog.len] = 0;
+			system_run_redraw();
+		}
+		return 1;
+	}
+	return 0;
+}
+
+static int system_modal_handle_mouse(int mx, int my, int btn, int old_btn)
+{
+	struct SYSTEM_DIALOG *dlg = 0;
+	int x, y, btn_up = (old_btn & ~btn) & 0x01;
+	if (g_about_dialog.sht != 0) {
+		dlg = &g_about_dialog;
+	} else if (g_run_dialog.sht != 0) {
+		dlg = &g_run_dialog;
+	}
+	if (dlg == 0) {
+		return 0;
+	}
+	x = mx - dlg->sht->vx0;
+	y = my - dlg->sht->vy0;
+	if (btn_up != 0 && 0 <= x && x < dlg->w && 0 <= y && y < dlg->h) {
+		if (dlg == &g_run_dialog) {
+			if (170 <= x && x < 230 && 68 <= y && y < 90) {
+				system_run_submit();
+			} else if ((240 <= x && x < 300 && 68 <= y && y < 90) ||
+					(dlg->w - 21 <= x && x < dlg->w - 5 && 5 <= y && y < 19)) {
+				system_dialog_close(dlg);
+			}
+		} else {
+			if ((110 <= x && x < 170 && 132 <= y && y < 154) ||
+					(dlg->w - 21 <= x && x < dlg->w - 5 && 5 <= y && y < 19)) {
+				system_dialog_close(dlg);
+			}
+		}
+	}
+	return 1;
+}
 
 void mouse_set_cursor_shape(int shape)
 {
@@ -43,6 +268,82 @@ void mouse_set_cursor_shape(int shape)
 	return;
 }
 
+static void system_shutdown(void)
+{
+	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	struct SYSTEM_DIALOG dlg;
+
+	dlg.w = 300;
+	dlg.h = 80;
+	dlg.sht = sheet_alloc(shtctl);
+	dlg.buf = (unsigned char *) memman_alloc_4k(memman, dlg.w * dlg.h);
+	sheet_setbuf(dlg.sht, dlg.buf, dlg.w, dlg.h, -1);
+	dlg.sht->flags &= ~SHEET_FLAG_RESIZABLE;
+	dlg.sht->flags |= SHEET_FLAG_SYSTEM_WIDGET;
+	make_window8(dlg.buf, dlg.w, dlg.h, "Shutdown", 1);
+	putfonts8_asc(dlg.buf, dlg.w, 18, 36, COL8_000000,
+			(unsigned char *) "It is now safe to power off.");
+	sheet_slide(dlg.sht, (shtctl->xsize - dlg.w) / 2,
+			(shtctl->ysize - TASKBAR_HEIGHT - dlg.h) / 2);
+	system_raise_sheet(dlg.sht);
+	io_cli();
+	for (;;) {
+		io_hlt();
+	}
+}
+
+void start_menu_dispatch(struct MENU_ITEM *item)
+{
+	struct SHTCTL *shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	struct SHEET *sht;
+	char cmd[CONS_CMDLINE_MAX];
+	int i, j;
+
+	if (item == 0) {
+		return;
+	}
+	if (item->handler_id == KMENU_HANDLER_EXEC) {
+		system_start_command(item->arg, g_memtotal);
+		return;
+	}
+	if (item->handler_id == KMENU_HANDLER_SETTINGS) {
+		strcpy(cmd, "/SETTINGS.HE2 ");
+		for (i = 0, j = strlen(cmd); item->arg[i] != 0 && j < CONS_CMDLINE_MAX - 1; i++, j++) {
+			cmd[j] = item->arg[i];
+		}
+		cmd[j] = 0;
+		system_start_command(cmd, g_memtotal);
+		return;
+	}
+	if (item->handler_id != KMENU_HANDLER_BUILTIN) {
+		return;
+	}
+	if (strcmp(item->arg, "console") == 0) {
+		sht = open_console(shtctl, g_memtotal);
+		sheet_slide(sht, 32, 4);
+		sheet_updown(sht, shtctl->top);
+		system_request_keywin(sht);
+	} else if (strcmp(item->arg, "taskmgr") == 0) {
+		open_taskmgr(g_memtotal);
+	} else if (strcmp(item->arg, "run") == 0) {
+		system_run_open();
+	} else if (strcmp(item->arg, "about") == 0) {
+		system_about_open();
+	} else if (strcmp(item->arg, "settings") == 0) {
+		system_start_command("/SETTINGS.HE2", g_memtotal);
+	} else if (strcmp(item->arg, "shutdown") == 0) {
+		system_shutdown();
+	} else if (strcmp(item->arg, "restart") == 0) {
+		wait_KBC_sendready();
+		io_out8(PORT_KEYCMD, 0xfe);
+		for (;;) {
+			io_hlt();
+		}
+	}
+	return;
+}
+
 void HariMain(void)
 {
 	struct BOOTINFO *binfo = (struct BOOTINFO *) ADR_BOOTINFO;
@@ -54,6 +355,7 @@ void HariMain(void)
 	unsigned int memtotal;
 	struct MOUSE_DEC mdec;
 	struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+	struct TIMER *clock_timer;
 	unsigned char *buf_back, buf_mouse[SIZE_MOUSE_CURSOR*MAX_MOUSE_CURSOR];
 	struct SHEET *sht_back, *sht_mouse;
 	struct TASK *task_a, *task;
@@ -208,6 +510,9 @@ void HariMain(void)
 	/* 처음에 키보드 상태와 어긋나지 않게, 설정해 두기로 한다 */
 	fifo32_put(&keycmd, KEYCMD_LED);
 	fifo32_put(&keycmd, key_leds);
+	clock_timer = timer_alloc();
+	timer_init(clock_timer, &fifo, TIMER_CLOCK);
+	timer_settime(clock_timer, 60 * 100);
 
 	// skshin 
 	dbg_init(shtctl);
@@ -288,13 +593,18 @@ void HariMain(void)
 					if (i == 256 + 0xb8) {	/* Alt OFF */
 						key_alt &= ~1;
 					}
-					if (i == 256 + 0x01 && key_ctrl != 0) {	/* Ctrl+Esc */
+					if (i == 256 + 0x01 && key_ctrl != 0 &&
+							!system_modal_is_open()) {	/* Ctrl+Esc */
 						start_menu_toggle();
 						start_pressed = 0;
 						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
 								start_hover, start_pressed);
 						sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
 								binfo->scrnx, binfo->scrny);
+						key_menu_consumed = 1;
+					} else if (i == 256 + 0x13 && key_ctrl != 0 &&
+							!start_menu_is_open() && !system_modal_is_open()) {	/* Ctrl+R */
+						system_run_open();
 						key_menu_consumed = 1;
 					} else if (start_menu_is_open() && start_menu_handle_key(i - 256) != 0) {
 						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
@@ -317,6 +627,10 @@ void HariMain(void)
 								((key_leds & 4) != 0 && key_shift != 0)) {
 							s[0] += 0x20;	/* 대문자를 소문자로 변환 */
 						}
+					}
+					if (key_menu_consumed == 0 &&
+							system_modal_handle_key(i - 256, s[0]) != 0) {
+						key_menu_consumed = 1;
 					}
 					if (key_menu_consumed != 0) {
 						s[0] = 0;
@@ -360,7 +674,8 @@ void HariMain(void)
 						fifo32_put(&keycmd, KEYCMD_LED);
 						fifo32_put(&keycmd, key_leds);
 					}
-					if (i == 256 + 0x3b && key_shift != 0 && key_win != 0 && key_win->task != 0) {	/* Shift+F1 */
+					if (key_menu_consumed == 0 && i == 256 + 0x3b &&
+							key_shift != 0 && key_win != 0 && key_win->task != 0) {	/* Shift+F1 */
 						task = key_win->task;
 						if (task != 0 && task->tss.ss0 != 0) {
 							cons_putstr0(task->cons, "\nBreak(key) :\n");
@@ -371,7 +686,7 @@ void HariMain(void)
 							task_run(task, -1, 0);	/* 종료 처리를 확실히 시키기 위해서, sleeve하고 있으면 깨운다 */
 						}
 					}
-					if (i == 256 + 0x3c && key_shift != 0) {	/* Shift+F2 */
+					if (key_menu_consumed == 0 && i == 256 + 0x3c && key_shift != 0) {	/* Shift+F2 */
 						/* 새롭게 만든 콘솔을 입력 선택 상태로 한다(그 편이 친절하겠지요? ) */
 						if (key_win != 0) {
 							keywin_off(key_win);
@@ -381,7 +696,7 @@ void HariMain(void)
 						sheet_updown(key_win, shtctl->top);
 						keywin_on(key_win);
 					}
-					if (i == 256 + 0x57) {	/* F11 */
+					if (key_menu_consumed == 0 && i == 256 + 0x57) {	/* F11 */
 						sheet_updown(shtctl->sheets[1], shtctl->top - 1);
 					}
 					if (i == 256 + 0x58) {	/* F12 */
@@ -429,7 +744,10 @@ void HariMain(void)
 									binfo->scrnx, binfo->scrny);
 						}
 					}
-					if (start_menu_is_open()) {
+					if (system_modal_is_open()) {
+						menu_mouse_consumed = system_modal_handle_mouse(mx, my, mdec.btn, old_btn);
+						taskbar_mouse_consumed = menu_mouse_consumed;
+					} else if (start_menu_is_open()) {
 						menu_mouse_consumed = start_menu_handle_mouse(mx, my, mdec.btn, old_btn);
 						if (!start_menu_is_open()) {
 							start_pressed = 0;
@@ -737,6 +1055,21 @@ void HariMain(void)
 				sheet_free(sht2);
 			} else if (i == 2280) {	/* task manager를 닫는다 */
 				close_taskmgr();
+			} else if (i == TIMER_CLOCK) {
+				g_clock_minutes = (g_clock_minutes + 1) % (24 * 60);
+				timer_settime(clock_timer, 60 * 100);
+				taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
+						start_hover, start_pressed);
+				sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
+						binfo->scrnx, binfo->scrny);
+			}
+			if (g_pending_key_win != 0) {
+				if (key_win != 0) {
+					keywin_off(key_win);
+				}
+				key_win = g_pending_key_win;
+				g_pending_key_win = 0;
+				keywin_on(key_win);
 			}
 		}
 	}
