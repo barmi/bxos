@@ -77,7 +77,8 @@ void HariMain(void)
 		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
 	};
-	int key_shift = 0, key_leds = (binfo->leds >> 4) & 7, keycmd_wait = -1, key_e0 = 0;
+	int key_shift = 0, key_ctrl = 0, key_alt = 0;
+	int key_leds = (binfo->leds >> 4) & 7, keycmd_wait = -1, key_e0 = 0;
 	int j, x, y, mmx = -1, mmy = -1, mmx2 = 0;
 	/* ── 윈도우 리사이즈 모드 상태 ─────────────────────────────────
 	 * rsht != 0 이면 리사이즈 중. (rmx, rmy) 시작 마우스, (rw0, rh0) 시작
@@ -93,6 +94,7 @@ void HariMain(void)
 #define RZ_MIN_H  48
 	/* work4 Phase 2: app client mouse event 라우팅 — 이전 btn 상태 추적. */
 	int old_btn = 0;
+	int start_hover = 0, start_pressed = 0;
 	struct SHEET *sht = 0, *key_win, *sht2;
 	int *fat;
 	unsigned char *nihongo, *hangul;
@@ -267,6 +269,26 @@ void HariMain(void)
 						}
 					}
 				} else {
+					if (i == 256 + 0x1d) {	/* Ctrl ON */
+						key_ctrl |= 1;
+					}
+					if (i == 256 + 0x9d) {	/* Ctrl OFF */
+						key_ctrl &= ~1;
+					}
+					if (i == 256 + 0x38) {	/* Alt ON */
+						key_alt |= 1;
+					}
+					if (i == 256 + 0xb8) {	/* Alt OFF */
+						key_alt &= ~1;
+					}
+					if (i == 256 + 0x01 && key_ctrl != 0) {	/* Ctrl+Esc */
+						g_start_menu_open = !g_start_menu_open;
+						start_pressed = 0;
+						taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
+								start_hover, start_pressed);
+						sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
+								binfo->scrnx, binfo->scrny);
+					}
 					if (i < 0x80 + 256) { /* 키코드를 문자 코드로 변환 */
 						if (key_shift == 0) {
 							s[0] = keytable0[i - 256];
@@ -358,6 +380,7 @@ void HariMain(void)
 				}
 			} else if (512 <= i && i <= 767) { /* 마우스 데이터 */
 				if (mouse_decode(&mdec, i - 512) != 0) {
+					int taskbar_mouse_consumed = 0;
 					/* 마우스 커서의 이동 */
 					mx += mdec.x;
 					my += mdec.y;
@@ -375,6 +398,19 @@ void HariMain(void)
 					}
 					new_mx = mx;
 					new_my = my;
+					{
+						int next_start_hover =
+							(TASKBAR_START_X0 <= mx && mx <= TASKBAR_START_X1 &&
+							 binfo->scrny - TASKBAR_START_Y_PAD_TOP <= my &&
+							 my <= binfo->scrny - TASKBAR_START_Y_PAD_BOT);
+						if (next_start_hover != start_hover) {
+							start_hover = next_start_hover;
+							taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
+									start_hover, start_pressed);
+							sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
+									binfo->scrnx, binfo->scrny);
+						}
+					}
 
 					/* ── (a) 스크롤바가 이미 잡혀있다면 해당 텍스트 창으로 우회. */
 					if (dbg_get()->sw.sb_grab) {
@@ -411,6 +447,15 @@ void HariMain(void)
 								} else if ((rsht->flags & SHEET_FLAG_SCROLLWIN) != 0) {
 									scrollwin_window_resize(rsht, new_rw, new_rh, "debug");
 								}
+							}
+						} else if (start_pressed != 0 || start_hover != 0) {
+							taskbar_mouse_consumed = 1;
+							if (start_pressed == 0) {
+								start_pressed = 1;
+								taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
+										start_hover, start_pressed);
+								sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
+										binfo->scrnx, binfo->scrny);
 							}
 						} else if (mmx < 0) {
 							/* 통상 모드의 경우 */
@@ -499,6 +544,17 @@ void HariMain(void)
 						}
 					} else {
 						/* 왼쪽 버튼을 누르지 않았다 */
+						if (start_pressed != 0) {
+							if (start_hover != 0) {
+								g_start_menu_open = !g_start_menu_open;
+							}
+							start_pressed = 0;
+							taskbar_mouse_consumed = 1;
+							taskbar_redraw(buf_back, binfo->scrnx, binfo->scrny,
+									start_hover, start_pressed);
+							sheet_refresh(sht_back, 0, binfo->scrny - TASKBAR_HEIGHT,
+									binfo->scrnx, binfo->scrny);
+						}
 						if (rsht != 0) {
 							/* 리사이즈 드래그 종료. console/debug 처럼 라이브 리사이즈가
 							 * 적용된 창은 그대로, app window (APP_EVENTS) 는 마지막
@@ -525,6 +581,7 @@ void HariMain(void)
 					 * scrollbar/title-drag/resize-drag/window-move 모드가 아닐 때만
 					 * 발생. 좌표는 client-area 기준 (frame 3px + title 21px 빼고).      */
 					if (rsht == 0 && mmx < 0 &&
+							taskbar_mouse_consumed == 0 &&
 							!dbg_get()->sw.sb_grab &&
 							!(key_win != 0 && key_win->scroll != 0 &&
 									key_win->scroll->sb_grab)) {

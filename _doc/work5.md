@@ -182,21 +182,34 @@
 | 메모리 한계 | 메뉴 항목 64, 카테고리당 32, 깊이 3 |
 | 신규 syscall | 없음 (커널 sheet/menu/clock 모두 내부 처리) |
 
-### Phase 1 — Taskbar / Start 버튼 / 시스템 트레이 (커널 widget) (2일)
+### Phase 1 — Taskbar / Start 버튼 / 시스템 트레이 (커널 widget) (2일) — ☑ 구현 완료, QEMU visual smoke 대기 (2026-05-01)
 **목표**: 기존 `sht_back` taskbar 영역을 실제 클릭 가능한 버튼/트레이로 만든다.
 
-- ☐ [bootpack.c](../harib27f/haribote/bootpack.c) HariMain 의 mouse loop 에 taskbar 클릭 hit-test 추가.
+- ☑ [bootpack.c](../harib27f/haribote/bootpack.c) HariMain 의 mouse loop 에 taskbar 클릭 hit-test 추가.
   - hit zone: y >= `scrny-28`. 좌측 60×20 = Start 버튼, 우측 44×20 = tray.
   - 버튼 영역에 hover/pressed 상태가 시각적으로 보이도록 `boxfill8` redraw.
-- ☐ Start 버튼 라벨 그리기 (가능하면 “🪟 Start” 대신 “Start” 텍스트 + 이중선 시뮬).
-- ☐ 시스템 트레이 시계 placeholder (Phase 4 에서 실제 시간 갱신).
-- ☐ Ctrl+Esc 가 들어오면 “Start 버튼 클릭” 과 동일한 이벤트로 합성.
-- ☐ taskbar 의 가운데 영역(60..scrnx-50)은 **빈 영역으로 둠** — Phase 6 에서 윈도우 task list 채움.
+- ☑ Start 버튼 라벨 그리기 (“Start” 텍스트 + win95 raised/sunken 이중선).
+- ☑ 시스템 트레이 시계 placeholder (`00:00`; Phase 4 에서 실제 시간 갱신).
+- ☑ Ctrl+Esc 가 들어오면 “Start 버튼 클릭” 과 동일한 이벤트로 합성.
+- ☑ taskbar 의 가운데 영역(60..scrnx-50)은 **빈 영역으로 둠** — Phase 6 에서 윈도우 task list 채움.
+
+**Phase 1 구현 노트 (2026-05-01)**
+- `graphic.c` 에 `taskbar_redraw(vram, x, y, start_hover, start_pressed)` 를 추가했다.
+  `init_screen8()` 는 `g_background_color` 를 읽고 desktop background + taskbar redraw 로 분리됐다.
+- 신규 global: `g_background_color = COL8_008484`, `g_start_menu_open = 0`.
+  `g_start_menu_open` 은 Phase 2 menu sheet 가 이어받을 토글 상태이며, Phase 1 에서는
+  Start 버튼이 눌린 상태처럼 보이게 하는 데만 사용한다.
+- taskbar 라벨은 초기화 순서 의존을 피하려고 langmode-aware `putfonts8_asc()` 대신
+  `hankaku` 8x16 ASCII 폰트를 직접 사용한다.
+- `HariMain` 은 `key_ctrl`/`key_alt` 비트마스크를 추적한다. Ctrl+Esc 는 Start 버튼
+  mouse release 와 같은 `g_start_menu_open` toggle + taskbar redraw 경로로 합성된다.
+- 마우스 hover/press/release 는 `sht_back` taskbar 영역에서 소비되어 app client mouse
+  event 로 흘러가지 않는다. 실제 Start Menu open/close 는 Phase 2 에서 연결한다.
 
 **확인할 사항**
-- ☐ build 통과, `fsck_msdos -n` 통과.
-- ☐ Start 버튼 hover/press 가 시각적으로 드러난다.
-- ☐ 기존 콘솔/explorer/tetris 등 앱의 mouse 동작 회귀 없음.
+- ☑ build 통과, `fsck_msdos -n` 통과.
+- ☐ QEMU visual smoke: Start 버튼 hover/press 가 시각적으로 드러난다.
+- ☐ QEMU regression smoke: 기존 콘솔/explorer/tetris 등 앱의 mouse 동작 회귀 없음.
 
 ### Phase 2 — Menu sheet primitive (1.5일)
 **목표**: cascading sub-menu 를 지원하는 일반 메뉴 sheet 구성요소를 추가한다.

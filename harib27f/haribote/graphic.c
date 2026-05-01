@@ -3,6 +3,9 @@
 #include "bootpack.h"
 #include "../../tools/modern/euckr_map.h"
 
+int g_background_color = COL8_008484;
+int g_start_menu_open = 0;
+
 void init_palette(void)
 {
 	static unsigned char table_rgb[16 * 3] = {
@@ -67,22 +70,64 @@ void boxfill8(unsigned char *vram, int xsize, unsigned char c, int x0, int y0, i
 
 void init_screen8(char *vram, int x, int y)
 {
-	boxfill8(vram, x, COL8_008484,  0,     0,      x -  1, y - 29);
+	boxfill8(vram, x, g_background_color,  0,     0,      x -  1, y - 29);
+	taskbar_redraw(vram, x, y, 0, 0);
+	return;
+}
+
+static void taskbar_putascii(char *vram, int xsize, int x, int y,
+		unsigned char c, unsigned char *s)
+{
+	extern char hankaku[4096];
+	for (; *s != 0x00; s++) {
+		putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+		x += 8;
+	}
+	return;
+}
+
+void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed)
+{
+	int sx0 = TASKBAR_START_X0, sx1 = TASKBAR_START_X1;
+	int sy0 = y - TASKBAR_START_Y_PAD_TOP, sy1 = y - TASKBAR_START_Y_PAD_BOT;
+	int tx0 = x - TASKBAR_TRAY_R_PAD - TASKBAR_TRAY_W;
+	int tx1 = x - TASKBAR_TRAY_R_PAD - 1;
+	int ty0 = sy0, ty1 = sy1;
+	int start_down = start_pressed || g_start_menu_open;
+	int label_x = 12 + (start_down ? 1 : 0);
+	int label_y = y - 21 + (start_down ? 1 : 0);
+
 	boxfill8(vram, x, COL8_C6C6C6,  0,     y - 28, x -  1, y - 28);
 	boxfill8(vram, x, COL8_FFFFFF,  0,     y - 27, x -  1, y - 27);
 	boxfill8(vram, x, COL8_C6C6C6,  0,     y - 26, x -  1, y -  1);
 
-	boxfill8(vram, x, COL8_FFFFFF,  3,     y - 24, 59,     y - 24);
-	boxfill8(vram, x, COL8_FFFFFF,  2,     y - 24,  2,     y -  4);
-	boxfill8(vram, x, COL8_848484,  3,     y -  4, 59,     y -  4);
-	boxfill8(vram, x, COL8_848484, 59,     y - 23, 59,     y -  5);
-	boxfill8(vram, x, COL8_000000,  2,     y -  3, 59,     y -  3);
-	boxfill8(vram, x, COL8_000000, 60,     y - 24, 60,     y -  3);
+	boxfill8(vram, x, COL8_C6C6C6, sx0,     sy0,     sx1,     sy1);
+	if (start_down) {
+		boxfill8(vram, x, COL8_000000, sx0,     sy0,     sx1,     sy0);
+		boxfill8(vram, x, COL8_000000, sx0,     sy0,     sx0,     sy1);
+		boxfill8(vram, x, COL8_848484, sx0 + 1, sy0 + 1, sx1 - 1, sy0 + 1);
+		boxfill8(vram, x, COL8_848484, sx0 + 1, sy0 + 1, sx0 + 1, sy1 - 1);
+		boxfill8(vram, x, COL8_FFFFFF, sx0 + 1, sy1 - 1, sx1 - 1, sy1 - 1);
+		boxfill8(vram, x, COL8_FFFFFF, sx1 - 1, sy0 + 1, sx1 - 1, sy1 - 1);
+	} else {
+		boxfill8(vram, x, COL8_FFFFFF, sx0 + 1, sy0,     sx1 - 1, sy0);
+		boxfill8(vram, x, COL8_FFFFFF, sx0,     sy0,     sx0,     sy1);
+		boxfill8(vram, x, COL8_848484, sx0 + 1, sy1,     sx1 - 1, sy1);
+		boxfill8(vram, x, COL8_848484, sx1 - 1, sy0 + 1, sx1 - 1, sy1 - 1);
+		boxfill8(vram, x, COL8_000000, sx0,     sy1 + 1, sx1 - 1, sy1 + 1);
+		boxfill8(vram, x, COL8_000000, sx1,     sy0,     sx1,     sy1 + 1);
+	}
+	if (start_hover && !start_down) {
+		boxfill8(vram, x, COL8_FFFFFF, sx0 + 4, sy0 + 3, sx1 - 5, sy0 + 3);
+	}
+	taskbar_putascii(vram, x, label_x, label_y, COL8_000000, (unsigned char *) "Start");
 
-	boxfill8(vram, x, COL8_848484, x - 47, y - 24, x -  4, y - 24);
-	boxfill8(vram, x, COL8_848484, x - 47, y - 23, x - 47, y -  4);
-	boxfill8(vram, x, COL8_FFFFFF, x - 47, y -  3, x -  4, y -  3);
-	boxfill8(vram, x, COL8_FFFFFF, x -  3, y - 24, x -  3, y -  3);
+	boxfill8(vram, x, COL8_C6C6C6, tx0,     ty0,     tx1,     ty1);
+	boxfill8(vram, x, COL8_848484, tx0,     ty0,     tx1,     ty0);
+	boxfill8(vram, x, COL8_848484, tx0,     ty0,     tx0,     ty1);
+	boxfill8(vram, x, COL8_FFFFFF, tx0,     ty1,     tx1,     ty1);
+	boxfill8(vram, x, COL8_FFFFFF, tx1,     ty0,     tx1,     ty1);
+	taskbar_putascii(vram, x, tx0 + 4, y - 20, COL8_000000, (unsigned char *) "00:00");
 	return;
 }
 

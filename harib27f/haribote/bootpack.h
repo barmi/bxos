@@ -65,6 +65,7 @@ void init_palette(void);
 void set_palette(int start, int end, unsigned char *rgb);
 void boxfill8(unsigned char *vram, int xsize, unsigned char c, int x0, int y0, int x1, int y1);
 void init_screen8(char *vram, int x, int y);
+void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed);
 void putfont8(char *vram, int xsize, int x, int y, char c, char *font);
 void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s);
 void init_mouse_cursor8(char *mouse, char bc);
@@ -86,6 +87,14 @@ void putblock8_8(char *vram, int vxsize, int pxsize,
 #define COL8_840084		13
 #define COL8_008484		14
 #define COL8_848484		15
+
+#define TASKBAR_HEIGHT		28
+#define TASKBAR_START_X0	2
+#define TASKBAR_START_X1	60
+#define TASKBAR_START_Y_PAD_TOP	24
+#define TASKBAR_START_Y_PAD_BOT	4
+#define TASKBAR_TRAY_W		44
+#define TASKBAR_TRAY_R_PAD	3
 
 #define MAX_MOUSE_CURSOR	4
 #define SIZE_MOUSE_CURSOR	(16*16)
@@ -588,6 +597,8 @@ int tek_decomp(unsigned char *p, char *q, int size);
 
 /* bootpack.c */
 extern unsigned int g_memtotal;     /* HariMain memtest 결과 캐시 (work4: api_exec 용) */
+extern int g_background_color;       /* work5 Phase 1: desktop background color */
+extern int g_start_menu_open;        /* work5 Phase 1: Start button/menu toggle state */
 #define MAX_MENU		256
 #define MAX_MNLV		  8
 struct MNLV {
