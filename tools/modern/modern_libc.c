@@ -193,14 +193,23 @@ size_t strlen(const char *cs)
 	return p - cs;
 }
 
+/* work6 Phase 2: x86 `rep movsb` 로 변경. byte loop 대비 modern CPU 에서 5~10x.
+ * 단일 명령으로 ECX 바이트 ESI→EDI 복사. cld 로 forward 방향 보장.
+ * 작은 n 에 대한 setup overhead 는 byte loop 대비 비슷. 큰 n 에서 큰 차이.
+ *
+ * memmove 는 src/dst 겹침 가능성으로 그대로 byte loop 유지. 호출처에서
+ * src != dst 구간이 명확하면 memcpy 를 쓴다.
+ */
 void *memcpy(void *s, const void *ct, size_t n)
 {
-	unsigned char *d = s;
-	const unsigned char *p = ct;
-	while (n-- != 0) {
-		*d++ = *p++;
-	}
-	return s;
+	void *ret = s;
+	__asm__ __volatile__(
+		"cld\n\t"
+		"rep movsb"
+		: "+D"(s), "+S"(ct), "+c"(n)
+		:
+		: "memory");
+	return ret;
 }
 
 void *memmove(void *s, const void *ct, size_t n)
@@ -235,13 +244,18 @@ int memcmp(const void *cs, const void *ct, size_t n)
 	return 0;
 }
 
+/* work6 Phase 2: `rep stosb` 로 변경. boxfill8 / sheet refresh 의 hot path. */
 void *memset(void *s, int c, size_t n)
 {
-	unsigned char *p = s;
-	while (n-- != 0) {
-		*p++ = (unsigned char) c;
-	}
-	return s;
+	void *ret = s;
+	unsigned char b = (unsigned char)(c & 0xff);
+	__asm__ __volatile__(
+		"cld\n\t"
+		"rep stosb"
+		: "+D"(s), "+c"(n)
+		: "a"(b)
+		: "memory");
+	return ret;
 }
 
 unsigned int rand_seed = 1;

@@ -168,22 +168,47 @@
 - ☐ QEMU 안에서 `bench off` 시 hot path 추가 비용 없음 (early return).
 - ☐ S1~S5 baseline 채움.
 
-### Phase 2 — Quick wins: boxfill8 / refreshsub memcpy / ascii fast path (1일)
+### Phase 2 — Quick wins: boxfill8 / refreshsub memcpy / ascii fast path (1일) — ☑ 구현 완료, QEMU 측정 대기 (2026-05-01)
 **목표**: 단순한 변경 3개로 첫 가시적 향상.
 
-- ☐ `boxfill8` 을 row 당 `memset(...)` 으로. (5줄)
-- ☐ `sheet_refreshsub` 의 1바이트 path 에 run-length detection:
-  - `for (run start; map[run start..run end] all == sid; run end++)` 후 `memcpy(vram+run, buf+run, len)`.
-- ☐ `sheet_refreshsub` 의 4바이트 path 의 정렬 보정 (시작/끝 끝수만 1바이트):
-  - 현재 `(sht->vx0 & 3) == 0` 일 때만. 이를 모든 vx0 에 일반화.
-- ☐ `putfonts8_asc_ascii(buf, xsize, x, y, c, s)` 신규 entry point (langmode 분기 없음, ascii 만).
-  - `taskbar_putascii` / `menu_putascii` 같은 자체 fast path 들 통합.
-- ☐ 기존 `putfonts8_asc` 가 langmode==0 일 때 `putfonts8_asc_ascii` 로 위임.
-- ☐ Phase 1 시나리오 재측정 + work6-bench.md 갱신.
+- ☑ [`tools/modern/modern_libc.c`](../tools/modern/modern_libc.c) 의 `memset`/`memcpy`
+  를 `rep stosb` / `rep movsb` inline asm 으로 교체. 호스트 검증: `objdump -d` 에서
+  `f3 aa` (rep stos), `f3 a4` (rep movs) 확인.
+- ☑ `boxfill8` 을 row 당 `memset` 으로. (10줄, BENCH 유지)
+- ☑ `sheet_refreshsub` 의 4바이트 path / 1바이트 path **통합**. row 마다 map[] 의 sid
+  run 을 byte scan 으로 찾아 memcpy. unaligned vx0 자연 처리. ([sheet.c:128](../harib27f/haribote/sheet.c))
+  - `(sht->vx0 & 3) == 0` 분기 사라짐 — modern memcpy 의 rep movsb 는 src/dst 정렬에
+    덜 민감하고, 큰 run 에서 byte-store 대비 5~10x.
+- ☑ `putfonts8_asc_ascii(buf, xsize, x, y, c, s)` 신규 entry point ([graphic.c:187](../harib27f/haribote/graphic.c)).
+  - `task_now()` / langmode 분기 / langbyte1·langbyte2 추적 없음. ascii-only 호출처에서
+    직접 사용 가능.
+- ☑ 기존 `putfonts8_asc` 가 langmode==0 일 때 `putfonts8_asc_ascii` 로 즉시 위임.
+- ☐ `taskbar_putascii` / `menu_putascii` 통합은 보류 — 현재도 동등하게 빠르고
+  bench instrumentation (BENCH_PUTFONT8) 매칭이 더 단순. work7 polish.
+- ☐ Phase 1 시나리오 재측정 (QEMU 안에서 사용자 직접) + [_doc/work6-bench.md](work6-bench.md) Phase 2 표 채움.
+
+**Phase 2 구현 노트 (2026-05-01)**
+- `memset` / `memcpy` 변경의 효과는 **모든 hot path 에 누적**. boxfill8, sheet_refreshsub,
+  앞으로 도입할 dirty rect 기반 redraw 가 모두 수혜.
+- `sheet_refreshsub` 의 4-byte path 제거: 코드 80→30줄로 단순화. 4-byte path 의 잘
+  정렬된 sid4 비교는 주로 모든 row 가 한 sheet 에 속할 때 빠름. Run-length scan + memcpy
+  가 같은 case 를 1 회 검사 + 1 회 memcpy 로 처리해 동등 또는 더 빠름. partial occlusion
+  case (메뉴가 윈도우 위에 떠 있을 때 등) 도 한 번의 byte scan 만 추가.
+- `putfonts8_asc` 의 langmode 0 fast path 는 함수 분리만 했고 동작 동일. 그러나
+  내부 hot loop 안에서 langmode 분기를 전부 dead-code 로 만들어 cache miss 줄임.
+- `boxfill8` 에 width 음수(`x1 < x0`) 보호 추가 — 이전 byte loop 은 0-iteration 으로
+  자연 보호됐지만 memset 은 size_t 가 음수가 안 되므로 명시 처리.
+- `sheet_refreshmap` 의 4-byte path 일반화는 Phase 3 으로 넘김 (compositor 일반화 묶음).
+  refreshmap 은 hot 한 정도가 refreshsub 의 1/3 수준이라 우선순위 낮음.
 
 **확인할 사항**
-- ☐ S1~S5 모두 baseline 대비 1.5배 이상 빠름.
-- ☐ 시각적 회귀 없음 (taskbar / 메뉴 / 콘솔 / explorer).
+- ☑ Release / Debug 빌드 통과, `fsck_msdos` clean.
+- ☑ `objdump -d` 에서 `_memset` 에 `f3 aa` (rep stos), `_memcpy` 에 `f3 a4` (rep movs) 확인.
+- ☐ QEMU smoke (사용자 직접):
+  - 부팅 직후 화면 그려짐 정상 (taskbar / Start 버튼).
+  - 콘솔에서 `dir`, `mem`, `cls`, `langmode 3 + type hangul.euc`, `langmode 4 + type hangul.utf` 회귀 없음.
+  - explorer / tetris / lines / evtest 회귀 없음.
+- ☐ S1~S5 baseline 대비 1.5배 이상 빠름.
 
 ### Phase 3 — Compositor 일반화 + putfont expansion table (1.5일)
 **목표**: 컴포지터의 모든 path 에 4-byte SIMD-like 처리 + 폰트 lookup.

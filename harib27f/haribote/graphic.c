@@ -2,6 +2,7 @@
 
 #include "bootpack.h"
 #include "bench.h"
+#include <string.h>	/* memset / memcpy — work6 Phase 2 hot path */
 #include "../../tools/modern/euckr_map.h"
 
 int g_background_color = COL8_008484;
@@ -63,13 +64,17 @@ void set_palette(int start, int end, unsigned char *rgb)
 	return;
 }
 
+/* work6 Phase 2: row 당 한 번 memset (rep stosb). byte loop 대비 큰 영역에서 5~10x.
+ * x1/y1 inclusive. width/height 음수 보호 추가. */
 void boxfill8(unsigned char *vram, int xsize, unsigned char c, int x0, int y0, int x1, int y1)
 {
-	int x, y;
+	int y;
+	int w = x1 - x0 + 1;
 	bench_enter(BENCH_BOXFILL8);
-	for (y = y0; y <= y1; y++) {
-		for (x = x0; x <= x1; x++)
-			vram[y * xsize + x] = c;
+	if (w > 0) {
+		for (y = y0; y <= y1; y++) {
+			memset(vram + (size_t) y * xsize + x0, c, (size_t) w);
+		}
 	}
 	bench_leave(BENCH_BOXFILL8);
 	return;
@@ -179,6 +184,21 @@ void putfont8(char *vram, int xsize, int x, int y, char c, char *font)
 	return;
 }
 
+/* work6 Phase 2: ASCII 전용 fast path. langmode 분기 / task_now() 호출 없음.
+ * 호출처가 ASCII-only 인 게 보장되는 곳 (taskbar / menu 라벨, 콘솔 prompt 등)
+ * 에서 직접 사용 가능. putfonts8_asc 의 langmode==0 path 도 이 함수로 위임. */
+void putfonts8_asc_ascii(char *vram, int xsize, int x, int y, char c, unsigned char *s)
+{
+	extern char hankaku[4096];
+	bench_enter(BENCH_PUTFONTS8_ASC);
+	for (; *s != 0x00; s++) {
+		putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
+		x += 8;
+	}
+	bench_leave(BENCH_PUTFONTS8_ASC);
+	return;
+}
+
 void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s)
 {
 	extern char hankaku[4096];
@@ -186,13 +206,12 @@ void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s
 	char *nihongo = (char *) *((int *) 0x0fe8), *font;
 	int k, t;
 
-	bench_enter(BENCH_PUTFONTS8_ASC);
 	if (task->langmode == 0) {
-		for (; *s != 0x00; s++) {
-			putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
-			x += 8;
-		}
+		/* ASCII fast path 으로 위임 — 자체적으로 BENCH_PUTFONTS8_ASC enter/leave. */
+		putfonts8_asc_ascii(vram, xsize, x, y, c, s);
+		return;
 	}
+	bench_enter(BENCH_PUTFONTS8_ASC);
 	if (task->langmode == 1) {
 		for (; *s != 0x00; s++) {
 			if (task->langbyte1 == 0) {

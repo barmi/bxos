@@ -68,6 +68,10 @@ void init_screen8(char *vram, int x, int y);
 void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed);
 void putfont8(char *vram, int xsize, int x, int y, char c, char *font);
 void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s);
+/* work6 Phase 2: ASCII 전용 fast path. 호출처가 ASCII 만 그릴 게 보장되는
+ * (taskbar 라벨, 메뉴 라벨, ASCII 콘솔 출력 등) 곳에서 직접 호출 — langmode
+ * 분기 / task_now() 부하 없음. */
+void putfonts8_asc_ascii(char *vram, int xsize, int x, int y, char c, unsigned char *s);
 void init_mouse_cursor8(char *mouse, char bc);
 void putblock8_8(char *vram, int vxsize, int pxsize,
 	int pysize, int px0, int py0, char *buf, int bxsize);

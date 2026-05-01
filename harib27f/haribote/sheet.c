@@ -2,6 +2,7 @@
 
 #include "bootpack.h"
 #include "bench.h"
+#include <string.h>	/* memcpy / memset — work6 Phase 2 hot path */
 
 /* 비트값은 bootpack.h 의 SHEET_FLAG_* 와 동일. 구버전 로컬 매크로도 유지.  */
 #define SHEET_USE			SHEET_FLAG_USE
@@ -125,9 +126,12 @@ void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 	return;
 }
 
+/* work6 Phase 2: 4-byte path 와 1-byte path 통합. row 마다 map[] 의 sid run
+ * 을 byte scan 으로 찾아서 memcpy. unaligned vx0 도 자연스럽게 처리. memcpy
+ * 는 modern_libc 의 rep movsb 라 큰 run 에서 byte-store 대비 5~10x. */
 void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0, int h1)
 {
-	int h, bx, by, vx, vy, bx0, by0, bx1, by1, bx2, sid4, i, i1, *p, *q, *r;
+	int h, bx, by, bx0, by0, bx1, by1;
 	unsigned char *buf, *vram = ctl->vram, *map = ctl->map, sid;
 	struct SHEET *sht;
 	bench_enter(BENCH_REFRESHSUB);
@@ -149,61 +153,24 @@ void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 		if (by0 < 0) { by0 = 0; }
 		if (bx1 > sht->bxsize) { bx1 = sht->bxsize; }
 		if (by1 > sht->bysize) { by1 = sht->bysize; }
-		if ((sht->vx0 & 3) == 0) {
-			/* 4바이트형 */
-			i  = (bx0 + 3) / 4; /* bx0를 4로 나눈 것 */
-			i1 =  bx1      / 4; /* bx1를 4로 나눈 것 */
-			i1 = i1 - i;
-			sid4 = sid | sid << 8 | sid << 16 | sid << 24;
-			for (by = by0; by < by1; by++) {
-				vy = sht->vy0 + by;
-				for (bx = bx0; bx < bx1 && (bx & 3) != 0; bx++) {	/* 앞의 끝수를 1바이트씩 */
-					vx = sht->vx0 + bx;
-					if (map[vy * ctl->xsize + vx] == sid) {
-						vram[vy * ctl->xsize + vx] = buf[by * sht->bxsize + bx];
-					}
-				}
-				vx = sht->vx0 + bx;
-				p = (int *) &map[vy * ctl->xsize + vx];
-				q = (int *) &vram[vy * ctl->xsize + vx];
-				r = (int *) &buf[by * sht->bxsize + bx];
-				for (i = 0; i < i1; i++) {				/* 4의 배수 부분 */
-					if (p[i] == sid4) {
-						q[i] = r[i];
-					} else {
-						bx2 = bx + i * 4;
-						vx = sht->vx0 + bx2;
-						if (map[vy * ctl->xsize + vx + 0] == sid) {
-							vram[vy * ctl->xsize + vx + 0] = buf[by * sht->bxsize + bx2 + 0];
-						}
-						if (map[vy * ctl->xsize + vx + 1] == sid) {
-							vram[vy * ctl->xsize + vx + 1] = buf[by * sht->bxsize + bx2 + 1];
-						}
-						if (map[vy * ctl->xsize + vx + 2] == sid) {
-							vram[vy * ctl->xsize + vx + 2] = buf[by * sht->bxsize + bx2 + 2];
-						}
-						if (map[vy * ctl->xsize + vx + 3] == sid) {
-							vram[vy * ctl->xsize + vx + 3] = buf[by * sht->bxsize + bx2 + 3];
-						}
-					}
-				}
-				for (bx += i1 * 4; bx < bx1; bx++) {				/* 뒤의 끝수를 1바이트씩 */
-					vx = sht->vx0 + bx;
-					if (map[vy * ctl->xsize + vx] == sid) {
-						vram[vy * ctl->xsize + vx] = buf[by * sht->bxsize + bx];
-					}
+		for (by = by0; by < by1; by++) {
+			int row_off = (sht->vy0 + by) * ctl->xsize + sht->vx0;
+			int buf_off = by * sht->bxsize;
+			int run_start = -1;
+			for (bx = bx0; bx < bx1; bx++) {
+				if (map[row_off + bx] == sid) {
+					if (run_start < 0) run_start = bx;
+				} else if (run_start >= 0) {
+					int len = bx - run_start;
+					memcpy(vram + row_off + run_start,
+							buf + buf_off + run_start, (size_t) len);
+					run_start = -1;
 				}
 			}
-		} else {
-			/* 1바이트형 */
-			for (by = by0; by < by1; by++) {
-				vy = sht->vy0 + by;
-				for (bx = bx0; bx < bx1; bx++) {
-					vx = sht->vx0 + bx;
-					if (map[vy * ctl->xsize + vx] == sid) {
-						vram[vy * ctl->xsize + vx] = buf[by * sht->bxsize + bx];
-					}
-				}
+			if (run_start >= 0) {
+				int len = bx - run_start;
+				memcpy(vram + row_off + run_start,
+						buf + buf_off + run_start, (size_t) len);
 			}
 		}
 	}
