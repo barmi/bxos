@@ -45,9 +45,9 @@
 
 | 항목 | 결정 | 비고 |
 |---|---|---|
-| 측정 인프라 단위 | PIT count (10ms tick). counter 1개 = `{ enter_count, total_ticks, max_ticks }`. | RDTSC 는 i386 PIC 환경에서 회피. |
-| 측정 출력 | `bench` 콘솔 명령 + `dbg_putstr0` ("Start → Programs → Debug" 에서 확인). | 별도 GUI 위젯은 work7 이후. |
-| 측정 토글 | 기본 OFF (오버헤드 0). `bench on` 으로 켬. | per-counter `enabled` 플래그. |
+| 측정 인프라 단위 | **per-function: RDTSC cycle**, **per-scenario: PIT 10ms tick**. counter 1개 = `{ enter_count, total_cycles, max_cycles }`. | PIT 만으로는 boxfill8/putfont8 같은 ㎲ 스케일 함수 측정 불가. RDTSC 는 단일 CPU/단일 task 환경이라 변동 작음. QEMU TCG 도 RDTSC 에뮬. |
+| 측정 출력 | `bench` 콘솔 명령 + `dbg_putstr0` ("Start → Programs → Debug" 에서 확인). | 별도 GUI 위젯은 work7 이후. cycle 값은 `/ scenario_cycles * 100` 으로 % 표시도 같이. |
+| 측정 토글 | 기본 OFF (오버헤드 0). `bench on` 으로 켬. | per-counter `enabled` 플래그. RDTSC 자체는 1 cycle 정도라 무시. |
 | boxfill8 구현 | `memset` per-row. 1바이트 pattern, x86 의 `rep stosb` 가 백엔드. | i686-elf-gcc 가 `__builtin_memset` 으로 자동 변환. |
 | refreshsub 1-byte path | run-length: 같은 sid 의 연속 픽셀을 찾아 `memcpy`. 분기는 run 시작 시 한 번. | col_inv != -1 sheet 도 동일하게 적용. |
 | refreshsub 4-byte path | `vx0 & 3 != 0` 이어도 처음/끝 끝수만 1바이트로 처리하고 가운데는 4바이트 비교/복사. | menu sheet 가 200px 폭이라 정렬 보정 필요. |
@@ -71,17 +71,57 @@
 
 각 Phase 끝의 ☐ 는 PR/커밋 단위 자연 경계. baseline 측정은 Phase 1 끝에서.
 
-### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일)
-- ☐ 본 문서 + [work6-handoff.md](work6-handoff.md) 를 정본으로 두고 MVP 범위 잠금.
-- ☐ §2 결정 표 잠금. 변경 시 두 파일 동시 갱신.
-- ☐ 측정 시나리오 5개 확정:
+### Phase 0 — 요구사항 / 인터페이스 확정 (0.5일) — ☑ 완료 (2026-05-01)
+- ☑ 본 문서 + [work6-handoff.md](work6-handoff.md) 를 정본으로 두고 MVP 범위 잠금.
+- ☑ §2 결정 표 잠금. 변경 시 두 파일 동시 갱신.
+- ☑ 측정 시나리오 5개 확정:
   - **S1**: 부팅 → Start 메뉴 5번 토글 (Ctrl+Esc x10) 까지 elapsed.
   - **S2**: 콘솔에서 `dir` × 10번 elapsed (스크롤 포함).
   - **S3**: explorer `/` 디렉터리 (전체 50개 entry) 트리/리스트 그리기 elapsed.
   - **S4**: tetris 1라인 클리어 (보드 전체 한 번 redraw) elapsed.
   - **S5**: 마우스 cursor 화면 가로지르기 (1000 step) total ticks.
-- ☐ 신규 syscall edx 번호 잠금 (44~47). HE2-FORMAT.md 갱신은 Phase 7.
-- ☐ 범위 외 명시 (§6).
+- ☑ 신규 syscall edx 번호 잠금 (44~47). HE2-FORMAT.md 갱신은 Phase 6.
+- ☑ 범위 외 명시 (§6).
+
+**Phase 0 추가 검증 노트 (2026-05-01)**
+- syscall 충돌: `grep -rn "edx == 44|45|46|47"` 결과 0건. work5 종료 시점에서 1~43 만
+  사용 — 44~47 안전하게 잠금.
+- 파일명 충돌: `harib27f/haribote/bench.c` / `bench.h` 미존재. `_doc/work6-bench.md` 미존재.
+- 콘솔 명령 충돌: 기존 명령 (mem/cls/dir/cd/pwd/mkdir/rmdir/task/taskmgr/disk/touch/rm/cp/mv/echo/mkfile/exit/start/ncst/langmode/type/`bench` 미존재) 와 안 겹침.
+- PIT 측정값: [timer.c:14-19](../harib27f/haribote/timer.c) 에서 divisor `0x2e9c = 11932`.
+  `1193182 / 11932 ≈ 100Hz` → 한 tick 10ms. boxfill8/putfont8 같은 ㎲ 스케일에 부족 →
+  per-function 카운터는 RDTSC 로 변경 (§2 결정 갱신).
+- RDTSC 안전성: 단일 CPU / 단일 task 환경 (mtask 가 진행 중에도 task A 의 main loop 안에
+  서만 측정). QEMU TCG 도 RDTSC 정상 에뮬 (cycle counter 가 monotonic). 직접 작성한
+  `static inline uint64_t rdtsc(void) { uint32_t lo, hi; __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi)); return ((uint64_t)hi << 32) | lo; }` 사용 예정.
+- 메모리 예산:
+  - `hankaku_fast[256][16][8]` = 32 KB. memman 부팅 직후 alloc — `memman_total()` 평소 ~28MB.
+  - `BENCH_COUNTER` 배열 ~10개 × 32 byte ≈ 320 byte.
+  - SHEET 의 `dirty_rect[4][4]` = 32 byte/sheet × 256 = 8 KB. 미미.
+- HE2 ABI 호환: 기존 1~43 모두 그대로. `api_point` (11) 는 deprecated 표기만. work6
+  종료 시 28개 앱 회귀 smoke 필수.
+- 영향 범위 (예상 수정 파일):
+  - 커널: bootpack.c, console.c, sheet.c, graphic.c, timer.c, window.c, bench.c+h(신규), bootpack.h
+  - HE2 라이브러리: bxos.h, syscall.c
+  - 앱: explorer/explorer.c, tetris/tetris.c, settings/settings.c (+ lines/evtest 점검)
+  - 빌드/문서: CMakeLists.txt (bench.c 추가), HE2-FORMAT.md, BXOS-COMMANDS.md, README.utf8.md, SETUP-MAC.md, work6-bench.md(신규)
+
+**Phase 0 잠금 결정 요약 (변경 시 work6.md/work6-handoff.md 동시 갱신)**
+
+| 잠금 항목 | 값 |
+|---|---|
+| 측정 단위 (per-function) | RDTSC cycles (`uint64_t`) |
+| 측정 단위 (per-scenario S1~S5) | PIT tick (10ms) |
+| 측정 토글 | `bench on` / `bench off` / `bench reset` / `bench dump` |
+| 측정 baseline 기록처 | `_doc/work6-bench.md` (Phase 1 끝에 첫 표) |
+| Hot path counter slot | 9개 — refreshmap, refreshsub, sheet_slide, boxfill8, putfont8, putfonts8_asc, taskbar, scrollwin, hrb_api |
+| 측정 시나리오 | S1~S5 (위) |
+| Dirty rect cap | 4 rect / sheet, 5번째는 외접 합집합 |
+| 폰트 expansion table | 32KB (`hankaku_fast[256][16][8]`), 부팅 시 1회 |
+| 신규 syscall edx | 44=blit_rect, 45=text_run, 46=invalidate_rect, 47=dirty_flush |
+| Deprecated syscall | 11 (`api_point`) — 동작 유지 |
+| 성공 기준 | S1~S5 평균 ≥ 2x baseline, 회귀 0건 |
+| 일정 | 9~11 작업일 |
 
 ### Phase 1 — 측정 인프라 (1.5일)
 **목표**: 모든 다음 phase 의 효과를 숫자로 측정할 수 있게 한다.
