@@ -90,6 +90,18 @@ static void menu_redraw(struct KERNEL_MENU *menu)
 	return;
 }
 
+static void menu_cursor_ensure_visible(void)
+{
+	if (g_sht_mouse == 0 || g_sht_mouse->height < 0) {
+		return;
+	}
+	if (g_sht_mouse->height != g_menu_ctl->top) {
+		sheet_updown(g_sht_mouse, g_menu_ctl->top);
+	}
+	sheet_slide(g_sht_mouse, g_sht_mouse->vx0, g_sht_mouse->vy0);
+	return;
+}
+
 static void menu_raise(struct KERNEL_MENU *menu)
 {
 	int h = g_menu_ctl->top + 1;
@@ -97,6 +109,7 @@ static void menu_raise(struct KERNEL_MENU *menu)
 		h = g_sht_mouse->height;
 	}
 	sheet_updown(menu->sht, h);
+	menu_cursor_ensure_visible();
 	return;
 }
 
@@ -153,6 +166,7 @@ static void menu_close_child(struct KERNEL_MENU *menu)
 		menu_close_child(menu->child);
 		sheet_updown(menu->child->sht, -1);
 		menu->child = 0;
+		menu_cursor_ensure_visible();
 	}
 	return;
 }
@@ -164,6 +178,7 @@ void start_menu_close_all(void)
 		sheet_updown(g_menu_root.sht, -1);
 	}
 	g_start_menu_open = 0;
+	menu_cursor_ensure_visible();
 	return;
 }
 
@@ -195,6 +210,10 @@ static void menu_open_child(struct KERNEL_MENU *parent)
 	}
 	child = menu_for_submenu(item->submenu);
 	if (child == 0) {
+		return;
+	}
+	if (parent->child == child && child->sht->height >= 0) {
+		menu_cursor_ensure_visible();
 		return;
 	}
 	if (parent->child != child) {
@@ -324,6 +343,7 @@ int start_menu_handle_key(int key)
 		if (menu->parent != 0) {
 			sheet_updown(menu->sht, -1);
 			menu->parent->child = 0;
+			menu_cursor_ensure_visible();
 		}
 		return 1;
 	}
@@ -335,6 +355,7 @@ int start_menu_handle_key(int key)
 		if (menu->parent != 0) {
 			sheet_updown(menu->sht, -1);
 			menu->parent->child = 0;
+			menu_cursor_ensure_visible();
 		} else {
 			start_menu_close_all();
 		}
