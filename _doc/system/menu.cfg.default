@@ -4,7 +4,7 @@
 items = Programs, Settings, ---, Run..., About BxOS, ---, Restart, Shutdown
 
 [start/Programs]
-items = Explorer, Console, Notepad, Calc, Games, ---, Task Manager
+items = Explorer, Console, Notepad, Calc, Games, ---, Task Manager, Debug
 
 [start/Programs/Games]
 items = Tetris
@@ -48,3 +48,6 @@ handler = exec:/TETRIS.HE2
 
 [item:Task Manager]
 handler = builtin:taskmgr
+
+[item:Debug]
+handler = builtin:debug

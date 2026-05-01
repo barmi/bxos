@@ -460,6 +460,18 @@ static const struct SettingSpec g_settings[] = {
 - ☑ 기존 Tab → window z-order swap ([bootpack.c](../harib27f/haribote/bootpack.c) 의 line 746) 제거. Tab(0x0f) 은 `keytable0`/`keytable1` 의 0x09 char 로 변환되어 focused app 에 그대로 전달된다 (explorer tree↔list focus 정상화).
 
 **Phase 6 구현 노트 (2026-05-01)**
+- 부팅 시 자동 실행되던 **console / debug 두 창을 모두 제거**했다. 부팅 직후
+  화면에는 desktop + taskbar (Start/시계) 만 보이고, 사용자는 Start Menu /
+  Run / Shift+F2 (콘솔 단축키) / 메뉴 → Debug 항목으로 직접 띄운다.
+  `key_win` 은 0 으로 시작하며, `keywin_off`/`keywin_on` 은 NULL 입력에
+  null-safe (no-op) 하도록 보강했다.
+- Debug window 는 부팅 시점에는 `dbg_init` 으로 sheet/scrollwin alloc 만 하고
+  hidden 상태로 둔다. Start → Programs → Debug (`builtin:debug`) 또는 콘솔의
+  taskmgr 출력 등으로 처음 호출되는 시점에 `dbg_open()` 가 화면에 띄우고
+  focus 로 끌어올린다. taskbar 윈도우 목록에는 SCROLLWIN 플래그로 자동 등장한다.
+- 새 close 경로는 `find_topmost_app_sheet(shtctl)` 로 next focus 를 결정한다
+  — sht_mouse / sht_back / system widget 을 모두 건너뛰고 가장 위에 있는
+  실제 app sheet 을 고르거나, 후보가 없으면 0 반환.
 - 신규 globals (bootpack.c): `g_sht_back`, `g_buf_back`, 그리고 static 한
   `g_taskbar_btns[8]` / `g_taskbar_btn_count` / `g_taskbar_btn_hover` /
   `g_taskbar_btn_pressed`. layout 계산은 `taskbar_winlist_layout()` 가 한다.

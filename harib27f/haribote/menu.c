@@ -476,7 +476,8 @@ void start_menu_init(struct SHTCTL *shtctl, struct MEMMAN *memman, int scrnx, in
 		menu_set_item(&g_menus[1].items[2], "Tetris", KMENU_HANDLER_EXEC, 0, 0, "/TETRIS.HE2");
 		menu_set_item(&g_menus[1].items[3], "", KMENU_HANDLER_NONE, 0, KMENU_FLAG_SEPARATOR, 0);
 		menu_set_item(&g_menus[1].items[4], "Task Manager", KMENU_HANDLER_BUILTIN, 0, 0, "taskmgr");
-		g_menus[1].n_items = 5;
+		menu_set_item(&g_menus[1].items[5], "Debug", KMENU_HANDLER_BUILTIN, 0, 0, "debug");
+		g_menus[1].n_items = 6;
 	}
 	for (i = 0; i < g_menu_count; i++) {
 		g_menus[i].sht = sheet_alloc(shtctl);

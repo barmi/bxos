@@ -2714,6 +2714,7 @@ void dbg_init(struct SHTCTL *shtctl)
 	buf = (unsigned char *) memman_alloc_4k(memman, 416 * 272);
 	sheet_setbuf(dbg.sht, buf, 416, 272, -1);
 	make_window8(buf, 416, 272, "debug", 0);
+	strcpy(dbg.sht->title, "debug");
 	dbg.sht->task = 0;
 	dbg.sht->scroll = &dbg.sw;
 	dbg.sht->flags |= SHEET_FLAG_SCROLLWIN;
@@ -2722,4 +2723,33 @@ void dbg_init(struct SHTCTL *shtctl)
 	make_textbox8(dbg.sht, 8, 28, 400, 240,
 			16 + 1 + 3 * 6 + 4 * 36);
 	scrollwin_redraw(&dbg.sw);
+	/* 부팅 시 hidden — sheet 는 alloc 만, 첫 표시는 dbg_open() 시점. */
+}
+
+/* work5 Phase 6: debug window 를 보이게 만들고 focus 로 끌어올린다.
+ * 이미 떠 있으면 raise 만 한다. */
+void dbg_open(void)
+{
+	struct SHTCTL *ctl = (struct SHTCTL *) *((int *) 0x0fe4);
+	int h;
+	if (ctl == 0 || dbg.sht == 0) return;
+	h = ctl->top;
+	if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+		h = g_sht_mouse->height;
+	}
+	if (dbg.sht->height < 0) {
+		/* 처음 띄울 때만 화면 안쪽으로 슬라이드 */
+		int x = 32, y = 60;
+		if (ctl->xsize - 416 - 16 > 32) x = 32;
+		if (ctl->ysize - TASKBAR_HEIGHT - 272 - 16 > 60) y = 60;
+		sheet_slide(dbg.sht, x, y);
+	}
+	sheet_updown(dbg.sht, h);
+	if (g_sht_mouse != 0 && g_sht_mouse->height >= 0) {
+		if (g_sht_mouse->height != ctl->top) {
+			sheet_updown(g_sht_mouse, ctl->top);
+		}
+		sheet_slide(g_sht_mouse, g_sht_mouse->vx0, g_sht_mouse->vy0);
+	}
+	system_request_keywin(dbg.sht);
 }

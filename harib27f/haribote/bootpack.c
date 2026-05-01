@@ -442,6 +442,20 @@ struct SHEET *taskbar_winlist_sheet_at(int idx)
 	return g_taskbar_btns[idx].sht;
 }
 
+/* z-order 상위에서 아래로 내려가며 첫 번째 eligible app sheet 를 찾는다.
+ * 닫힌 창 다음에 새 focus 를 정할 때 sht_mouse / sht_back / system widget 을
+ * 건너뛰고 실제 app 윈도우를 골라준다. 후보가 없으면 0. */
+static struct SHEET *find_topmost_app_sheet(struct SHTCTL *ctl)
+{
+	int i;
+	if (ctl == 0) return 0;
+	for (i = ctl->top - 1; i >= 1; i--) {
+		struct SHEET *s = ctl->sheets[i];
+		if (taskbar_winlist_eligible(s)) return s;
+	}
+	return 0;
+}
+
 void alt_tab_cycle(int prev)
 {
 	struct SHTCTL *ctl = (struct SHTCTL *) *((int *) 0x0fe4);
@@ -760,6 +774,8 @@ void start_menu_dispatch(struct MENU_ITEM *item)
 		system_about_open();
 	} else if (strcmp(item->arg, "settings") == 0) {
 		system_start_command("/SETTINGS.HE2", g_memtotal);
+	} else if (strcmp(item->arg, "debug") == 0) {
+		dbg_open();
 	} else if (strcmp(item->arg, "shutdown") == 0) {
 		system_shutdown();
 	} else if (strcmp(item->arg, "restart") == 0) {
@@ -916,8 +932,9 @@ void HariMain(void)
 	*((int *) 0x0fe0) = (int) hangul;
 	memman_free_4k(memman, (int) fat, 4 * 2880);
 
-	/* sht_cons */
-	key_win = open_console(shtctl, memtotal);
+	/* work5 Phase 6: 부팅 시에는 console / debug 둘 다 자동 실행하지 않는다.
+	 * 사용자가 Start Menu / Run / 단축키로 직접 띄운다. */
+	key_win = 0;
 
 	/* sht_mouse */
 	sht_mouse = sheet_alloc(shtctl);
@@ -931,12 +948,9 @@ void HariMain(void)
 	my = (binfo->scrny - 28 - 16) / 2;
 
 	sheet_slide(sht_back,  0,  0);
-	sheet_slide(key_win,   32, 4);
 	sheet_slide(sht_mouse, mx, my);
 	sheet_updown(sht_back,  0);
-	sheet_updown(key_win,   1);
-	sheet_updown(sht_mouse, 2);
-	keywin_on(key_win);
+	sheet_updown(sht_mouse, 1);
 
 	/* 처음에 키보드 상태와 어긋나지 않게, 설정해 두기로 한다 */
 	fifo32_put(&keycmd, KEYCMD_LED);
@@ -945,10 +959,13 @@ void HariMain(void)
 	timer_init(clock_timer, &fifo, TIMER_CLOCK);
 	timer_settime(clock_timer, g_clock_show_seconds ? 100 : 60 * 100);
 
-	// skshin 
+	/* debug window 도 부팅 시점에는 hidden. dbg_init 으로 sheet/scrollwin 만
+	 * alloc 해 두고 (다른 코드가 dbg_get() 를 참조하므로 alloc 자체는 필요),
+	 * 첫 표시는 Start → Debug 메뉴 선택 시 dbg_open() 으로 한다. */
 	dbg_init(shtctl);
-	sheet_slide(dbg_get()->sht, 300, 480);
-	sheet_updown(dbg_get()->sht, shtctl->top);
+
+	/* taskbar 의 윈도우 목록 buttons 을 부팅 직후 한 번 그려둔다 (현재는 0개). */
+	taskbar_full_redraw(0, 0);
 
 	for (;;) {
 		if (fifo32_status(&keycmd) > 0 && keycmd_wait < 0) {
@@ -976,12 +993,11 @@ void HariMain(void)
 			i = fifo32_get(&fifo);
 			io_sti();
 			if (key_win != 0 && key_win->flags == 0) {	/* 윈도우가 닫혀졌다 */
-				if (shtctl->top == 1) {	/* 이제 마우스와 배경 밖에 없다 */
-					key_win = 0;
-				} else {
-					key_win = shtctl->sheets[shtctl->top - 1];
+				key_win = find_topmost_app_sheet(shtctl);
+				if (key_win != 0) {
 					keywin_on(key_win);
 				}
+				taskbar_mark_dirty();
 			}
 			if (256 <= i && i <= 511) { /* 키보드 데이터 */
 				/*
@@ -1116,6 +1132,7 @@ void HariMain(void)
 						sheet_slide(key_win, 32, 4);
 						sheet_updown(key_win, shtctl->top);
 						keywin_on(key_win);
+						taskbar_mark_dirty();
 					}
 					if (key_menu_consumed == 0 && i == 256 + 0x57) {	/* F11 */
 						sheet_updown(shtctl->sheets[1], shtctl->top - 1);
@@ -1297,17 +1314,19 @@ void HariMain(void)
 												task = sht->task;
 												sheet_updown(sht, -1); /* 우선 비표시로 해 둔다 */
 												keywin_off(key_win);
-												key_win = shtctl->sheets[shtctl->top - 1];
+												key_win = find_topmost_app_sheet(shtctl);
 												keywin_on(key_win);
 												io_cli();
 												fifo32_put(&task->fifo, 4);
 												io_sti();
+												taskbar_mark_dirty();
 											} else {	/* 태스크 없는 도구 창 */
 												sheet_updown(sht, -1);
 												if (sht == key_win) {
-													key_win = shtctl->sheets[shtctl->top - 1];
+													key_win = find_topmost_app_sheet(shtctl);
 													keywin_on(key_win);
 												}
+												taskbar_mark_dirty();
 											}
 										}
 										break;
@@ -1543,8 +1562,9 @@ void HariMain(void)
 
 void keywin_off(struct SHEET *key_win)
 {
+	if (key_win == 0) return;
 	change_wtitle8(key_win, 0);
-	if ((key_win->flags & 0x20) != 0) {
+	if ((key_win->flags & 0x20) != 0 && key_win->task != 0) {
 		fifo32_put(&key_win->task->fifo, 3); /* 콘솔의 커서 OFF */
 	}
 	return;
@@ -1552,8 +1572,9 @@ void keywin_off(struct SHEET *key_win)
 
 void keywin_on(struct SHEET *key_win)
 {
+	if (key_win == 0) return;
 	change_wtitle8(key_win, 1);
-	if ((key_win->flags & 0x20) != 0) {
+	if ((key_win->flags & 0x20) != 0 && key_win->task != 0) {
 		fifo32_put(&key_win->task->fifo, 2); /* 콘솔의 커서 ON */
 	}
 	return;

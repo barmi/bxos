@@ -504,6 +504,7 @@ int  scrollwin_cursor_y(struct SCROLLWIN *sw);
 void scrollwin_backspace(struct SCROLLWIN *sw);
 int  scrollwin_text_cols(struct SCROLLWIN *sw);
 void dbg_init(struct SHTCTL *shtctl);
+void dbg_open(void);
 void dbg_newline(struct DBGWIN *dbg);
 void dbg_putstr0(char *s, int c);
 void dbg_putstr1(char *s, int l, int c);
