@@ -2126,7 +2126,9 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 	} else if (edx == 39) {
 		// api_exec(path, flags) → 0=launched, <0=error
 		// 실행 파일의 부모 디렉터리를 cwd 로 하는 새 console task 를
-		// spawn 하고 파일명만 cmdline 으로 주입한다.
+		// spawn 하고 파일명만 cmdline 으로 주입한다. HE2 subsystem 이
+		// CONSOLE 이면 출력 가시화를 위해 콘솔 윈도우를 띄우고,
+		// WINDOW 이면 sheet 없는 headless task 로 둔다.
 		char *path = (char *) ebx + ds_base;
 		struct FS_FILE efile;
 		unsigned int parent_clus;
@@ -2137,6 +2139,11 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 		struct FIFO32 *efifo;
 		char norm[MAX_PATH], parent_path[MAX_PATH], exec_name[MAX_PATH];
 		char *slash;
+		char *fbuf;
+		int fsize;
+		int subsystem;
+		struct SHTCTL *exec_shtctl;
+		struct SHEET *exec_sht;
 		int i, j;
 		reg[7] = -1;
 		if (ebx != 0 &&
@@ -2146,6 +2153,23 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 				leaf.name[0] != 0 &&
 				normalize_path(task->cwd_path[0] != 0 ? task->cwd_path : "/",
 					path, norm) == 0) {
+			/* HE2 헤더의 subsystem flag 만 읽기 위해 임시로 파일을 로드한다.
+			 * 새 task 의 cmd_app 이 다시 로드하므로 부담은 한 번 추가될 뿐이다.
+			 * 매직이 다르거나 로드 실패 시 console subsystem 으로 가정한다. */
+			subsystem = HE2_SUBSYSTEM_CONSOLE;
+			fsize = leaf.size;
+			if (fsize >= 32) {
+				fbuf = fs_data_loadfile(leaf.clustno, &fsize);
+				if (fbuf != 0) {
+					if (fsize >= 32 && fbuf[0] == 'H' && fbuf[1] == 'E' &&
+							fbuf[2] == '2' && fbuf[3] == 0) {
+						struct he2_hdr_kern *eh = (struct he2_hdr_kern *) fbuf;
+						subsystem = eh->flags & HE2_FLAG_SUBSYSTEM_MASK;
+					}
+					memman_free_4k((struct MEMMAN *) MEMMAN_ADDR,
+						(int) fbuf, fsize);
+				}
+			}
 			slash = norm;
 			for (i = 0; norm[i] != 0; i++) {
 				if (norm[i] == '/') {
@@ -2161,7 +2185,19 @@ int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int
 				parent_path[i] = 0;
 			}
 			strcpy(exec_name, slash + 1);
-			etask = open_constask(0, g_memtotal);
+			if (subsystem == HE2_SUBSYSTEM_WINDOW) {
+				etask = open_constask(0, g_memtotal);
+			} else {
+				exec_shtctl = (struct SHTCTL *) *((int *) 0x0fe4);
+				exec_sht = open_console(exec_shtctl, g_memtotal);
+				if (exec_sht != 0) {
+					etask = exec_sht->task;
+					sheet_slide(exec_sht, 32, 4);
+					sheet_updown(exec_sht, exec_shtctl->top);
+				} else {
+					etask = 0;
+				}
+			}
 			if (etask != 0) {
 				etask->cwd_clus = parent_clus;
 				strcpy(etask->cwd_path, parent_path);
