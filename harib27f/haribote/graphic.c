@@ -12,6 +12,31 @@ int g_clock_seconds = 0;
 int g_clock_show_seconds = 0;
 int g_clock_minutes = 0;
 
+/* work6 Phase 3: 8-bit row pattern → 8-byte mask lookup. 부팅 시 1회 init.
+ * mask_table[d] 는 row byte d 의 8 픽셀 마스크 (각 byte 0x00 또는 0xFF) 를 두
+ * uint32_t 로 저장. (4 픽셀씩 lo, hi).
+ * putfont8 의 hot loop 에서 8 ifs → 32-bit lookup + AND/OR 2회 로 변경. */
+static unsigned int g_putfont_mask_lo[256];
+static unsigned int g_putfont_mask_hi[256];
+
+void putfont_mask_init(void)
+{
+	int d, b;
+	for (d = 0; d < 256; d++) {
+		unsigned int lo = 0, hi = 0;
+		/* bit 7 (0x80) → byte 0, bit 6 → byte 1, ... bit 0 → byte 7. */
+		for (b = 0; b < 4; b++) {
+			if (d & (0x80 >> b)) lo |= 0xffu << (b * 8);
+		}
+		for (b = 0; b < 4; b++) {
+			if (d & (0x80 >> (b + 4))) hi |= 0xffu << (b * 8);
+		}
+		g_putfont_mask_lo[d] = lo;
+		g_putfont_mask_hi[d] = hi;
+	}
+	return;
+}
+
 void init_palette(void)
 {
 	static unsigned char table_rgb[16 * 3] = {
@@ -163,22 +188,26 @@ void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed
 	return;
 }
 
+/* work6 Phase 3: 8 ifs/row → 32-bit mask blit. row 한 줄 마다 lookup 2회 +
+ * AND/OR 6회. 분기 없음. 이전 버전은 row 당 평균 4 분기 take + 4 store; 새
+ * 버전은 row 당 분기 0, store 2회 (32-bit). 추정 3~5x 빠름. */
 void putfont8(char *vram, int xsize, int x, int y, char c, char *font)
 {
 	int i;
-	char *p, d /* data */;
+	unsigned char cb = (unsigned char) c;
+	unsigned int c4 = ((unsigned int) cb) * 0x01010101u;	/* c repeated 4 times */
 	bench_enter(BENCH_PUTFONT8);
 	for (i = 0; i < 16; i++) {
-		p = vram + (y + i) * xsize + x;
-		d = font[i];
-		if ((d & 0x80) != 0) { p[0] = c; }
-		if ((d & 0x40) != 0) { p[1] = c; }
-		if ((d & 0x20) != 0) { p[2] = c; }
-		if ((d & 0x10) != 0) { p[3] = c; }
-		if ((d & 0x08) != 0) { p[4] = c; }
-		if ((d & 0x04) != 0) { p[5] = c; }
-		if ((d & 0x02) != 0) { p[6] = c; }
-		if ((d & 0x01) != 0) { p[7] = c; }
+		unsigned char d = (unsigned char) font[i];
+		unsigned char *p = (unsigned char *) vram + (y + i) * xsize + x;
+		unsigned int m_lo = g_putfont_mask_lo[d];
+		unsigned int m_hi = g_putfont_mask_hi[d];
+		unsigned int *p4 = (unsigned int *) p;
+		/* 비-정렬 32-bit access: x86 은 hardware 가 처리 (조금 느리지만 OK).
+		 * boxfill / 메뉴/콘솔 라벨은 8-pixel 정렬이라 fast path. 앱 putstrwin 은
+		 * 8-pixel 정렬되지 않을 수 있음 — 그 경우도 동작은 정상. */
+		p4[0] = (p4[0] & ~m_lo) | (c4 & m_lo);
+		p4[1] = (p4[1] & ~m_hi) | (c4 & m_hi);
 	}
 	bench_leave(BENCH_PUTFONT8);
 	return;

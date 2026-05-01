@@ -210,21 +210,44 @@
   - explorer / tetris / lines / evtest 회귀 없음.
 - ☐ S1~S5 baseline 대비 1.5배 이상 빠름.
 
-### Phase 3 — Compositor 일반화 + putfont expansion table (1.5일)
-**목표**: 컴포지터의 모든 path 에 4-byte SIMD-like 처리 + 폰트 lookup.
+### Phase 3 — Compositor 일반화 + putfont 마스크 lookup (1.5일) — ☑ 구현 완료, QEMU 측정 대기 (2026-05-01)
+**목표**: 컴포지터의 모든 path 에 memset/memcpy fast path + 폰트 그리기 branchless.
 
-- ☐ `sheet_refreshmap` 의 4-byte path 를 모든 vx0 에 일반화 (Phase 2 의 sub 와 동일 패턴).
-- ☐ `sheet_refreshmap` 의 col_inv != -1 path (투명색 있는 sheet) 도 4-byte 비교/복사.
-- ☐ `hankaku_fast[256][16][8]` lookup table:
-  - 부팅 시 1회 expand. set 비트는 `c`, unset 비트는 `0xff` (sentinel).
-  - `putfont8` 가 `for (i=0; i<8; i++) if (row[i] != 0xff) p[i] = c;` — 분기는 동일하지만 cache locality 향상.
-  - 또는 conditional move 형태로 개선.
-- ☐ Phase 1 시나리오 재측정.
+- ☑ `sheet_refreshmap` 의 4-byte / 1-byte 분기 통합 ([sheet.c:75](../harib27f/haribote/sheet.c)):
+  - opaque sheet (col_inv == -1) → row 한 줄 통째로 `memset(map, sid, len)`.
+    `(sht->vx0 & 3) == 0` 조건 제거. 모든 정렬 처리.
+  - transparent sheet (col_inv != -1) → buf 의 non-col_inv run 을 byte scan 후 `memset(map, sid, run_len)`.
+- ☑ `putfont8` 의 비트 lookup 도입 ([graphic.c](../harib27f/haribote/graphic.c)):
+  - `static unsigned int g_putfont_mask_lo[256], g_putfont_mask_hi[256]` (256 × 2 ints = 2 KB).
+  - 부팅 시 `putfont_mask_init()` 가 한 번 채움. (work6.md 의 32KB 계획 — 실제로는 더 효율적인 2KB 마스크 lookup 으로 축소.)
+  - hot loop: row 마다 byte d → `mask_lo = g_putfont_mask_lo[d]`, `mask_hi = g_putfont_mask_hi[d]`.
+    32-bit `(p4[0] & ~m_lo) | (c4 & m_lo)` 두 번 — branchless. row 당 분기 0.
+- ☑ HariMain boot sequence: `bench_init` → `putfont_mask_init` → `init_palette` → ... 순.
+- ☐ Phase 1 시나리오 재측정 (사용자 직접) + work6-bench.md Phase 3 표 채움.
+
+**Phase 3 구현 노트 (2026-05-01)**
+- 원래 work6.md §2 의 계획은 `hankaku_fast[256][16][8]` 32 KB lookup. 그러나 글자별로
+  16 row × 8 byte 를 미리 펼쳐 두면 row 마다 4-pixel 마스크 두 개를 그대로 store
+  하면 되지만, 매 글자 마다 16 × 8 = 128 byte 의 cache line 을 끌어다 쓴다 (2 cache
+  lines per char). 대신 8-bit row pattern → 8-byte mask 의 256-entry lookup 만 두면
+  글자당 16 row × 1 byte 의 hankaku 를 그대로 읽어 mask 두 번 lookup. memory 25 ×
+  + cache 친화. 동작은 동일.
+- `_putfont8` 의 disassembly 확인: 행 본문에 conditional branch 없음 (`jne` 는 outer
+  `i < 16` 루프 한 번만). `_sheet_refreshmap` 도 `call _memset` 이 row 당 1회로 빠짐.
+- `sheet_refreshmap` 의 boundary check 추가: `bx0 >= bx1 || by0 >= by1` 인 경우 즉시
+  continue. 이전 byte loop 은 자연 0-iteration 이었지만 memset 은 size_t 음수 회피 위해
+  명시 처리.
+- 비-정렬 32-bit access: x86 hardware 가 처리. taskbar/menu 라벨은 8-px 정렬, 앱
+  putstrwin 도 일반적으로 정렬되어 fast path. 정렬 안 되어도 동작은 정상.
 
 **확인할 사항**
+- ☑ Release / Debug 빌드 통과, `fsck_msdos` clean.
+- ☑ `objdump -d` 에서 `_putfont8` 의 row 본문에 conditional branch 0건 (`jne` outer 루프 한 개만).
+- ☑ `_sheet_refreshmap` 가 `call _memset` 사용.
+- ☐ QEMU smoke (사용자 직접):
+  - 부팅 직후 화면 / Start 버튼 / 시계 / 메뉴 라벨 글자 깨짐 없음.
+  - `langmode 3 + type hangul.euc`, `langmode 4 + type hangul.utf` 회귀 없음 (한글 폰트는 `putfonts8_asc` 를 쓰지만 안에서 `putfont8` 호출 → 마스크 lookup 동일 적용).
 - ☐ S1~S5 누적 baseline 대비 2.5배 이상.
-- ☐ 부팅 시 expand cost (한 번 ~256 * 16 * 8 = 32KB 채움) 50ms 이내.
-- ☐ 한글 출력 회귀 없음 (langmode 3/4).
 
 ### Phase 4 — Dirty rect 인프라 (커널 측) (2일)
 **목표**: sheet 단위 부분 갱신 시스템 도입. 기존 `sheet_refresh` 호출과 호환.

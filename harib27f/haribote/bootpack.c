@@ -962,6 +962,7 @@ void HariMain(void)
 	system_settings_load_boot();
 
 	bench_init();
+	putfont_mask_init();
 	init_palette();
 	shtctl = shtctl_init(memman, binfo->vram, binfo->scrnx, binfo->scrny);
 	task_a = task_init(memman);

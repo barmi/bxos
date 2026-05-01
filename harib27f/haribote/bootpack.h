@@ -63,6 +63,7 @@ int fifo32_status(struct FIFO32 *fifo);
 /* graphic.c */
 void init_palette(void);
 void set_palette(int start, int end, unsigned char *rgb);
+void putfont_mask_init(void);	/* work6 Phase 3: 부팅 시 1회 호출 */
 void boxfill8(unsigned char *vram, int xsize, unsigned char c, int x0, int y0, int x1, int y1);
 void init_screen8(char *vram, int x, int y);
 void taskbar_redraw(char *vram, int x, int y, int start_hover, int start_pressed);

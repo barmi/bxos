@@ -64,9 +64,16 @@ void sheet_setbuf(struct SHEET *sht, unsigned char *buf, int xsize, int ysize, i
 	return;
 }
 
+/* work6 Phase 3: 4-byte / 1-byte 분기 통합. 두 가지 path:
+ *   (a) opaque sheet (col_inv == -1): row 마다 한 번 memset(map, sid, len). 가장
+ *       흔한 case (윈도우/콘솔/메뉴 모두 opaque). vx0 정렬 무관, rep stosb 가
+ *       byte loop 보다 5~10x.
+ *   (b) transparent sheet (col_inv != -1, mouse cursor 등): row 마다 buf[] 의
+ *       non-col_inv run 을 byte scan 으로 찾아 memset run. 마우스는 16x16 작은
+ *       sheet 라 비용 미미하지만 알고리즘 일관. */
 void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, int h0)
 {
-	int h, bx, by, vx, vy, bx0, by0, bx1, by1, sid4, *p;
+	int h, bx, by, bx0, by0, bx1, by1;
 	unsigned char *buf, sid, *map = ctl->map;
 	struct SHEET *sht;
 	bench_enter(BENCH_REFRESHMAP);
@@ -86,38 +93,33 @@ void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 		if (by0 < 0) { by0 = 0; }
 		if (bx1 > sht->bxsize) { bx1 = sht->bxsize; }
 		if (by1 > sht->bysize) { by1 = sht->bysize; }
+		if (bx0 >= bx1 || by0 >= by1) continue;
 		if (sht->col_inv == -1) {
-			if ((sht->vx0 & 3) == 0 && (bx0 & 3) == 0 && (bx1 & 3) == 0) {
-				/* 투명색없는 전용의 고속판(4바이트형) */
-				bx1 = (bx1 - bx0) / 4; /* MOV 회수 */
-				sid4 = sid | sid << 8 | sid << 16 | sid << 24;
-				for (by = by0; by < by1; by++) {
-					vy = sht->vy0 + by;
-					vx = sht->vx0 + bx0;
-					p = (int *) &map[vy * ctl->xsize + vx];
-					for (bx = 0; bx < bx1; bx++) {
-						p[bx] = sid4;
-					}
-				}
-			} else {
-				/* 투명색없는 전용의 고속판(1바이트형) */
-				for (by = by0; by < by1; by++) {
-					vy = sht->vy0 + by;
-					for (bx = bx0; bx < bx1; bx++) {
-						vx = sht->vx0 + bx;
-						map[vy * ctl->xsize + vx] = sid;
-					}
-				}
+			/* opaque: 한 row 통째로 memset (rep stosb). */
+			int row_w = bx1 - bx0;
+			for (by = by0; by < by1; by++) {
+				memset(map + (sht->vy0 + by) * ctl->xsize + sht->vx0 + bx0,
+						sid, (size_t) row_w);
 			}
 		} else {
-			/* 투명색 있는 일반판 */
+			/* transparent: buf[byte] != col_inv 인 run 만 map 에 sid 기록. */
+			int col_inv = sht->col_inv;
 			for (by = by0; by < by1; by++) {
-				vy = sht->vy0 + by;
+				int row_off_map = (sht->vy0 + by) * ctl->xsize + sht->vx0;
+				int row_off_buf = by * sht->bxsize;
+				int run_start = -1;
 				for (bx = bx0; bx < bx1; bx++) {
-					vx = sht->vx0 + bx;
-					if (buf[by * sht->bxsize + bx] != sht->col_inv) {
-						map[vy * ctl->xsize + vx] = sid;
+					if (buf[row_off_buf + bx] != col_inv) {
+						if (run_start < 0) run_start = bx;
+					} else if (run_start >= 0) {
+						memset(map + row_off_map + run_start, sid,
+								(size_t)(bx - run_start));
+						run_start = -1;
 					}
+				}
+				if (run_start >= 0) {
+					memset(map + row_off_map + run_start, sid,
+							(size_t)(bx - run_start));
 				}
 			}
 		}
