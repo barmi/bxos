@@ -1,6 +1,7 @@
 /* 마우스나 윈도우의 중첩 처리 */
 
 #include "bootpack.h"
+#include "bench.h"
 
 /* 비트값은 bootpack.h 의 SHEET_FLAG_* 와 동일. 구버전 로컬 매크로도 유지.  */
 #define SHEET_USE			SHEET_FLAG_USE
@@ -67,6 +68,7 @@ void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 	int h, bx, by, vx, vy, bx0, by0, bx1, by1, sid4, *p;
 	unsigned char *buf, sid, *map = ctl->map;
 	struct SHEET *sht;
+	bench_enter(BENCH_REFRESHMAP);
 	if (vx0 < 0) { vx0 = 0; }
 	if (vy0 < 0) { vy0 = 0; }
 	if (vx1 > ctl->xsize) { vx1 = ctl->xsize; }
@@ -119,6 +121,7 @@ void sheet_refreshmap(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 			}
 		}
 	}
+	bench_leave(BENCH_REFRESHMAP);
 	return;
 }
 
@@ -127,6 +130,7 @@ void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 	int h, bx, by, vx, vy, bx0, by0, bx1, by1, bx2, sid4, i, i1, *p, *q, *r;
 	unsigned char *buf, *vram = ctl->vram, *map = ctl->map, sid;
 	struct SHEET *sht;
+	bench_enter(BENCH_REFRESHSUB);
 	/* refresh 범위가 화면외에 있으면 보정 */
 	if (vx0 < 0) { vx0 = 0; }
 	if (vy0 < 0) { vy0 = 0; }
@@ -203,6 +207,7 @@ void sheet_refreshsub(struct SHTCTL *ctl, int vx0, int vy0, int vx1, int vy1, in
 			}
 		}
 	}
+	bench_leave(BENCH_REFRESHSUB);
 	return;
 }
 
@@ -278,6 +283,7 @@ void sheet_slide(struct SHEET *sht, int vx0, int vy0)
 {
 	struct SHTCTL *ctl = sht->ctl;
 	int old_vx0 = sht->vx0, old_vy0 = sht->vy0;
+	bench_enter(BENCH_SHEET_SLIDE);
 	sht->vx0 = vx0;
 	sht->vy0 = vy0;
 	if (sht->height >= 0) { /* 만약 표시중이라면, 새로운 레이어의 정보에 따라 화면을 다시 그린다 */
@@ -286,6 +292,7 @@ void sheet_slide(struct SHEET *sht, int vx0, int vy0)
 		sheet_refreshsub(ctl, old_vx0, old_vy0, old_vx0 + sht->bxsize, old_vy0 + sht->bysize, 0, sht->height - 1);
 		sheet_refreshsub(ctl, vx0, vy0, vx0 + sht->bxsize, vy0 + sht->bysize, sht->height, sht->height);
 	}
+	bench_leave(BENCH_SHEET_SLIDE);
 	return;
 }
 

@@ -465,6 +465,7 @@ void cons_putstr0(struct CONSOLE *cons, char *s);
 void cons_putstr1(struct CONSOLE *cons, char *s, int l);
 void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal);
 void cmd_mem(struct CONSOLE *cons, int memtotal);
+void cmd_bench(struct CONSOLE *cons, char *cmdline);
 void cmd_cls(struct CONSOLE *cons);
 void cmd_dir(struct CONSOLE *cons, char *cmdline);
 void cmd_task(void);

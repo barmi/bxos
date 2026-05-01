@@ -1,6 +1,7 @@
 /* 그래픽 처리 관계 */
 
 #include "bootpack.h"
+#include "bench.h"
 #include "../../tools/modern/euckr_map.h"
 
 int g_background_color = COL8_008484;
@@ -65,10 +66,12 @@ void set_palette(int start, int end, unsigned char *rgb)
 void boxfill8(unsigned char *vram, int xsize, unsigned char c, int x0, int y0, int x1, int y1)
 {
 	int x, y;
+	bench_enter(BENCH_BOXFILL8);
 	for (y = y0; y <= y1; y++) {
 		for (x = x0; x <= x1; x++)
 			vram[y * xsize + x] = c;
 	}
+	bench_leave(BENCH_BOXFILL8);
 	return;
 }
 
@@ -159,6 +162,7 @@ void putfont8(char *vram, int xsize, int x, int y, char c, char *font)
 {
 	int i;
 	char *p, d /* data */;
+	bench_enter(BENCH_PUTFONT8);
 	for (i = 0; i < 16; i++) {
 		p = vram + (y + i) * xsize + x;
 		d = font[i];
@@ -171,6 +175,7 @@ void putfont8(char *vram, int xsize, int x, int y, char c, char *font)
 		if ((d & 0x02) != 0) { p[6] = c; }
 		if ((d & 0x01) != 0) { p[7] = c; }
 	}
+	bench_leave(BENCH_PUTFONT8);
 	return;
 }
 
@@ -181,6 +186,7 @@ void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s
 	char *nihongo = (char *) *((int *) 0x0fe8), *font;
 	int k, t;
 
+	bench_enter(BENCH_PUTFONTS8_ASC);
 	if (task->langmode == 0) {
 		for (; *s != 0x00; s++) {
 			putfont8(vram, xsize, x, y, c, hankaku + *s * 16);
@@ -316,6 +322,7 @@ void putfonts8_asc(char *vram, int xsize, int x, int y, char c, unsigned char *s
 			x += 8;
 		}
 	}
+	bench_leave(BENCH_PUTFONTS8_ASC);
 	return;
 }
 

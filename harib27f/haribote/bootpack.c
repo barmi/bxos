@@ -1,6 +1,7 @@
 /* bootpack의 메인 */
 
 #include "bootpack.h"
+#include "bench.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -395,6 +396,7 @@ void taskbar_full_redraw(int start_hover, int start_pressed)
 	if (g_sht_back == 0 || g_buf_back == 0) {
 		return;
 	}
+	bench_enter(BENCH_TASKBAR);
 	g_taskbar_start_hover = start_hover;
 	g_taskbar_start_pressed = start_pressed;
 	scrnx = g_sht_back->bxsize;
@@ -450,6 +452,7 @@ void taskbar_full_redraw(int start_hover, int start_pressed)
 	}
 
 	sheet_refresh(g_sht_back, 0, scrny - TASKBAR_HEIGHT, scrnx, scrny);
+	bench_leave(BENCH_TASKBAR);
 	return;
 }
 
@@ -958,6 +961,7 @@ void HariMain(void)
 	fs_mount_data(0);
 	system_settings_load_boot();
 
+	bench_init();
 	init_palette();
 	shtctl = shtctl_init(memman, binfo->vram, binfo->scrnx, binfo->scrny);
 	task_a = task_init(memman);

@@ -1,6 +1,7 @@
 /* 콘솔 관계 */
 
 #include "bootpack.h"
+#include "bench.h"
 #include "../../tools/modern/euckr_map.h"
 #include <stdio.h>
 #include <string.h>
@@ -491,6 +492,8 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 		cmd_langmode(cons, cmdline);
 	} else if (strncmp(cmdline, "taskmgr", 7) == 0) {
 		open_taskmgr(memtotal);
+	} else if (strncmp(cmdline, "bench", 5) == 0 && (cmdline[5] == 0 || cmdline[5] == ' ')) {
+		cmd_bench(cons, cmdline);
 	} else if (cmdline[0] != 0) {
 		if (cmd_app(cons, fat, cmdline) == 0) {
 			/* 커맨드도 아니고, 어플리케이션도 아니고, 빈 행도 아니다 */
@@ -749,6 +752,59 @@ void cmd_mem(struct CONSOLE *cons, int memtotal)
 	char s[60];
 	sprintf(s, "total   %dMB\nfree %dKB\n\n", memtotal / (1024 * 1024), memman_total(memman) / 1024);
 	cons_putstr0(cons, s);
+	return;
+}
+
+/* work6 Phase 1: bench 콘솔 명령. dispatch 는 cons_runcmd 에서.
+ *   bench           — 현재 상태 표시
+ *   bench on        — 측정 켜기 (hot path 가 RDTSC 누적)
+ *   bench off       — 측정 끄기
+ *   bench reset     — 카운터 0 으로
+ *   bench dump      — debug 창에 누적 표 출력
+ *   bench mark <s>  — debug 창에 PIT tick 라벨 (시나리오 시작/끝 측정용)
+ */
+void cmd_bench(struct CONSOLE *cons, char *cmdline)
+{
+	char *arg = cmdline + 5;
+	while (*arg == ' ') arg++;
+	if (*arg == 0) {
+		char s[64];
+		sprintf(s, "bench: %s  pit_tick=%d\n",
+				g_bench_enabled ? "on" : "off",
+				(int) timerctl.count);
+		cons_putstr0(cons, s);
+		cons_putstr0(cons, "  on / off / reset / dump / mark <text>\n");
+		return;
+	}
+	if (strcmp(arg, "on") == 0) {
+		bench_set_enabled(1);
+		cons_putstr0(cons, "bench: on\n");
+		return;
+	}
+	if (strcmp(arg, "off") == 0) {
+		bench_set_enabled(0);
+		cons_putstr0(cons, "bench: off\n");
+		return;
+	}
+	if (strcmp(arg, "reset") == 0) {
+		bench_reset();
+		cons_putstr0(cons, "bench: reset\n");
+		return;
+	}
+	if (strcmp(arg, "dump") == 0) {
+		bench_dump();
+		cons_putstr0(cons, "bench: dump -> Debug window\n");
+		return;
+	}
+	if (strncmp(arg, "mark ", 5) == 0 || strcmp(arg, "mark") == 0) {
+		char buf[80];
+		const char *label = (strncmp(arg, "mark ", 5) == 0) ? arg + 5 : "";
+		sprintf(buf, "[bench mark] tick=%d  %s\n", (int) timerctl.count, label);
+		dbg_putstr0(buf, COL8_FFFF00);
+		cons_putstr0(cons, "bench: mark recorded\n");
+		return;
+	}
+	cons_putstr0(cons, "bench: unknown subcommand\n");
 	return;
 }
 
@@ -1650,7 +1706,20 @@ int cmd_app(struct CONSOLE *cons, int *fat, char *cmdline)
 	return 0;
 }
 
+/* work6 Phase 1: bench instrumentation 위해 wrapper 분리.
+ * 어셈에서 호출되는 entry 는 hrb_api 그대로. 내부 구현은 hrb_api_inner. */
+static int *hrb_api_inner(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax);
+
 int *hrb_api(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax)
+{
+	int *r;
+	bench_enter(BENCH_HRB_API);
+	r = hrb_api_inner(reg, edi, esi, ebp, esp, ebx, edx, ecx, eax);
+	bench_leave(BENCH_HRB_API);
+	return r;
+}
+
+static int *hrb_api_inner(int *reg, int edi, int esi, int ebp, int esp, int ebx, int edx, int ecx, int eax)
 {
 	struct TASK *task = task_now();
 	int ds_base = task->ds_base;
@@ -2559,6 +2628,7 @@ void scrollwin_redraw(struct SCROLLWIN *sw)
 	int x, y, line, vis, tw;
 	int scrollbar_x, track_h, thumb_h, thumb_y, max_top;
 	if (sht == 0) return;
+	bench_enter(BENCH_SCROLLWIN);
 	tw = scrollwin_text_w(sw);
 	vis = scrollwin_visible_lines(sw);
 	scrollbar_x = sw->x0 + tw;
@@ -2596,6 +2666,7 @@ void scrollwin_redraw(struct SCROLLWIN *sw)
 		}
 	}
 	sheet_refresh(sht, sw->x0, sw->y0, sw->x0 + sw->wd, sw->y0 + sw->ht);
+	bench_leave(BENCH_SCROLLWIN);
 }
 
 int scrollwin_handle_mouse(struct SCROLLWIN *sw, int mx, int my, int btn)

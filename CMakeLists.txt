@@ -45,6 +45,7 @@ set(BXOS_FAT_TOOL "${BXOS_TOOLS_DIR}/bxos_fat.py")
 set(BXOS_LDS      "${BXOS_TOOLS_DIR}/linker-bootpack.lds")
 set(BXOS_KERNEL_HEADERS
     "${BXOS_KSRC}/bootpack.h"
+    "${BXOS_KSRC}/bench.h"
     "${BXOS_TOOLS_DIR}/euckr_map.h"
 )
 
@@ -131,7 +132,7 @@ _bxos_assemble_nas("${BXOS_KSRC}/naskfunc.nas" "${BXOS_NASKFUNC_O}" elf32)
 # ─── 4) 커널 C 소스 → object ─────────────────────────────────────────
 set(BXOS_KERNEL_C_NAMES
     bootpack graphic dsctbl int fifo keyboard mouse memory sheet timer
-    mtask window menu console file tek ata fs_fat
+    mtask window menu console file tek ata fs_fat bench
 )
 set(BXOS_KERNEL_OBJS
     "${BXOS_NASKFUNC_O}"

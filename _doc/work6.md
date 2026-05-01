@@ -123,29 +123,50 @@
 | 성공 기준 | S1~S5 평균 ≥ 2x baseline, 회귀 0건 |
 | 일정 | 9~11 작업일 |
 
-### Phase 1 — 측정 인프라 (1.5일)
+### Phase 1 — 측정 인프라 (1.5일) — ☑ 구현 완료, QEMU baseline 측정 대기 (2026-05-01)
 **목표**: 모든 다음 phase 의 효과를 숫자로 측정할 수 있게 한다.
 
-- ☐ 신규 [harib27f/haribote/bench.c](../harib27f/haribote/bench.c) + bench.h:
-  - `struct BENCH_COUNTER { const char *name; int enabled; uint32_t calls; uint32_t total; uint32_t max; };`
-  - `bench_enter(idx)` / `bench_leave(idx)` — PIT count 기반.
-  - `bench_dump(void)` → `dbg_putstr0` 로 표 출력.
-- ☐ 핵심 hot path 에 enter/leave 삽입:
+- ☑ 신규 [harib27f/haribote/bench.c](../harib27f/haribote/bench.c) + [bench.h](../harib27f/haribote/bench.h):
+  - `struct BENCH_COUNTER { const char *name; bx_u32 calls; bx_u64 total_cycles; bx_u64 max_cycles; }`.
+  - `bench_enter(idx)` / `bench_leave(idx)` — RDTSC + nest stack (max 16).
+  - `bench_dump(void)` → `dbg_putstr0` 로 표 출력 (calls/total/max/avg 십진수).
+  - 64-bit 나눗셈은 `bench_div_u64_u32` (long division) 으로 풀어 libgcc 의존 회피.
+- ☑ 9개 핵심 hot path 에 enter/leave 삽입:
   - `sheet_refreshmap`, `sheet_refreshsub`, `sheet_slide`
   - `boxfill8`, `putfont8`, `putfonts8_asc`
   - `taskbar_full_redraw`, `scrollwin_redraw`
-  - `hrb_api` (각 edx 분기 별 카운터 — 처음엔 통합)
-- ☐ 콘솔 신규 명령 `bench`:
+  - `hrb_api` (wrapper + `hrb_api_inner` 분리)
+- ☑ 콘솔 신규 명령 `bench` ([cmd_bench](../harib27f/haribote/console.c)):
+  - `bench` — 현재 상태 + PIT tick.
   - `bench on` / `bench off` — 측정 토글.
   - `bench reset` — 카운터 0 초기화.
   - `bench dump` — debug 창에 표 출력.
-- ☐ S1~S5 baseline 측정 + work5 Phase 8 commit (현재 master) 와 비교 후 [_doc/work6-bench.md](work6-bench.md) 에 기록.
+  - `bench mark <label>` — debug 창에 PIT tick + 라벨 (시나리오 시작/끝 측정용).
+- ☑ `bench_init()` 를 HariMain boot 에서 호출 (init_palette 직전).
+- ☑ `_doc/work6-bench.md` 신규 — 측정 절차 + S1~S5 표 골격 + Phase 별 결과 슬롯.
+- ☐ S1~S5 baseline 실측 (QEMU 안에서 — 사용자가 직접) + 표 채움.
 - ☐ 측정 코드 자체 오버헤드 < 5% 확인 (bench off 와 on 의 idle CPU 차이).
 
+**Phase 1 구현 노트 (2026-05-01)**
+- RDTSC 사용으로 64-bit 누적값을 다뤄야 했고, freestanding 환경이라 libgcc 의 `___udivdi3`
+  를 링크하지 않으므로 `bench_div_u64_u32` 을 직접 구현 (long division, 32-bit 연산만).
+- `bench_enter` / `bench_leave` 의 hot path 첫 줄은 `if (!g_bench_enabled) return;`.
+  `g_bench_enabled` 가 0 일 때 추가 비용은 함수 호출 1번 + load + cmp + jne. RDTSC 자체
+  실행 안 됨. 작동이 검증되면 `static inline` 화 검토 가능 (Phase 2 이후).
+- `hrb_api` 는 어셈에서 호출되는 entry 라 wrapper 분리. 기존 함수는 `static hrb_api_inner`
+  로 변경하고 `hrb_api` 가 enter/leave + inner 호출.
+- `cmd_bench` 의 `mark` 부속 명령은 PIT tick 을 debug 창에 라벨과 함께 기록 — 시나리오
+  시작/끝 표시용. RDTSC 보다 PIT tick 이 시나리오 elapsed 측정에 안정적이라 둘 다 지원.
+- `bench dump` 가 호출되는 동안 putfonts8/scrollwin/etc 가 다시 fire 해서 카운터를 증가
+  시킨다. 시나리오 측정과 dump 순서 분리 권장 (work6-bench.md §함정).
+
 **확인할 사항**
-- ☐ build 통과, `fsck_msdos` clean.
-- ☐ `bench on` 후 `dir` 한 번 → `bench dump` 로 `boxfill8`/`putfont8` call count 가 합리적인 수치.
-- ☐ `bench off` 시 hot path 추가 비용 없음 (early return).
+- ☑ Release / Debug 빌드 모두 통과, `fsck_msdos -n` clean.
+- ☑ `i686-elf-readelf -S build/cmake-debug/bootpack.elf | grep debug_info` 정상 (bench.c 에도 DWARF 들어감).
+- ☐ QEMU 안에서 `bench on` 후 `dir` 한 번 → `bench dump` 로 `boxfill8`/`putfont8` call
+  count 가 합리적인 수치 (수백~수천).
+- ☐ QEMU 안에서 `bench off` 시 hot path 추가 비용 없음 (early return).
+- ☐ S1~S5 baseline 채움.
 
 ### Phase 2 — Quick wins: boxfill8 / refreshsub memcpy / ascii fast path (1일)
 **목표**: 단순한 변경 3개로 첫 가시적 향상.
