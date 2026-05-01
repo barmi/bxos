@@ -138,6 +138,37 @@ cmake --build build/cmake --target install-winhelo
 cmake --build build/cmake --target run
 ```
 
+#### CLion / GDB 디버깅 (work5)
+
+`./run-qemu.sh --debug` 로 QEMU 를 GDB stub (tcp:1234) 모드로 띄우고,
+`i686-elf-gdb` (또는 CLion 의 GDB Remote Debug) 로 attach 해서 source-level
+디버깅이 가능합니다. 사전 준비:
+
+```bash
+brew install i686-elf-gdb
+cmake -S . -B build/cmake-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/cmake-debug
+```
+
+* Debug 빌드는 `-O0 -g -gdwarf-4` 로 떨어져 `build/cmake-debug/bootpack.elf`
+  와 각 HE2 앱의 `he2/obj/<name>/<name>.elf` 에 DWARF 가 들어갑니다 (Release
+  빌드는 `-O2`, DWARF 없음 — 별도 디렉터리로 분리).
+* 헬퍼 GDB 스크립트는 [`tools/debug/bxos.gdb`](tools/debug/bxos.gdb).
+  자세한 CLion run config / external tool 설정은 [`_doc/clion-debug.md`](_doc/clion-debug.md).
+
+빠른 동작 확인 (raw GDB):
+
+```bash
+# 터미널 A
+./run-qemu.sh --debug
+
+# 터미널 B
+i686-elf-gdb -x tools/debug/bxos.gdb build/cmake-debug/bootpack.elf
+(gdb) bxos-attach
+(gdb) break HariMain
+(gdb) continue
+```
+
 ### 2.5 검증
 
 ```bash

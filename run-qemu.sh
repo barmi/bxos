@@ -12,6 +12,10 @@
 #                                       # 데이터 디스크 명시 (-hda 로 부착)
 #   ./run-qemu.sh --no-data             # 자동 부착된 data.img 무시
 #   ./run-qemu.sh path.img --data d.img # 부팅 이미지 + 데이터 디스크 동시 지정
+#   ./run-qemu.sh --debug               # GDB stub on tcp:1234 + CPU halt at startup
+#                                       #   (CLion / i686-elf-gdb 가 attach 할 때까지 대기)
+#   ./run-qemu.sh --debug --no-halt     # GDB stub 만 열고 CPU 는 즉시 실행
+#   QEMU_GDB_PORT=2345 ./run-qemu.sh --debug  # 다른 GDB 포트
 #   QEMU_EXTRA="-d int" ./run-qemu.sh   # 추가 옵션
 #
 # 환경 변수:
@@ -29,6 +33,7 @@ QEMU_BIN="${QEMU_BIN:-qemu-system-i386}"
 QEMU_MEM="${QEMU_MEM:-32}"
 QEMU_ACCEL="${QEMU_ACCEL:-tcg}"
 QEMU_EXTRA="${QEMU_EXTRA:-}"
+QEMU_GDB_PORT="${QEMU_GDB_PORT:-1234}"
 
 DEFAULT_KERNEL_IMG="$SCRIPT_DIR/build/cmake/haribote.img"
 LEGACY_KERNEL_IMG="$SCRIPT_DIR/harib27f/haribote.img"
@@ -47,6 +52,8 @@ fi
 BOOT_ARG=""
 DATA_IMG="${BXOS_DATA_IMG:-}"
 DATA_OVERRIDE="auto"   # auto | explicit | disabled
+DEBUG_MODE=0           # 1 = QEMU GDB stub on tcp:$QEMU_GDB_PORT
+DEBUG_HALT=1           # 1 = CPU halt at startup (-S)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +70,14 @@ while [[ $# -gt 0 ]]; do
     --no-data)
       DATA_IMG=""
       DATA_OVERRIDE="disabled"
+      shift
+      ;;
+    --debug|-S)
+      DEBUG_MODE=1
+      shift
+      ;;
+    --no-halt)
+      DEBUG_HALT=0
       shift
       ;;
     -h|--help)
@@ -142,6 +157,18 @@ else
 fi
 echo "[info] qemu      : $QEMU_BIN  mem=${QEMU_MEM}M  accel=$QEMU_ACCEL"
 
+# ── GDB 디버그 모드 ────────────────────────────────────────────────
+DEBUG_OPTS=()
+if [[ "$DEBUG_MODE" == "1" ]]; then
+  DEBUG_OPTS+=(-gdb "tcp::${QEMU_GDB_PORT}")
+  if [[ "$DEBUG_HALT" == "1" ]]; then
+    DEBUG_OPTS+=(-S)
+    echo "[info] gdb stub  : tcp:${QEMU_GDB_PORT}  (CPU halted; gdb 'continue' to start)"
+  else
+    echo "[info] gdb stub  : tcp:${QEMU_GDB_PORT}  (CPU running, attach anytime)"
+  fi
+fi
+
 # shellcheck disable=SC2086
 exec "$QEMU_BIN" \
   -m "$QEMU_MEM" \
@@ -150,4 +177,5 @@ exec "$QEMU_BIN" \
   -name "BxOS / Haribote" \
   "${BOOT_OPTS[@]}" \
   ${DATA_OPTS[@]+"${DATA_OPTS[@]}"} \
+  ${DEBUG_OPTS[@]+"${DEBUG_OPTS[@]}"} \
   $QEMU_EXTRA

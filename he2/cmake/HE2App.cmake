@@ -42,8 +42,18 @@ if(NOT DEFINED BXOS_ZINC)
     set(BXOS_ZINC "${CMAKE_SOURCE_DIR}/z_tools/haribote")
 endif()
 
+# Debug build (CMAKE_BUILD_TYPE=Debug) 일 때 -O0 -g 로 떨어뜨려 GDB 가 source-
+# level 디버깅을 할 수 있게 한다. ELF 의 DWARF 가 그대로 he2pack 에는
+# 들어가지 않지만(`he2pack.py` 가 .text/.rodata/.bss 만 추출), `obj/<name>/<name>.elf`
+# 에는 남아 있어 `add-symbol-file` 로 GDB 가 사용할 수 있다.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_BXOS_HE2_OPT_FLAGS -O0 -g -gdwarf-4)
+else()
+    set(_BXOS_HE2_OPT_FLAGS -O2)
+endif()
+
 set(BXOS_HE2_CFLAGS
-    -m32 -O2 -ffreestanding -fno-pic -fno-pie -fno-pic
+    -m32 ${_BXOS_HE2_OPT_FLAGS} -ffreestanding -fno-pic -fno-pie -fno-pic
     -fno-stack-protector -fno-asynchronous-unwind-tables
     -fno-builtin -nostdlib -fno-common
     -Wall -Wno-implicit-function-declaration

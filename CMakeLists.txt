@@ -76,13 +76,21 @@ endif()
 set(BXOS_KERNEL_INCLUDE_FLAGS "-I${BXOS_KSRC} -idirafter ${BXOS_ZINC}")
 
 # 헬퍼: 커널 *.c → *.o
+#
+# CMAKE_BUILD_TYPE = Debug 일 때는 -O0 -g (DWARF) 로 빌드해 GDB / CLion remote
+# debugger 에서 source-level breakpoint 가 가능. 그 외는 -O2 (release).
 function(_bxos_compile_c src obj)
     separate_arguments(_cflags NATIVE_COMMAND "${CMAKE_C_FLAGS}")
     separate_arguments(_incflags NATIVE_COMMAND "${BXOS_KERNEL_INCLUDE_FLAGS}")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_optflags "-O0" "-g" "-gdwarf-4")
+    else()
+        set(_optflags "-O2")
+    endif()
     add_custom_command(
         OUTPUT  "${obj}"
         COMMAND ${CMAKE_C_COMPILER} ${_cflags}
-                -O2
+                ${_optflags}
                 ${_incflags}
                 -c -o "${obj}" "${src}"
         DEPENDS "${src}" ${BXOS_KERNEL_HEADERS}
