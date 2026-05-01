@@ -7,7 +7,7 @@ work1/work2 작업 이후 빌드 시스템은 **CMake + NASM + i686-elf-gcc + Py
 | 이미지 | 위치 | 내용 |
 |---|---|---|
 | 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 25개 + 데이터 파일 11개 |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img`     | HE2 앱 28개 (`explorer` 포함) + 데이터 파일 11개 |
 
 자세한 디스크/드라이브 구조는 [`_doc/storage.md`](_doc/storage.md), 콘솔 명령은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md) 참고.
 
@@ -160,6 +160,32 @@ python3 tools/modern/bxos_fat.py rmdir build/cmake/data.img:/sub
 ```
 
 ---
+
+### 2.6 파일 탐색기 (`explorer`) 빌드 / 실행 / 검증
+
+work4 에서 추가된 2-pane 파일 탐색기 앱입니다. CMake 빌드에 자동으로 포함되며 `data.img` 의 `EXPLORER.HE2` 로 패키징됩니다.
+
+```bash
+# 앱만 다시 빌드해서 data.img 에 부분 갱신
+cmake --build build/cmake --target install-explorer
+
+# 또는 전체 빌드
+cmake --build build/cmake
+
+# 호스트 검증 — EXPLORER.HE2 가 들어갔는지 확인
+python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/ | grep EXPLORER
+fsck_msdos -n build/cmake/data.img
+
+# 부팅 후 콘솔에서
+./run-qemu.sh
+> explorer            # 현재 cwd 에서 시작
+> explorer /sub       # 특정 경로까지 트리 자동 expand
+> start explorer      # 새 콘솔에서 실행
+```
+
+조작은 키보드(↑↓/Enter/Tab/`r`/`n`/`m`/`d`/ESC) 와 마우스(클릭/같은 row 재click/splitter drag/scrollbar/창 모서리 drag) 모두 지원합니다. 자세한 단축키와 toolbar 동작은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#explorer-사용법) 참고.
+
+추가된 사용자 syscall (edx 32~43) 과 event ABI 는 [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md) 의 syscall 표에 정리되어 있습니다.
 
 ## 3. 알려진 이슈 / 수정 이력
 

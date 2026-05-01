@@ -12,7 +12,7 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
 
 ## 2. 현재 위치 (2026-05-01 기준)
 
-- work4 는 **Phase 0~7 구현 완료, QEMU smoke 대기 → Phase 8 (문서 / 회귀 검증 / 마무리) 진입 직전** 단계다.
+- work4 는 **Phase 0~8 구현 완료, QEMU smoke 대기** 단계다. 코드 변경은 끝났고, 호스트 검증(clean build / `fsck_msdos -n`) 까지 통과했다. 마지막 남은 작업은 사용자 인터랙션이 필요한 QEMU smoke 시나리오 (Phase 1~7 + Phase 8 회귀 검증) 뿐이다.
 - [_doc/work4.md](work4.md) 가 정본 계획 문서다. Phase 0 잠금 결정 표는 §3 Phase 0 마지막, Phase 1/2/3 구현 노트는 각 phase 끝에 있다.
 - 이 handoff 문서는 다음 세션이 QEMU smoke 를 거쳐 바로 Phase 8 에 들어갈 수 있도록 핵심 결정을 압축한 것이다.
 - Phase 0 에서 잠근 핵심:
@@ -36,7 +36,7 @@ BxOS에 **마우스와 키보드 모두로 조작 가능한 2-pane 파일 탐색
   - explorer 에서 `n`/toolbar `N` 으로 mkdir, `d`/toolbar `D` 로 confirm 후 delete, `m`/toolbar `M` 으로 rename 가능. 성공 후 tree/file list 를 reload 하고 selection 을 보정한다.
   - explorer toolbar hover/pressed/disabled 표현, transient status clear, executable/directory/general file 색상 구분, path overflow status 가 적용되어 있다.
 - 현재 코드 상태에서 부족한 것:
-  - QEMU smoke 와 사용자 문서(BXOS-COMMANDS/README/SETUP) 갱신 전.
+  - QEMU smoke (사용자 인터랙션 필요).
 
 ## 3. 확정할 핵심 결정
 
@@ -140,7 +140,7 @@ struct BX_EVENT {
 | 5. 파일 열기 / 앱 실행 / preview ☑ | 1.5d | `.HE2` 실행, text/hex preview, 실행 cwd 보정 (2026-05-01 코드 완료, QEMU smoke 대기) |
 | 6. 파일관리 동작 ☑ | 2d | mkdir, delete, rename, input/confirm UI, reload/selection 보정 (2026-05-01 코드 완료, QEMU smoke 대기) |
 | 7. UI polish / 오류 처리 ☑ | 1d | scrollbar arrow, toolbar states, transient status clear, color/error polish (2026-05-01 코드 완료, QEMU smoke 대기) |
-| 8. 문서 / 회귀 검증 | 1d | BXOS-COMMANDS/README/SETUP 갱신, clean build, QEMU smoke |
+| 8. 문서 / 회귀 검증 ☑ | 1d | BXOS-COMMANDS/README/SETUP/he2-format 갱신, clean build, fsck_msdos -n 통과 (2026-05-01 코드/문서 완료, QEMU smoke 대기) |
 
 총 12~14 작업일 예상.
 
@@ -184,7 +184,7 @@ fsck_msdos -n build/cmake/data.img
 
 ## 8. 바로 시작할 때 할 일
 
-Phase 0~7 은 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase 8 (문서 / 회귀 검증 / 마무리) 로 진입한다.
+Phase 0~8 은 코드/문서 완료되었으므로 다음 세션은 QEMU smoke 회귀 검증만 남았다. smoke 가 통과하면 work4 를 마감할 수 있다.
 
 1. `git status --short` 로 현재 작업트리 확인.
 2. **Phase 1~7 QEMU smoke**: `./run-qemu.sh` 후 콘솔에서
@@ -195,11 +195,11 @@ Phase 0~7 은 코드 완료되었으므로 다음 세션은 QEMU smoke 후 Phase
    - Phase 5: `explorer` 에서 `TETRIS.HE2` 선택 후 Enter/double-click 실행. `explorer /sub` 에서 `pwd.he2` 또는 검증 앱이 `/sub` 를 cwd 로 보는지 확인. `HANGUL.UTF` preview, 큰 파일 truncation status, binary size/cluster + hex preview, preview scrollbar, ESC/Backspace 목록 복귀 확인.
    - Phase 6: `n` 또는 toolbar `N` 으로 `/EXPTEST` 생성 후 콘솔 `dir /` 에서 확인. 임시 파일 삭제 시 `d` → `y` confirm 확인. 비어 있지 않은 디렉터리 삭제는 실패 status 를 보이고 목록이 유지되는지 확인. `m` 으로 같은 디렉터리 rename 후 내용이 유지되는지 확인. 재부팅 후 변경 결과 유지 확인.
    - Phase 7: 25개 이상 root entries 에서 scrollbar arrow/track/thumb 와 keyboard selection 이 안정적인지 확인. toolbar hover/pressed/disabled 상태, transient status clear, executable/directory/general file 색상, path-too-long/invalid-name error status 를 확인. 30회 이상 이동/refresh 반복.
-3. **Phase 8 진입 — 문서 / 회귀 검증 / 마무리**:
-   - work4.md §3 Phase 8 참조.
-   - BXOS-COMMANDS/README/SETUP/he2 문서에 explorer 와 syscall/event API 노출 여부를 반영한다.
-   - clean build, `fsck_msdos -n`, QEMU smoke 를 묶어서 최종 회귀 검증한다.
-4. Phase 8 끝나면 work4 를 마감한다.
+3. **Phase 8 — 회귀 검증**:
+   - 코드/문서 작업 완료 (2026-05-01).
+   - 호스트 검증 통과: `cmake --build build/cmake` clean, `fsck_msdos -n` (haribote.img / data.img) clean, `bxos_fat.py ls build/cmake/data.img:/` 에 `EXPLORER.HE2 25668` 확인.
+   - 남은 것은 QEMU smoke (사용자 인터랙션 필요): work4.md §3 Phase 8 “확인할 사항” 의 explorer/console 회귀 시나리오와 기존 HE2 window 앱(tetris/winhelo3/lines) 키보드/창닫기 회귀.
+4. QEMU smoke 가 끝나면 work4 를 마감한다.
 
 ## 9. 함정으로 미리 알아둘 것
 

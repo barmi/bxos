@@ -83,7 +83,7 @@ DS offset
 ## API 호출 규약
 
 기존 HRB와 동일한 **`INT 0x40`** 디스패치를 그대로 사용한다.
-* `EDX` = function number (1..27)
+* `EDX` = function number (1..43, 현재 사용 중인 범위)
 * `EAX/EBX/ECX/ESI/EDI/EBP` = 인자 (함수별)
 * 반환값은 `EAX`
 
@@ -93,6 +93,80 @@ DS offset
 
 라이브러리(`libbxos`) 가 모든 syscall 을 GCC inline asm 으로 래핑하므로,
 앱 소스에서는 그냥 C 함수처럼 보인다.
+
+### syscall 디스패치 (EDX)
+
+| edx | 이름 | 도입 | 비고 |
+|----:|------|------|------|
+| 1   | `api_putchar(c)`              | HRB | EAX=문자 |
+| 2   | `api_putstr0(s)`              | HRB | EBX=문자열 |
+| 3   | `api_putstr1(s, len)`         | HRB | |
+| 4   | `api_end()`                   | HRB | 앱 종료 |
+| 5   | `api_openwin(buf,xs,ys,col,title)` | HRB | EAX=핸들 |
+| 6   | `api_putstrwin(...)`          | HRB | |
+| 7   | `api_boxfilwin(...)`          | HRB | |
+| 8   | `api_initmalloc(...)`         | HRB | |
+| 9   | `api_malloc(size)`            | HRB | |
+| 10  | `api_free(ptr,size)`          | HRB | |
+| 11  | `api_point(win,x,y,col)`      | HRB | |
+| 12  | `api_refreshwin(...)`         | HRB | |
+| 13  | `api_linewin(...)`            | HRB | |
+| 14  | `api_closewin(win)`           | HRB | |
+| 15  | `api_getkey(mode)`            | HRB | |
+| 16  | `api_alloctimer()`            | HRB | |
+| 17  | `api_inittimer(t,data)`       | HRB | |
+| 18  | `api_settimer(t,time)`        | HRB | |
+| 19  | `api_freetimer(t)`            | HRB | |
+| 20  | `api_beep(tone)`              | HRB | |
+| 21  | `api_fopen(name)`             | HRB | 읽기 핸들 |
+| 22  | `api_fclose(h)`               | HRB | |
+| 23  | `api_fseek(h,off,mode)`       | HRB | |
+| 24  | `api_fsize(h,mode)`           | HRB | |
+| 25  | `api_fread(buf,max,h)`        | HRB | |
+| 26  | `api_cmdline(buf,max)`        | HRB | |
+| 27  | `api_getlang()`               | HRB | |
+| 28  | `api_fopen_w(name)`           | work1 | 쓰기 핸들 |
+| 29  | `api_fwrite(buf,n,h)`         | work1 | |
+| 30  | `api_fdelete(name)`           | work1 | |
+| 31  | `api_getcwd(buf,max)`         | work2 | |
+| 32  | `api_opendir(path)`           | work4 | DIRHANDLE |
+| 33  | `api_readdir(h,out)`          | work4 | `BX_DIRINFO*` out |
+| 34  | `api_closedir(h)`             | work4 | |
+| 35  | `api_stat(path,out)`          | work4 | |
+| 36  | `api_mkdir(path)`             | work4 | |
+| 37  | `api_rmdir(path)`             | work4 | |
+| 38  | `api_rename(old,new)`         | work4 | 같은 부모만, cross-parent move 는 -2 |
+| 39  | `api_exec(path,flags)`        | work4 | flags=0 만 사용. 실행 파일 부모를 cwd 로 상속 |
+| 40  | `api_getevent(out,mode)`      | work4 | mode=0 poll, 1 wait. `BX_EVENT*` out |
+| 41  | `api_resizewin(win,buf,w,h,col)` | work4 | 앱이 새 buffer 제공 |
+| 42  | `api_set_winevent(win,flags)` | work4 | `BX_WIN_EV_MOUSE/RESIZE/DBLCLK` |
+| 43  | `api_setcursor(shape)`        | work4 | `BX_CURSOR_*` |
+
+work4 에서 추가된 사용자 노출 구조체:
+
+```c
+struct BX_DIRINFO {
+    char           name[13];   /* "NAME.EXT" + NUL, directory 는 이름만 */
+    unsigned char  attr;       /* FAT attr, 0x10 = directory */
+    unsigned int   size;
+    unsigned int   clustno;
+};
+
+struct BX_EVENT {
+    int type;       /* BX_EVENT_KEY/MOUSE_DOWN/UP/MOVE/DBLCLK/RESIZE */
+    int win;
+    int x, y;       /* client area 좌표 */
+    int button;     /* 비트마스크 */
+    int key;        /* KEY 일 때 (api_getkey 와 동일 인코딩) */
+    int w, h;       /* RESIZE 일 때 새 client 크기 */
+};
+```
+
+`api_getevent` 와 `api_getkey` 는 같은 task 의 fifo 마커 (`0x10000`) 를
+공유하므로 한 앱에서 섞어 쓰지 않는다. mouse / resize event 를 받으려는
+앱은 `api_set_winevent(win, BX_WIN_EV_MOUSE | BX_WIN_EV_RESIZE)` 로
+명시적으로 opt-in 한다 — 그렇지 않은 창은 종전과 동일하게 키 입력만
+받는다 (tetris 등 기존 앱은 영향 없음).
 
 ## 링커 심볼
 

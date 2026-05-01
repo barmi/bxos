@@ -69,7 +69,7 @@ type hangul.utf
 
 파일 목록은 `dir` 로 확인할 수 있습니다. 앱 실행 시 `Bad command or file name.` 이 나오면 파일명이 틀렸거나 이미지에 해당 파일이 없는 것입니다.
 
-## 포함 앱 (HE2 25개)
+## 포함 앱 (HE2 28개)
 
 | 명령 | 설명 |
 |---|---|
@@ -91,8 +91,58 @@ type hangul.utf
 | `pwd.he2` | 사용자 API 경유로 앱이 상속받은 현재 작업 디렉터리를 출력합니다. |
 | `chklang` | 현재 언어 모드(ASCII, 일본어, 한국어 등)를 출력합니다. |
 | `khello` | UTF-8 으로 인코딩된 정적 한글 인사말을 표시합니다 (사용 시 langmode 4 권장). |
+| `lsdir [경로]` | 사용자 API(`api_opendir`/`readdir`/`closedir`) 경유로 디렉터리 항목과 크기/`<DIR>` 표시를 콘솔에 출력합니다. |
+| `evtest` | 창 안 마우스 클릭/이동/리사이즈 이벤트를 점/박스/프레임으로 시각화하는 검증 앱입니다. 우하단 모서리 드래그로 창 크기를 바꿀 수 있습니다. |
+| `explorer [경로]` | 2-pane 파일 탐색기. 왼쪽 디렉터리 트리, 오른쪽 파일 목록, 상단 toolbar(`<-`/`..`/`R`/`N`/`D`/`M`), 하단 status. 키보드/마우스/창 리사이즈 모두 지원합니다. 자세한 조작은 아래 ["explorer 사용법"](#explorer-사용법) 참고. |
 
 > 옛 HRB 앱(`calc`, `tview`, `mmlplay`, `gview`, `invader`, `bball`, `notrec`, `iroha`, `chklang` 등) 은 현재 데이터 디스크에 포함되지 않습니다. work1 작업으로 이미지에 들어가는 앱이 HE2 포맷으로 한정됐고, 이 앱들은 아직 HE2 로 마이그레이션되지 않았습니다.
+
+### explorer 사용법
+
+```text
+explorer            # 현재 cwd 에서 시작
+explorer /sub       # /sub 까지 트리를 자동으로 펼치고 시작
+start explorer      # 새 콘솔에서 실행 (콘솔이 종료를 기다리지 않음)
+```
+
+기본 창 크기는 420×280, 최소 320×200. 우하단/오른쪽/아래 모서리 드래그로 창 크기를 바꿀 수 있습니다.
+
+**키보드**
+
+| 키 | 동작 |
+|---|---|
+| ↑ / ↓ | 트리 또는 파일 목록 선택 이동 |
+| ← / Backspace | 트리: collapse 또는 부모 노드. 목록: 부모 디렉터리. preview: 목록 복귀. |
+| → | 트리: expand. 목록: Enter 와 동일 (디렉터리 진입 / `.HE2` 실행 / 그 외 preview). |
+| Enter | 디렉터리 진입, `.HE2` 실행, 또는 텍스트/hex preview. preview: 목록 복귀. |
+| Tab | 트리 ↔ 파일 목록 focus 전환 |
+| `r` | 현재 디렉터리 reload |
+| `n` | 새 디렉터리 만들기 (status 입력 모드) |
+| `m` | rename / 같은 부모 안에서 이름 바꾸기 |
+| `d` | 선택 항목 삭제 (`y` 로 confirm) |
+| ESC / `q` | preview 종료 또는 앱 종료 |
+
+**마우스**
+
+| 동작 | 결과 |
+|---|---|
+| tree/list row click | 해당 row 선택 + focus 이동 |
+| 같은 row 재click | open (트리: expand toggle, 목록: 디렉터리 진입 / `.HE2` 실행 / preview) |
+| splitter drag | 트리/목록 폭 비율 조정 (창 resize 후에도 비율 유지) |
+| splitter hover | 좌우 resize 커서로 변경 |
+| scrollbar thumb drag / track click / arrow click | 트리/목록/preview 스크롤 |
+| 우하단/오른쪽/아래 edge drag | 창 크기 변경 (드래그 중 실시간 layout 반영) |
+| toolbar `<-`/`..`/`R`/`N`/`D`/`M` 클릭 | 부모 / 부모 / refresh / new / delete / rename |
+
+**파일 동작**
+
+- 디렉터리는 진한 파란색, `.HE2` 실행 파일은 진한 녹색, 일반 파일은 검정색으로 구분합니다.
+- `.HE2` 를 Enter / double-click 으로 실행하면 새 콘솔 task 가 만들어지며, 실행 앱의 cwd 는 해당 `.HE2` 의 부모 디렉터리로 설정됩니다.
+- 텍스트가 아닌 파일은 size/cluster + 첫 N bytes hex view 로 표시합니다.
+- 파일관리(`mkdir`/`rmdir`/`rename`)는 콘솔의 동명 명령과 같은 FAT 16 8.3 규칙을 공유합니다. cross-parent move 는 지원하지 않습니다 (`api_rename` 정책).
+- 빈 디렉터리만 삭제할 수 있습니다. recursive delete 는 미지원.
+
+자세한 syscall API 와 ABI 는 [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md) 참고.
 
 ## 포함 데이터 파일
 

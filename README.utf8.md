@@ -28,7 +28,7 @@
 
 ## 빠른 시작 (macOS Apple Silicon)
 
-자세한 안내는 `SETUP-MAC.md`, 콘솔 명령은 `BXOS-COMMANDS.md`, 디스크 구조는 `_doc/storage.md` 참고.
+자세한 안내는 `SETUP-MAC.md`, 콘솔 명령은 `BXOS-COMMANDS.md`, 디스크 구조는 `_doc/storage.md` 참고. 부팅 후 콘솔에서 `explorer` 를 입력하면 2-pane 파일 탐색기가 뜹니다 — 자세한 조작은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#explorer-사용법) 참고.
 
 ```bash
 # 1. 사전 도구 설치 (한 번만)
@@ -48,7 +48,7 @@ cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
 | 이미지 | 위치 | 내용 |
 |---|---|---|
 | 부팅 FDD (FAT12 1.44MB) | `build/cmake/haribote.img` | `HARIBOTE.SYS` + `NIHONGO.FNT` |
-| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 25개 + 데이터 파일 11개 |
+| 데이터 HDD (FAT16 32MB) | `build/cmake/data.img` | HE2 앱 28개 (`explorer` 포함) + 데이터 파일 11개 |
 
 ### 한글 표시 (EUC-KR / UTF-8)
 
