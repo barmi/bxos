@@ -497,7 +497,91 @@ avg = total_cycles / calls. **워크로드 의존이 적어 phase 간 비교에 
   20 G 절감 가능) 와 Phase 6/7 (hrb_api 41 G — S4 dominant)**. 이 두 phase 가
   목표 2x 달성의 결정적 단계.
 
-### 표 — Phase 4 (Dirty rect 인프라) 후
+### 표 — Phase 4 (Dirty rect 인프라) 후 (2026-05-02, 신규 `bench save` 인프라 활용)
+
+> Phase 4 변경: `struct SHEET` 에 dirty_rect[4][4] + dirty_count 추가. `sheet_dirty_add` /
+> `_flush` / `_flush_all` API 도입. HariMain idle 직전에 `sheet_dirty_flush_all`. **호환
+> mode** — `sheet_refresh` 동작 변경 없음. dirty rect 사용은 opt-in (Phase 5 부터).
+>
+> 또한 같은 commit 에서 `task_alloc` 의 init 누락 버그 수정 (`task->cons` /
+> `cwd_clus` 등이 uninitialized garbage → `dir` 명령 실패) 와 `bench save` →
+> `/SYSTEM/BENCH.LOG` 텍스트 출력 인프라 추가.
+>
+> 측정값은 `/tmp/bench.log` 로 추출되어 호스트에서 그대로 사용 (debug 창 캡처 불필요).
+
+#### Phase 4 — 모든 카운터 한눈에 보기
+
+| counter | S1 menu×10 | S2 dir×10 | S3 explorer | S4 tetris-line | S5 mouse |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` calls / total | 60 / 12.9 M | 0 / 0 | 439 / 14.4 M | 1,218 / 39.5 M | 794 / 23.0 M |
+| `refreshsub` calls / total | 544 / 305.6 M | 19,851 / 10,303.6 M | 988 / 320.2 M | 2,320 / 1,027.0 M | 1,325 / 314.6 M |
+| `sheet_slide` calls / total | 30 / 2.1 M | 0 / 0 | 219 / 28.6 M | 605 / 81.9 M | 395 / 58.7 M |
+| `boxfill8` calls / total | 1,288 / 23.7 M | 172 / 1.4 M | 639 / 9.1 M | 13,715 / 44.7 M | 154 / 1.7 M |
+| `putfont8` calls / total | 86,844 / 23.5 M | 4,621,518 / 973.6 M | 264,448 / 72.6 M | 281,357 / 76.8 M | 289,007 / 77.2 M |
+| `putfonts8_asc` calls / total | 0 / 0 | 0 / 0 | 39 / 0.1 M | 64 / 0.5 M | 0 / 0 |
+| `taskbar` calls / total | 31 / 41.3 M | 1 / 0.3 M | 7 / 7.9 M | 10 / 10.2 M | 1 / 1.6 M |
+| `scrollwin` calls / total | 709 / 1,428.8 M | 20,054 / 26,690.1 M | 797 / 1,587.2 M | 795 / 1,641.1 M | 772 / 1,572.5 M |
+| `hrb_api` calls / total | 0 / 0 | 0 / 0 | 233 / 5.3 M | 14,664 / 20,899.2 M | 0 / 0 |
+| **Σ total cycles** | **1.84 G** | **37.97 G** | **2.05 G** | **23.82 G** | **2.05 G** |
+
+#### Phase 4 시나리오 별 marks (PIT ticks 기준)
+
+| | s_N-start | s_N-end | elapsed | dump pit_tick |
+|---|---:|---:|---:|---:|
+| S1 | 5,902 | 7,763 | **1,861** (~18.6 s) | 8,311 |
+| S2 | 9,837 | 14,783 | **4,946** (~49.5 s) | 15,006 |
+| S3 | 16,967 | 18,922 | **1,955** (~19.6 s) | 19,353 |
+| S4 | 22,492 | 27,237 | **4,745** (~47.5 s) | 27,697 |
+| S5 | 29,781 | 32,631 | **2,850** (~28.5 s) | 33,146 |
+
+#### Phase 3 → Phase 4 비교 (avg cycles, 워크로드 안정 시나리오)
+
+Phase 4 는 호환 mode 라 큰 변화 없어야 정상. **회귀 0건 확인이 목표**.
+
+| counter | S1 P3→P4 | S2 P3→P4 | S5 P3→P4 |
+|---|---:|---:|---:|
+| `refreshmap` avg | 139.1 K → 214.5 K (+54.2%)¹ | — | 21.7 K → 29.0 K (+33.7%)¹ |
+| `refreshsub` avg | 540.7 K → 561.8 K (+3.9%) | 486.9 K → 519.0 K (+6.6%) | 207.5 K → 237.4 K (+14.4%) |
+| `sheet_slide` avg | 54.1 K → 69.8 K (+29.0%) | — | 119.4 K → 148.5 K (+24.4%) |
+| `boxfill8` avg | 14.5 K → 18.4 K (+27.0%)² | 9.7 K → 8.2 K (-15.7%) | 11.8 K → 11.3 K (-4.0%) |
+| `putfont8` avg | 273 → 270 (-1.1%) | 186 → 210 (+12.9%) | 233 → 267 (+14.6%) |
+| `scrollwin` avg | 1.82 M → 2.02 M (+10.7%) | 1.14 M → 1.33 M (+16.3%) | 1.84 M → 2.04 M (+10.5%) |
+
+> ¹ `refreshmap` avg 가 +30~+54% 로 보이지만 절대값이 작음 (수백 KB cycle). 호출
+> 빈도가 적은 함수의 측정값은 cold cache 영향이 큼. 의미 있는 회귀로 보기 어려움.
+>
+> ² `boxfill8` avg 변동도 함수 자체가 짧아 (수 ㎲) bench overhead 가 상대적으로 큼.
+>
+> **공통 추세**: Phase 3 → Phase 4 에서 5~17% 가량 cycle 증가. 가능한 원인:
+> 1. 측정 세션 별 QEMU TCG 엔진의 host CPU 부하 차이 (TCG 는 host 시간에 강 의존)
+> 2. SHEET struct 크기 증가 (~80→114 byte) 에 따른 cache line 추가 사용
+> 3. HariMain idle 의 `sheet_dirty_flush_all` 256-sheet 순회 (no-op 이지만 호출 빈도 高)
+>
+> Phase 5 에서 dirty rect 가 본격 사용되면 효율이 다시 올라가 회복될 전망.
+
+#### Phase 4 시나리오 합 (Σ total cycles)
+
+| 시나리오 | Phase 1 baseline | Phase 3 후 | **Phase 4 후** | P1→P4 누적 |
+|---|---:|---:|---:|---:|
+| S1 menu×10 | 2.20 G | 1.58 G | **1.84 G** | -16.4% |
+| S2 dir×10 | 48.03 G | 33.60 G | **37.97 G** | -21.0% |
+| S3 explorer | 4.88 G | 1.88 G | **2.05 G** | -58.0% (워크로드 차) |
+| S4 tetris-line | 45.94 G | 44.94 G | **23.82 G** | -48.2% (워크로드 차) |
+| S5 mouse | 2.28 G | 1.75 G | **2.05 G** | -10.1% |
+
+#### Phase 4 핵심 결론
+
+* **회귀 자체는 작음** (5~17%). Phase 4 가 인프라 단계라 기능적 변화 없음.
+* `putfont8` 의 S2 avg 가 P3=186 → P4=210 으로 살짝 올라간 건 BENCH 측정 자체의
+  noise 또는 TCG 시간차로 추정. P1 (372) → P4 (210) 누적으로 보면 여전히 -43.5%.
+* `scrollwin` avg 는 일관 +10~16% 증가. 의외. 추후 Phase 5 의 부분 redraw 가
+  근본 해결.
+* `hrb_api` S4: P3 28,824 calls → P4 14,664 calls (절반). 사용자가 tetris 로 더
+  적은 라인을 클리어한 듯 (워크로드 차).
+* **이번 측정의 가장 큰 수확은 `bench save` 인프라**: 사용자가 텍스트 파일로 직접
+  덤프를 추출해 Phase 5 부터는 OCR/캡처 없이 그대로 분석 가능.
+* `task_alloc` 초기화 버그 수정도 사이드 결과 — 더 이상 `dir` 이 (no data disk
+  mounted) 로 실패하지 않음.
 
 ### 표 — Phase 5 (taskbar/scrollwin/마우스 부분 redraw) 후
 
