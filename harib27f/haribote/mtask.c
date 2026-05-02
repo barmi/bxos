@@ -153,6 +153,27 @@ struct TASK *task_alloc(void)
 			task->tss.iomap = 0x40000000;
 			task->tss.ss0 = 0;
 			task->app_type = TASK_APP_SYSTEM;
+			/* work6 Phase 4: 안전 초기화. task_init 에서는 flags 만 0 으로
+			 * 두기 때문에 cons / cwd_clus / cmdline 등이 uninitialized garbage.
+			 * open_constask 가 parent->cons 를 검사할 때 garbage 가 non-zero
+			 * 면 잘못된 if 분기를 타고 cwd_clus 가 깨진다. 명시적으로 0 화. */
+			task->cons       = 0;
+			task->cwd_clus   = 0;
+			task->cwd_path[0] = 0;
+			task->cmdline    = 0;
+			task->cons_stack = 0;
+			task->fhandle    = 0;
+			task->dhandle    = 0;
+			task->event_buf  = 0;
+			task->event_size = 0;
+			task->event_count = 0;
+			task->event_p     = 0;
+			task->ds_base    = 0;
+			task->langmode   = 0;
+			task->langbyte1  = 0;
+			task->langbyte2  = 0;
+			task->name[0]    = 0;
+			task->time       = 0;
 			if (i >= taskctl->alloc) {
 				taskctl->alloc = i + 1;
 			}

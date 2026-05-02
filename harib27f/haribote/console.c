@@ -830,6 +830,65 @@ void cmd_bench(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, "bench: log buffer cleared\n");
 		return;
 	}
+	if (strcmp(arg, "mount") == 0) {
+		/* fs_mount_data 의 각 단계를 콘솔에 출력. boot 시 (no data disk mounted)
+		 * 가 나오면 어디서 실패했는지 격리한다. */
+		struct MEMMAN *memman = (struct MEMMAN *) MEMMAN_ADDR;
+		unsigned char bs[512];
+		char s[96];
+		int r;
+		sprintf(s, "mount: ata_drive_info[0].present = %d\n",
+				ata_drive_info[0].present);
+		cons_putstr0(cons, s);
+		sprintf(s, "mount: g_data_mounted = %d  (1=ok, 0=not yet)\n",
+				g_data_mounted);
+		cons_putstr0(cons, s);
+		if (!ata_drive_info[0].present) {
+			cons_putstr0(cons, "mount: ATA drive not present, cannot retry.\n");
+			return;
+		}
+		/* 1) BPB read (1 sector) */
+		r = ata_read_sectors(0, 0, 1, bs);
+		sprintf(s, "mount: BPB read (1 sector) -> %d\n", r);
+		cons_putstr0(cons, s);
+		if (r != 1) return;
+		sprintf(s, "  bs[510..511]=%02x %02x  (expect 55 aa)\n",
+				bs[510], bs[511]);
+		cons_putstr0(cons, s);
+		sprintf(s, "  bytes/sector=%d  sec/clus=%d  reserved=%d\n",
+				(bs[11] | (bs[12] << 8)), bs[13],
+				(bs[14] | (bs[15] << 8)));
+		cons_putstr0(cons, s);
+		sprintf(s, "  num_fats=%d  root_ent=%d  fat_sz=%d\n",
+				bs[16], (bs[17] | (bs[18] << 8)),
+				(bs[22] | (bs[23] << 8)));
+		cons_putstr0(cons, s);
+		/* 2) Multi-sector read of FAT (64 sectors) */
+		{
+			static unsigned char tmpbuf[2048];
+			int fat_lba = (bs[14] | (bs[15] << 8));
+			r = ata_read_sectors(0, fat_lba, 4, tmpbuf);	/* 4 sec test */
+			sprintf(s, "mount: multi-sec read 4@%d -> %d (expect 4)\n",
+					fat_lba, r);
+			cons_putstr0(cons, s);
+		}
+		/* 3) memman alloc test */
+		{
+			unsigned int p1 = memman_alloc_4k(memman, 32 * 1024);
+			unsigned int p2 = memman_alloc_4k(memman, 16 * 1024);
+			sprintf(s, "mount: memman 32K=%x  16K=%x  total free=%d KB\n",
+					p1, p2, memman_total(memman) / 1024);
+			cons_putstr0(cons, s);
+			if (p1) memman_free_4k(memman, p1, 32 * 1024);
+			if (p2) memman_free_4k(memman, p2, 16 * 1024);
+		}
+		/* 4) Retry fs_mount_data */
+		r = fs_mount_data(0);
+		sprintf(s, "mount: fs_mount_data(0) RETRY -> %d  g_data_mounted=%d\n",
+				r, g_data_mounted);
+		cons_putstr0(cons, s);
+		return;
+	}
 	if (strcmp(arg, "savetest") == 0) {
 		/* /SYSTEM/TEST.TXT 에 "hello\n" 를 써서 FAT write path 확인.
 		 * 단계별 결과를 콘솔에 출력. bench save 가 실패할 때 어디가 문제인지
