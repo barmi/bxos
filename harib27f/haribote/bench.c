@@ -11,6 +11,11 @@
 int g_bench_enabled = 0;
 struct BENCH_COUNTER g_bench_counters[BENCH_COUNT];
 
+/* RAM 로그 — bench mark/dump 가 putstr 한다. bench save 가 /SYSTEM/BENCH.LOG 로
+ * 한 번에 flush. 호스트 측 `bxos_fat.py cp` 로 추출. */
+static char g_bench_log[BENCH_LOG_MAX];
+static int  g_bench_log_p = 0;
+
 /* nest stack: enter 마다 push, leave 마다 pop. 같은 idx 가 다시 들어오는 재귀
  * 호출은 일단 outer 만 측정 (inner 는 enter 시점에 이미 enabled 가 true 라
  * 같이 push 되지만 leave 가 정상 매칭되는 한 자체 측정값은 합산됨). */
@@ -41,7 +46,71 @@ void bench_init(void)
 	}
 	g_bench_sp = 0;
 	g_bench_enabled = 0;
+	g_bench_log_p = 0;
+	g_bench_log[0] = 0;
 	return;
+}
+
+/* ───── RAM 로그 helpers (mark / dump 가 putstr 한다) ───── */
+
+void bench_log_putstr(const char *s)
+{
+	if (s == 0) return;
+	while (*s != 0 && g_bench_log_p < BENCH_LOG_MAX - 1) {
+		g_bench_log[g_bench_log_p++] = *s++;
+	}
+	g_bench_log[g_bench_log_p] = 0;
+	return;
+}
+
+void bench_log_clear(void)
+{
+	g_bench_log_p = 0;
+	g_bench_log[0] = 0;
+	return;
+}
+
+int bench_log_len(void)
+{
+	return g_bench_log_p;
+}
+
+/* 반환:
+ *   N>0 = 쓴 byte 수
+ *   0   = 빈 로그
+ *   -1  = open + create 둘 다 실패 (보통 /SYSTEM 디렉터리 없음 또는 disk full)
+ *   -2  = truncate 실패
+ *   -3  = write 가 부분만 (또는 0) 성공
+ * cmd_bench 가 어느 단계 실패인지 사용자에게 보여준다. */
+int bench_log_save(void)
+{
+	struct FS_FILE file;
+	/* 두 번 차례로 쓰는 동안 path 가 fs_resolve_path 안에서 modify 될 수 있어
+	 * 매번 새 buffer 사용. */
+	char path1[] = "/SYSTEM/BENCH.LOG";
+	char path2[] = "/SYSTEM/BENCH.LOG";
+	int r, w;
+	if (g_bench_log_p == 0) {
+		return 0;
+	}
+	r = fs_data_open_path(0, path1, &file);
+	if (r != 0) {
+		/* 파일이 없거나 /SYSTEM 자체가 없을 때. create 시도. */
+		r = fs_data_create_path(0, path2, &file);
+		if (r != 0) {
+			return -1;
+		}
+	} else {
+		/* 이미 존재 — truncate 후 덮어쓴다. */
+		if (fs_file_truncate(&file, 0) != 0) {
+			return -2;
+		}
+	}
+	w = fs_file_write(&file, 0, g_bench_log, g_bench_log_p);
+	if (w != g_bench_log_p) {
+		return -3;
+	}
+	return g_bench_log_p;
 }
 
 void bench_set_enabled(int on)
@@ -194,6 +263,7 @@ static void bench_dump_one(struct BENCH_COUNTER *c)
 	line[p++] = '\n';
 	line[p] = 0;
 	dbg_putstr0(line, COL8_FFFFFF);
+	bench_log_putstr(line);
 	return;
 }
 
@@ -205,8 +275,9 @@ void bench_dump(void)
 
 	header = g_bench_enabled
 		? "[bench] dump (enabled)\n"
-		: "[bench] dump (disabled — old data)\n";
+		: "[bench] dump (disabled - old data)\n";
 	dbg_putstr0((char *)header, COL8_FFFF00);
+	bench_log_putstr(header);
 
 	/* PIT tick 도 함께 보여줘 scenario timing 참고 */
 	{
@@ -219,6 +290,7 @@ void bench_dump(void)
 		line[p++] = '\n';
 		line[p] = 0;
 		dbg_putstr0(line, COL8_FFFFFF);
+		bench_log_putstr(line);
 	}
 
 	for (i = 0; i < BENCH_COUNT; i++) {

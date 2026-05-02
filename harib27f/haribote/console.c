@@ -768,12 +768,15 @@ void cmd_bench(struct CONSOLE *cons, char *cmdline)
 	char *arg = cmdline + 5;
 	while (*arg == ' ') arg++;
 	if (*arg == 0) {
-		char s[64];
-		sprintf(s, "bench: %s  pit_tick=%d\n",
+		char s[80];
+		sprintf(s, "bench: %s  pit_tick=%d  log=%d/%d\n",
 				g_bench_enabled ? "on" : "off",
-				(int) timerctl.count);
+				(int) timerctl.count,
+				bench_log_len(), BENCH_LOG_MAX);
 		cons_putstr0(cons, s);
-		cons_putstr0(cons, "  on / off / reset / dump / mark <text>\n");
+		cons_putstr0(cons,
+			"  on / off / reset / dump / mark <text>\n"
+			"  save / logclear / savetest\n");
 		return;
 	}
 	if (strcmp(arg, "on") == 0) {
@@ -788,12 +791,12 @@ void cmd_bench(struct CONSOLE *cons, char *cmdline)
 	}
 	if (strcmp(arg, "reset") == 0) {
 		bench_reset();
-		cons_putstr0(cons, "bench: reset\n");
+		cons_putstr0(cons, "bench: reset (counters cleared, log preserved)\n");
 		return;
 	}
 	if (strcmp(arg, "dump") == 0) {
 		bench_dump();
-		cons_putstr0(cons, "bench: dump -> Debug window\n");
+		cons_putstr0(cons, "bench: dump -> Debug window + log buffer\n");
 		return;
 	}
 	if (strncmp(arg, "mark ", 5) == 0 || strcmp(arg, "mark") == 0) {
@@ -801,7 +804,63 @@ void cmd_bench(struct CONSOLE *cons, char *cmdline)
 		const char *label = (strncmp(arg, "mark ", 5) == 0) ? arg + 5 : "";
 		sprintf(buf, "[bench mark] tick=%d  %s\n", (int) timerctl.count, label);
 		dbg_putstr0(buf, COL8_FFFF00);
-		cons_putstr0(cons, "bench: mark recorded\n");
+		bench_log_putstr(buf);
+		cons_putstr0(cons, "bench: mark recorded (debug+log)\n");
+		return;
+	}
+	if (strcmp(arg, "save") == 0) {
+		int n = bench_log_save();
+		char s[96];
+		if (n == 0) {
+			sprintf(s, "bench: log buffer empty (size=0). Did you run dump?\n");
+		} else if (n == -1) {
+			sprintf(s, "bench: save FAILED at create -- /SYSTEM dir missing or disk full?\n");
+		} else if (n == -2) {
+			sprintf(s, "bench: save FAILED at truncate (existing file)\n");
+		} else if (n == -3) {
+			sprintf(s, "bench: save FAILED at write (partial). log_size=%d\n", bench_log_len());
+		} else {
+			sprintf(s, "bench: saved %d bytes -> /SYSTEM/BENCH.LOG\n", n);
+		}
+		cons_putstr0(cons, s);
+		return;
+	}
+	if (strcmp(arg, "logclear") == 0) {
+		bench_log_clear();
+		cons_putstr0(cons, "bench: log buffer cleared\n");
+		return;
+	}
+	if (strcmp(arg, "savetest") == 0) {
+		/* /SYSTEM/TEST.TXT 에 "hello\n" 를 써서 FAT write path 확인.
+		 * 단계별 결과를 콘솔에 출력. bench save 가 실패할 때 어디가 문제인지
+		 * 격리하는 용도. */
+		struct FS_FILE file;
+		char path[] = "/SYSTEM/TEST.TXT";
+		const char *payload = "hello bench savetest\n";
+		int payload_len = 21;	/* strlen */
+		int r, w;
+		char s[96];
+		r = fs_data_open_path(0, path, &file);
+		if (r != 0) {
+			char path2[] = "/SYSTEM/TEST.TXT";
+			r = fs_data_create_path(0, path2, &file);
+			sprintf(s, "savetest: create_path -> %d (0=ok, <0=fail)\n", r);
+			cons_putstr0(cons, s);
+			if (r != 0) return;
+		} else {
+			cons_putstr0(cons, "savetest: open_path -> 0 (file already exists)\n");
+			r = fs_file_truncate(&file, 0);
+			sprintf(s, "savetest: truncate -> %d\n", r);
+			cons_putstr0(cons, s);
+			if (r != 0) return;
+		}
+		w = fs_file_write(&file, 0, payload, payload_len);
+		sprintf(s, "savetest: write -> %d (expect %d)\n", w, payload_len);
+		cons_putstr0(cons, s);
+		cons_putstr0(cons,
+			"savetest: now check on host:\n"
+			"  python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/SYSTEM\n"
+			"  (QEMU 종료 후에 보이거나, monitor 의 'commit' 후 보입니다.)\n");
 		return;
 	}
 	cons_putstr0(cons, "bench: unknown subcommand\n");

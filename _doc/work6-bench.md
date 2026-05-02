@@ -7,9 +7,25 @@ work6 의 GUI 효율화 phase 들이 누적되는 과정을 같은 시나리오 
 
 * **Per-function counter**: RDTSC cycle (1 cycle = 1ns @ 1GHz emulation, QEMU TCG 는 비슷한 수준).
   콘솔 `bench on/off/reset/dump` 으로 토글.
-  * `bench dump` 는 9 개 hot path 의 `calls / total / max / avg` 를 debug 창에 출력.
+  * `bench dump` 는 9 개 hot path 의 `calls / total / max / avg` 를 debug 창 + RAM 로그에 출력.
 * **Per-scenario elapsed**: PIT 10ms tick (`timerctl.count`).
   콘솔 `bench mark <label>` 으로 시작/종료 마크. 차이 = 시나리오 elapsed (단위 ticks × 10ms).
+* **결과 추출 (work6 phase 4 추가)**: `bench mark` / `bench dump` 가 RAM 로그
+  버퍼 (16 KB) 에 누적된다. **`bench save`** 로 한 번에 `/SYSTEM/BENCH.LOG` 에
+  기록 → 호스트에서 `bxos_fat.py` 로 추출 → 텍스트 파일 그대로 사용.
+  Debug 창 캡처 / OCR 불필요.
+
+### 콘솔 명령 정리 (`bench ...`)
+
+| subcmd | 동작 |
+|---|---|
+| `bench` | 현재 상태 (on/off, pit_tick, log size) |
+| `bench on` / `bench off` | 측정 토글 |
+| `bench reset` | counter 만 0 으로 (log 보존) |
+| `bench dump` | counter 표 → debug 창 + log 버퍼 |
+| `bench mark <text>` | `[bench mark] tick=N <text>` → debug + log |
+| `bench save` | log 버퍼 → `/SYSTEM/BENCH.LOG` (truncate + write) |
+| `bench logclear` | log 버퍼 비움 |
 
 ## 측정 시나리오 (S1~S5)
 
@@ -26,14 +42,85 @@ toggle/reset 사이의 잔여 카운터 영향은 reset 으로 제거.
 
 ## 측정 절차 (reproducible)
 
+### Phase 4+ 권장 (파일로 추출)
+
 ```text
-1. ./run-qemu.sh  (Release 빌드 권장 — Debug 는 -O0 라 cycle 카운트가 의미 다름)
-2. 부팅 후 Start → Programs → Console.
-3. 콘솔에서 bench on
-4. (시나리오 실행)
-5. bench dump
-6. Start → Programs → Debug 으로 debug 창을 열고 출력된 표 확인.
-   (debug 창은 `dbg_putstr0` 의 누적이라 닫혀 있어도 데이터는 보존됨.)
+QEMU 안:
+1. ./run-qemu.sh  (Release 빌드)
+2. Start → Programs → Console
+3. > bench on
+4. > bench logclear     ← 이전 측정 흔적 제거 (선택)
+5. 5개 시나리오 반복:
+     > bench reset
+     > bench mark sN-start
+     ... 시나리오 실행 ...
+     > bench mark sN-end
+     > bench dump
+6. > bench save         ← /SYSTEM/BENCH.LOG 에 한꺼번에 기록
+
+호스트 (별도 터미널):
+$ python3 tools/modern/bxos_fat.py cp \
+    build/cmake/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log
+$ cat /tmp/bench.log     ← 모든 mark + dump 가 텍스트로 들어 있음
+```
+
+### 옛 방식 (debug 창 캡처)
+
+`bench save` 가 없던 Phase 1~3 에서 사용한 절차. 참고용.
+
+```text
+1. ./run-qemu.sh
+2. 콘솔에서 bench on / mark / dump
+3. Start → Programs → Debug 로 debug 창 띄움
+4. 거기 출력된 표를 캡처/OCR
+```
+
+```text
+# 부팅 후 콘솔에서 한 번만:
+> bench on
+> bench logclear
+
+# S1 — Start 메뉴 토글
+> bench reset
+> bench mark s1-start
+(Ctrl+Esc 10회 — 키보드)
+> bench mark s1-end
+> bench dump
+
+# S2 — 콘솔 dir × 10
+> bench reset
+> bench mark s2-start
+> dir   (10번 입력)
+> bench mark s2-end
+> bench dump
+
+# S3 — explorer 첫 그리기
+> bench reset
+> bench mark s3-start
+   (Start → Programs → Explorer)
+> bench mark s3-end
+> bench dump
+
+# S4 — tetris 한 라인 클리어
+> bench reset
+> bench mark s4-start
+   (Start → Programs → Games → Tetris, 한 라인 만들기)
+> bench mark s4-end
+> bench dump
+
+# S5 — 마우스 1000 step (대략 화면 가로지르기 5~10회)
+> bench reset
+> bench mark s5-start
+   (마우스 좌→우→좌, 5회 정도)
+> bench mark s5-end
+> bench dump
+
+# 마지막에 한 번:
+> bench save        ← /SYSTEM/BENCH.LOG 에 모든 mark+dump 가 텍스트로 들어감
+
+# 호스트 (별도 터미널):
+$ python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log
+$ cat /tmp/bench.log
 ```
 
 ## 표 — Phase 1 baseline (2026-05-02)

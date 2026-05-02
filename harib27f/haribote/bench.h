@@ -57,8 +57,23 @@ extern struct BENCH_COUNTER  g_bench_counters[BENCH_COUNT];
 void bench_init(void);
 void bench_set_enabled(int on);
 void bench_reset(void);
-void bench_dump(void);                            /* dbg_putstr0 로 표 출력 */
+void bench_dump(void);                            /* dbg_putstr0 + RAM log */
 void bench_enter(int idx);
 void bench_leave(int idx);
+
+/* work6 Phase 1+: RAM 누적 로그 (한 줄 ASCII 텍스트). bench mark / bench dump 가
+ * 자동으로 putstr 한다. `bench save` 로 /SYSTEM/BENCH.LOG 에 한 번에 기록 →
+ * 호스트에서 `bxos_fat.py cp .../BENCH.LOG ./bench.log` 로 추출. */
+#define BENCH_LOG_MAX	16384
+void bench_log_putstr(const char *s);
+void bench_log_clear(void);
+int  bench_log_len(void);
+/* 반환:
+ *   N>0 = 쓴 바이트 수 (성공)
+ *   0   = 빈 로그 (mark/dump 안 했거나 logclear 직후)
+ *   -1  = create 실패 (/SYSTEM 디렉터리 없음 또는 disk full)
+ *   -2  = truncate 실패
+ *   -3  = write partial (데이터 손실 가능) */
+int  bench_log_save(void);
 
 #endif /* BXOS_BENCH_H */
