@@ -493,7 +493,7 @@ void cons_runcmd(char *cmdline, struct CONSOLE *cons, int *fat, int memtotal)
 	} else if (strncmp(cmdline, "taskmgr", 7) == 0) {
 		open_taskmgr(memtotal);
 	} else if (strncmp(cmdline, "bench", 5) == 0 && (cmdline[5] == 0 || cmdline[5] == ' ')) {
-		cmd_bench(cons, cmdline);
+		cmd_bench(cons, cmdline, fat, memtotal);
 	} else if (cmdline[0] != 0) {
 		if (cmd_app(cons, fat, cmdline) == 0) {
 			/* 커맨드도 아니고, 어플리케이션도 아니고, 빈 행도 아니다 */
@@ -763,7 +763,94 @@ void cmd_mem(struct CONSOLE *cons, int memtotal)
  *   bench dump      — debug 창에 누적 표 출력
  *   bench mark <s>  — debug 창에 PIT tick 라벨 (시나리오 시작/끝 측정용)
  */
-void cmd_bench(struct CONSOLE *cons, char *cmdline)
+/* work6 Phase 5: 자동화된 시나리오 실행. S1 (start menu toggle), S2 (dir × 10),
+ * S5 (mouse 1000 step). S3 (explorer) / S4 (tetris) 는 GUI 인터랙션이 필요해
+ * 자동화 어렵 — 수동 측정 유지. 각 시나리오는 reset → mark sN-start → 동작 →
+ * mark sN-end → dump 의 표준 패턴. 마지막에 bench save 까지 자동. */
+static void cmd_bench_scenario(struct CONSOLE *cons, int *fat, int memtotal)
+{
+	char buf[80];
+	int i, n;
+
+	cons_putstr0(cons, "bench scenario: starting auto S1/S2/S5\n");
+	bench_set_enabled(1);
+	bench_log_clear();
+
+	/* ── S1: Start menu toggle 10회 ── */
+	bench_reset();
+	sprintf(buf, "[bench mark] tick=%d  s1-start (auto)\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	for (i = 0; i < 10; i++) {
+		start_menu_toggle();
+	}
+	/* 마지막에 토글이 짝수 번 되어 메뉴는 닫혀 있어야 함 (10회 = 5번 열고 닫음). */
+	sprintf(buf, "[bench mark] tick=%d  s1-end\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	bench_dump();
+	cons_putstr0(cons, "bench scenario: S1 done\n");
+
+	/* ── S2: dir × 10 ── */
+	bench_reset();
+	sprintf(buf, "[bench mark] tick=%d  s2-start (auto)\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	{
+		char dir_cmd[8];
+		strcpy(dir_cmd, "dir");
+		for (i = 0; i < 10; i++) {
+			cons_runcmd(dir_cmd, cons, fat, memtotal);
+		}
+	}
+	sprintf(buf, "[bench mark] tick=%d  s2-end\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	bench_dump();
+	cons_putstr0(cons, "bench scenario: S2 done\n");
+
+	/* ── S5: 마우스 1000 step (sheet_slide 직접 호출) ──
+	 * 일반 mouse fifo 경로는 PS/2 패킷 디코드를 거쳐서 자동화가 복잡하므로
+	 * sheet_slide 자체를 1000 회 호출. 이는 sheet_slide / refreshmap / refreshsub
+	 * hot path 를 동일하게 exercise 하지만 mouse fifo 동작은 시뮬레이션 안 함. */
+	bench_reset();
+	sprintf(buf, "[bench mark] tick=%d  s5-start (auto)\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	if (g_sht_mouse != 0) {
+		int orig_x = g_sht_mouse->vx0;
+		int orig_y = g_sht_mouse->vy0;
+		for (i = 0; i < 1000; i++) {
+			/* 좌→우 1px 씩 sweep, 화면 끝까지 가면 다시 좌. 약 1000 회. */
+			int x = (orig_x + i) % (g_sht_back ? g_sht_back->bxsize - 16 : 320);
+			sheet_slide(g_sht_mouse, x, orig_y);
+		}
+		/* 원위치로 복원 */
+		sheet_slide(g_sht_mouse, orig_x, orig_y);
+	}
+	sprintf(buf, "[bench mark] tick=%d  s5-end\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	bench_dump();
+	cons_putstr0(cons, "bench scenario: S5 done\n");
+
+	/* ── 마지막에 자동 save ── */
+	n = bench_log_save();
+	if (n < 0) {
+		sprintf(buf, "bench scenario: save FAILED (%d)\n", n);
+	} else {
+		sprintf(buf, "bench scenario: saved %d bytes -> /SYSTEM/BENCH.LOG\n", n);
+	}
+	cons_putstr0(cons, buf);
+	cons_putstr0(cons,
+		"bench scenario: DONE. Quit QEMU and run on host:\n"
+		"  python3 tools/modern/bxos_fat.py cp \\\n"
+		"    cmake-build-release/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log\n");
+	(void) i;
+	return;
+}
+
+void cmd_bench(struct CONSOLE *cons, char *cmdline, int *fat, int memtotal)
 {
 	char *arg = cmdline + 5;
 	while (*arg == ' ') arg++;
@@ -776,7 +863,11 @@ void cmd_bench(struct CONSOLE *cons, char *cmdline)
 		cons_putstr0(cons, s);
 		cons_putstr0(cons,
 			"  on / off / reset / dump / mark <text>\n"
-			"  save / logclear / savetest\n");
+			"  save / logclear / savetest / mount / scenario\n");
+		return;
+	}
+	if (strcmp(arg, "scenario") == 0) {
+		cmd_bench_scenario(cons, fat, memtotal);
 		return;
 	}
 	if (strcmp(arg, "on") == 0) {

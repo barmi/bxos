@@ -26,6 +26,39 @@ work6 의 GUI 효율화 phase 들이 누적되는 과정을 같은 시나리오 
 | `bench mark <text>` | `[bench mark] tick=N <text>` → debug + log |
 | `bench save` | log 버퍼 → `/SYSTEM/BENCH.LOG` (truncate + write) |
 | `bench logclear` | log 버퍼 비움 |
+| **`bench scenario`** | **S1+S2+S5 자동 실행 + bench save 까지 한 번에**. work6 Phase 5 신규 |
+| `bench savetest` | FAT write 단계별 진단 (디버깅 용) |
+| `bench mount` | fs_mount_data 단계별 진단 (디버깅 용) |
+
+### `bench scenario` (자동 측정, work6 Phase 5+)
+
+수동 입력 없이 한 명령으로 S1/S2/S5 시나리오를 모두 실행하고 결과 저장.
+
+```text
+QEMU 안:
+> bench scenario       ← S1 (start menu × 10) + S2 (dir × 10) + S5 (mouse × 1000)
+                          각 시나리오마다 reset → mark start → 동작 → mark end → dump
+                          마지막에 bench save 까지 자동
+> shutdown             ← QEMU 정상 종료 (writeback flush)
+
+호스트:
+$ python3 tools/modern/bxos_fat.py cp \
+    cmake-build-release/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log
+$ cat /tmp/bench.log
+```
+
+**자동화 범위**:
+- ✅ S1: `start_menu_toggle()` 10회 직접 호출 (정상 메뉴 동작과 동일).
+- ✅ S2: `cons_runcmd("dir", ...)` 10회 — 콘솔에서 `dir` 친 것과 동일.
+- ✅ S5: `sheet_slide(g_sht_mouse, x, y)` 1000회 — 마우스 sheet hot path
+  exercise. 마우스 PS/2 fifo 경로는 시뮬레이션 안 함 (의도적).
+- ❌ S3 (explorer 첫 그리기) / S4 (tetris 라인 클리어): GUI 인터랙션 필요.
+  필요시 별도 수동 측정.
+
+**측정 정확도**:
+- S1/S2 는 실제 cons_runcmd / start_menu_toggle 경로 그대로 → 수동 측정과 동일 결과.
+- S5 는 sheet_slide 직접 호출이라 mouse fifo 의 batching/PS/2 디코딩은 빠짐. 따라서
+  수동 마우스 이동 측정값과는 약간 다를 수 있음 (fifo overhead 빠진 만큼 더 빠름).
 
 ## 측정 시나리오 (S1~S5)
 
