@@ -3,18 +3,25 @@
  * tetris.c 의 line-clear / redraw_field 핫패스를 N 회 반복해 보드 redraw
  * 비용을 측정한다. 사용자 인터랙션 없음. 일정 회수 후 자체 종료.
  *
+ * Phase 6 부터: 신규 syscall (`api_blit_rect`, `api_invalidate_rect`,
+ * `api_dirty_flush`) 의 효과를 비교 측정하기 위해 redraw 경로를 두 종류 제공.
+ * 기본은 새 batch 경로 (USE_PHASE6_BATCH=1). 0 으로 바꾸면 기존
+ * boxfilwin × N + refreshwin 1회 경로.
+ *
  * 자동 측정 절차 (`bench scenario` 가 launch):
  *   1. 윈도우 열고 빈 보드 1회 그리기
- *   2. N 회 반복:
- *      a. 보드 셋업 (윗 row 무작위 색, 마지막 row 가득)
- *      b. redraw_field + refresh — 모든 셀 그리기
- *      c. clear_lines() 호출 — 마지막 row 제거 + shift
- *      d. redraw_field + refresh — 변경 후 다시 그리기
+ *   2. ITERATIONS 회 반복:
+ *      a. 보드 셋업 (윗 row 패턴, 마지막 row 가득)
+ *      b. redraw_field — 모든 셀 그리기 (deferred)
+ *      c. flush — 누적된 dirty 한 번에 refresh
+ *      d. clear_lines() — 마지막 row 제거 + shift
+ *      e. 다시 redraw + flush
  *   3. api_end() 로 종료
- *
- * api_boxfilwin / api_refreshwin / api_putstrwin 호출이 hrb_api 의 hot path 이며,
- * 결과는 bench 의 hrb_api / boxfill8 / refreshsub / putfont8 카운터에 누적된다.
  */
+
+/* 1 = 신규 syscall (api_invalidate_rect + api_dirty_flush) batch 경로.
+ * 0 = 기존 api_boxfilwin + api_refreshwin 경로. */
+#define USE_PHASE6_BATCH  1
 
 #include "apilib.h"
 
@@ -46,6 +53,7 @@ static void draw_cell(int win, int cx, int cy, int col)
 {
 	int x0, y0, x1, y1;
 	cell_rect(cx, cy, &x0, &y0, &x1, &y1);
+	/* deferred refresh — 마지막에 한 번만 flush */
 	api_boxfilwin(win + 1, x0, y0, x1, y1, col);
 	if (col != 0) {
 		api_boxfilwin(win + 1, x0, y0, x1, y0, 0);
@@ -53,6 +61,10 @@ static void draw_cell(int win, int cx, int cy, int col)
 		api_boxfilwin(win + 1, x0, y0, x0, y1, 0);
 		api_boxfilwin(win + 1, x1, y0, x1, y1, 0);
 	}
+#if USE_PHASE6_BATCH
+	/* dirty rect 만 누적 — 마지막 flush 에서 한 번에 처리 */
+	api_invalidate_rect(win, x0, y0, x1 + 1, y1 + 1);
+#endif
 }
 
 static void redraw_field(int win)
@@ -65,7 +77,12 @@ static void redraw_field(int win)
 
 static void refresh_field(int win)
 {
+#if USE_PHASE6_BATCH
+	/* Phase 6: 누적된 dirty rect 를 한 번에 flush. 보드 전체 = 한 union rect. */
+	api_dirty_flush(win);
+#else
 	api_refreshwin(win, FX0, FY0, FX0 + FW * CELL, FY0 + FH * CELL);
+#endif
 }
 
 static int clear_lines(void)

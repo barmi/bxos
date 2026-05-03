@@ -355,7 +355,7 @@
 - ☐ S1, S2, S5 가 baseline 대비 3배 이상 (Phase 5 의 핵심 검증).
 - ☐ scrollwin 스크롤 정상 (대량 출력 시 자동 스크롤 동작).
 
-### Phase 6 — App 측 syscall 추가 / 정리 (1.5일)
+### Phase 6 — App 측 syscall 추가 / 정리 (1.5일) — ☑ 구현 완료, QEMU 측정 대기 (2026-05-03)
 **목표**: 부분 갱신 + batch 를 앱이 활용할 수 있게 ABI 확장. 기존 호환은 그대로.
 
 - ☐ 커널 syscall 추가:

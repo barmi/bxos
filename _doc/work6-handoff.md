@@ -18,7 +18,7 @@ syscall 4종 (`api_blit_rect`/`api_text_run`/`api_invalidate_rect`/`api_dirty_fl
 
 ## 2. 현재 위치 (2026-05-01 기준)
 
-- work6 은 **Phase 5 구현 완료 → QEMU 측정 대기 → Phase 6 진입 직전** 단계다.
+- work6 은 **Phase 6 구현 완료 → QEMU 측정 대기 → Phase 7 진입 직전** 단계다.
 - Phase 1~3 의 baseline / Phase 2 / Phase 3 측정값은 [_doc/work6-bench.md](work6-bench.md)
   에 기록 완료. 누적 결과: 워크로드 안정 시나리오 (S1/S2/S5) 평균 baseline 대비 -27%.
 - Phase 4 는 **인프라 단계** — sheet 단위 dirty rect 누적 + idle flush. `sheet_refresh`
@@ -152,7 +152,7 @@ void sheet_dirty_flush_all(struct SHTCTL *ctl);
 | 3. 컴포지터 일반화 + 폰트 lookup ☑ | 1.5d | refreshmap unified memset, putfont 256x2 마스크 lookup, branchless 32-bit blit (구현 완료, 측정 대기) |
 | 4. Dirty rect 인프라 ☑ | 2d | SHEET dirty_rect[4][4], sheet_dirty_add/flush/flush_all, idle flush, 호환 mode (구현 완료, smoke 대기) |
 | 5. Taskbar / scrollwin / 마우스 부분 redraw ☑ | 2d | sheet_slide same-coord skip, scrollwin per-line append/backspace + scrollbar 분리, taskbar tray-only refresh (구현 완료, 측정 대기) |
-| 6. App 측 syscall 추가 / 정리 | 1.5d | edx 44~47, libbxos 갱신 |
+| 6. App 측 syscall 추가 / 정리 ☑ | 1.5d | edx 44=blit_rect, 45=text_run, 46=invalidate_rect, 47=dirty_flush; libbxos wrapper; HE2-FORMAT 갱신; api_point deprecated; tetris_t 가 batch 사용 (구현 완료, 측정 대기) |
 | 7. App side polish | 1.5d | explorer / tetris / settings / console |
 | 8. 회귀 / 문서 | 1d | BXOS-COMMANDS / README / SETUP / he2 / work6-bench |
 

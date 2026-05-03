@@ -2059,7 +2059,10 @@ static int *hrb_api_inner(int *reg, int edi, int esi, int ebp, int esp, int ebx,
 		ecx = (ecx + 0x0f) & 0xfffffff0; /* 16바이트 단위로 절상 */
 		memman_free((struct MEMMAN *) (ebx + ds_base), eax, ecx);
 	} else if (edx == 11) {
-		// api_point
+		/* api_point — DEPRECATED (work6).
+		 * 픽셀 한 개당 syscall + sheet_refresh 라 매우 느림. 신규 코드는
+		 * api_blit_rect (edx 44) 또는 api_invalidate_rect (46) + dirty_flush (47)
+		 * 를 사용. 동작은 호환을 위해 유지. */
 		sht = (struct SHEET *) (ebx & 0xfffffffe);
 		sht->buf[sht->bxsize * edi + esi] = eax;
 		if ((ebx & 1) == 0) {
@@ -2581,6 +2584,98 @@ static int *hrb_api_inner(int *reg, int edi, int esi, int ebp, int esp, int ebx,
 				fifo32_put(efifo, 10 + 256);   /* Enter */
 				reg[7] = 0;
 			}
+		}
+	} else if (edx == 44) {
+		/* api_blit_rect(win, src_buf, sw, sh, dx, dy) — work6 Phase 6.
+		 * 사용자 buffer (sw × sh contiguous) 를 window client buffer 의
+		 * (dx, dy) 위치에 raw 복사. col_inv 무시 (raw blit). 큰 영역 한번에
+		 * 옮길 때 api_point / api_boxfilwin 반복 대비 큰 절감.
+		 *   ebx = win | defer
+		 *   eax = src_buf
+		 *   ecx = (sh << 16) | sw    (sw,sh 는 16-bit unsigned)
+		 *   esi = (dy << 16) | dx
+		 * 반환: 0 = ok, -1 = bounds 오류 또는 sht invalid. */
+		sht = (struct SHEET *) (ebx & 0xfffffffe);
+		reg[7] = -1;
+		if (sht != 0 && (sht->flags & SHEET_FLAG_USE) != 0) {
+			unsigned char *src = (unsigned char *)((char *) eax + ds_base);
+			int sw = ecx & 0xffff;
+			int sh = (ecx >> 16) & 0xffff;
+			int dx = esi & 0xffff;
+			int dy = (esi >> 16) & 0xffff;
+			/* 16-bit unsigned 음수 → 양수 큰 값 → bounds 검사로 자연 차단 */
+			if (dx + sw <= sht->bxsize && dy + sh <= sht->bysize && sw > 0 && sh > 0) {
+				int row;
+				for (row = 0; row < sh; row++) {
+					memcpy(sht->buf + (dy + row) * sht->bxsize + dx,
+							src + row * sw, (size_t) sw);
+				}
+				if ((ebx & 1) == 0) {
+					sheet_refresh(sht, dx, dy, dx + sw, dy + sh);
+				}
+				reg[7] = 0;
+			}
+		}
+	} else if (edx == 45) {
+		/* api_text_run(win, x, y, color, text, len) — work6 Phase 6.
+		 * ASCII 전용 fast path. langmode 분기 / task_now() 호출 없음.
+		 *   ebx = win | defer
+		 *   eax = (y << 16) | x
+		 *   ecx = len           (max ~64K chars, 음수 → 큰 unsigned 로 차단)
+		 *   esi = text pointer  (user space)
+		 *   edi = color (8-bit)
+		 * 반환: 그린 글자 수. */
+		sht = (struct SHEET *) (ebx & 0xfffffffe);
+		reg[7] = 0;
+		if (sht != 0 && (sht->flags & SHEET_FLAG_USE) != 0) {
+			extern char hankaku[4096];
+			int x = eax & 0xffff;
+			int y = (eax >> 16) & 0xffff;
+			int len = ecx;
+			unsigned char *text = (unsigned char *)((char *) esi + ds_base);
+			char c = (char)(edi & 0xff);
+			int n = 0, max_w;
+			max_w = (sht->bxsize - x) / 8;
+			if (max_w < 0) max_w = 0;
+			if (len > max_w) len = max_w;
+			if (y < 0 || y + 16 > sht->bysize) {
+				len = 0;	/* clamp out-of-bounds */
+			}
+			while (n < len && text[n] != 0) {
+				putfont8((char *) sht->buf, sht->bxsize, x + n * 8, y,
+						c, hankaku + ((unsigned char) text[n]) * 16);
+				n++;
+			}
+			if (n > 0 && (ebx & 1) == 0) {
+				sheet_refresh(sht, x, y, x + n * 8, y + 16);
+			}
+			reg[7] = n;
+		}
+	} else if (edx == 46) {
+		/* api_invalidate_rect(win, x0, y0, x1, y1) — work6 Phase 6.
+		 * 그리지 않고 dirty rect 만 누적. batch 후 마지막에 api_dirty_flush.
+		 *   ebx = win
+		 *   eax = (y0 << 16) | x0
+		 *   ecx = (y1 << 16) | x1
+		 * 반환: 0 = ok. */
+		sht = (struct SHEET *) (ebx & 0xfffffffe);
+		if (sht != 0 && (sht->flags & SHEET_FLAG_USE) != 0) {
+			int x0 = eax & 0xffff;
+			int y0 = (eax >> 16) & 0xffff;
+			int x1 = ecx & 0xffff;
+			int y1 = (ecx >> 16) & 0xffff;
+			sheet_dirty_add(sht, x0, y0, x1, y1);
+		}
+		reg[7] = 0;
+	} else if (edx == 47) {
+		/* api_dirty_flush(win) — work6 Phase 6.
+		 * 누적 dirty rect 를 즉시 sheet_refresh.
+		 *   ebx = win.  반환: 누적되어 있던 rect 개수. */
+		sht = (struct SHEET *) (ebx & 0xfffffffe);
+		reg[7] = 0;
+		if (sht != 0 && (sht->flags & SHEET_FLAG_USE) != 0) {
+			reg[7] = sheet_dirty_pending(sht);
+			sheet_dirty_flush(sht);
 		}
 	}
 	return 0;

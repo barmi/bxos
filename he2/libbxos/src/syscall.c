@@ -416,3 +416,57 @@ int api_setcursor(int shape) {
             : "=a"(r) : "d"(43), "b"(shape) : "memory");
     return r;
 }
+
+/* ─── 44: blit_rect — work6 Phase 6 ────────────────────────────────
+ *   EBX = win | defer-bit, EAX = src_buf,
+ *   ECX = (sh<<16)|sw,  ESI = (dy<<16)|dx
+ *   반환 EAX = 0 / -1 */
+int api_blit_rect(int win, const void *src_buf, int sw, int sh, int dx, int dy) {
+    int r;
+    int packed_sz = ((sh & 0xFFFF) << 16) | (sw & 0xFFFF);
+    int packed_d  = ((dy & 0xFFFF) << 16) | (dx & 0xFFFF);
+    __asm__ volatile ("int $0x40"
+            : "=a"(r)
+            : "d"(44), "b"(win), "0"(src_buf),
+              "c"(packed_sz), "S"(packed_d)
+            : "memory");
+    return r;
+}
+
+/* ─── 45: text_run — work6 Phase 6 ─────────────────────────────────
+ *   EBX = win | defer, EAX = (y<<16)|x, ECX = len,
+ *   ESI = text*, EDI = color (8-bit)
+ *   반환 EAX = drawn_chars */
+int api_text_run(int win, int x, int y, int color, const char *text, int len) {
+    int r;
+    int packed_xy = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
+    __asm__ volatile ("int $0x40"
+            : "=a"(r)
+            : "d"(45), "b"(win), "0"(packed_xy),
+              "c"(len), "S"(text), "D"(color)
+            : "memory");
+    return r;
+}
+
+/* ─── 46: invalidate_rect — work6 Phase 6 (그리지 않고 dirty 만) ────
+ *   EBX = win, EAX = (y0<<16)|x0, ECX = (y1<<16)|x1
+ *   반환 EAX = 0 */
+int api_invalidate_rect(int win, int x0, int y0, int x1, int y1) {
+    int r;
+    int packed_a = ((y0 & 0xFFFF) << 16) | (x0 & 0xFFFF);
+    int packed_b = ((y1 & 0xFFFF) << 16) | (x1 & 0xFFFF);
+    __asm__ volatile ("int $0x40"
+            : "=a"(r)
+            : "d"(46), "b"(win), "0"(packed_a), "c"(packed_b)
+            : "memory");
+    return r;
+}
+
+/* ─── 47: dirty_flush — work6 Phase 6 ──────────────────────────────
+ *   EBX = win.  반환 EAX = flush 된 rect 수. */
+int api_dirty_flush(int win) {
+    int r;
+    __asm__ volatile ("int $0x40"
+            : "=a"(r) : "d"(47), "b"(win) : "memory");
+    return r;
+}

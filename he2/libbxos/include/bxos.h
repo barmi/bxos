@@ -110,6 +110,29 @@ int   api_resizewin(int win, char *new_buf, int new_w, int new_h, int col_inv);
 int   api_set_winevent(int win, int flags);
 int   api_setcursor(int shape);
 
+/* ---- partial redraw / batch (work6 Phase 6, edx 44~47) ------------------- */
+/* api_blit_rect: 사용자 buffer 의 (sw × sh contiguous) 를 window 의 (dx, dy) 위치
+ *   에 raw 복사. col_inv 무시. 큰 영역 한 번에 옮길 때 boxfilwin 반복 대비 큰
+ *   절감. tetris/이미지뷰어/오프스크린 더블버퍼링에 적합.
+ *   win 의 bit0=1 이면 deferred (sheet_refresh 안 함 — 호출자가 나중에 flush).
+ *   반환: 0=ok, -1=bounds 오류. */
+int   api_blit_rect(int win, const void *src_buf, int sw, int sh, int dx, int dy);
+
+/* api_text_run: ASCII fast path 으로 길이 텍스트 한 번에 그리기. langmode 분기
+ *   없음 — non-ASCII 가 들어오면 그 문자를 hankaku 비트맵으로 그대로 그림
+ *   (fallback 동일). 매 글자 putstrwin 대비 syscall 횟수 절감.
+ *   반환: 그린 글자 수. */
+int   api_text_run(int win, int x, int y, int color, const char *text, int len);
+
+/* api_invalidate_rect: 그리지 않고 dirty rect 만 누적. 여러 차례 호출해도 sheet
+ *   당 최대 4 rect 까지 모았다가 외접 합집합. 마지막에 api_dirty_flush.
+ *   반환: 0. */
+int   api_invalidate_rect(int win, int x0, int y0, int x1, int y1);
+
+/* api_dirty_flush: 누적된 dirty rect 를 즉시 sheet_refresh 로 한 번에 갱신.
+ *   반환: flush 한 rect 개수 (0..4). */
+int   api_dirty_flush(int win);
+
 /* ---- memory layout exported by linker (linker-he2.lds) ------------------ */
 extern char _he2_image_end[];   /* end of file image (= bss start)          */
 extern char _he2_bss_end[];     /* end of bss        (= heap start)         */

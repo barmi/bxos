@@ -108,7 +108,7 @@ DS offset
 | 8   | `api_initmalloc(...)`         | HRB | |
 | 9   | `api_malloc(size)`            | HRB | |
 | 10  | `api_free(ptr,size)`          | HRB | |
-| 11  | `api_point(win,x,y,col)`      | HRB | |
+| 11  | `api_point(win,x,y,col)`      | HRB | **DEPRECATED** (work6) — 픽셀당 syscall + refresh 라 매우 느림. `api_blit_rect` (44) 또는 `api_invalidate_rect` (46) + `api_dirty_flush` (47) 권장. |
 | 12  | `api_refreshwin(...)`         | HRB | |
 | 13  | `api_linewin(...)`            | HRB | |
 | 14  | `api_closewin(win)`           | HRB | |
@@ -141,6 +141,10 @@ DS offset
 | 41  | `api_resizewin(win,buf,w,h,col)` | work4 | 앱이 새 buffer 제공 |
 | 42  | `api_set_winevent(win,flags)` | work4 | `BX_WIN_EV_MOUSE/RESIZE/DBLCLK` |
 | 43  | `api_setcursor(shape)`        | work4 | `BX_CURSOR_*` |
+| 44  | `api_blit_rect(win,src,sw,sh,dx,dy)` | work6 | 사용자 buffer raw blit, col_inv 무시. 큰 영역 한 번. ECX=(sh<<16)\|sw, ESI=(dy<<16)\|dx |
+| 45  | `api_text_run(win,x,y,col,text,len)` | work6 | ASCII fast path. EAX=(y<<16)\|x, ECX=len, ESI=text, EDI=col. 반환=drawn_chars |
+| 46  | `api_invalidate_rect(win,x0,y0,x1,y1)` | work6 | 그리지 않고 dirty rect 만 누적. EAX=(y0<<16)\|x0, ECX=(y1<<16)\|x1 |
+| 47  | `api_dirty_flush(win)`        | work6 | 누적된 dirty rect 즉시 sheet_refresh. 반환=flush rect 수 |
 
 work4 에서 추가된 사용자 노출 구조체:
 
