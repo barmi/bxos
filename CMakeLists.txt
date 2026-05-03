@@ -283,6 +283,7 @@ set(BXOS_HE2_APPS_WINDOW
     star1 stars stars2 lines walk
     color color2 noodle
     tetris
+    tetris_t
     evtest
     explorer
     settings

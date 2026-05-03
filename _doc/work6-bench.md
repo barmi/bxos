@@ -47,18 +47,47 @@ $ python3 tools/modern/bxos_fat.py cp \
 $ cat /tmp/bench.log
 ```
 
-**자동화 범위**:
+**자동화 범위 (work6 Phase 5+ 기준 5개 모두 자동)**:
 - ✅ S1: `start_menu_toggle()` 10회 직접 호출 (정상 메뉴 동작과 동일).
 - ✅ S2: `cons_runcmd("dir", ...)` 10회 — 콘솔에서 `dir` 친 것과 동일.
-- ✅ S5: `sheet_slide(g_sht_mouse, x, y)` 1000회 — 마우스 sheet hot path
-  exercise. 마우스 PS/2 fifo 경로는 시뮬레이션 안 함 (의도적).
-- ❌ S3 (explorer 첫 그리기) / S4 (tetris 라인 클리어): GUI 인터랙션 필요.
-  필요시 별도 수동 측정.
+- ✅ **S3**: `system_start_command("/EXPLORER.HE2")` 후 600 ms yield —
+  explorer 가 첫 화면을 그리는 동안 측정. 사용자가 Start → Programs → Explorer
+  로 띄우는 것과 동일한 syscall 흐름.
+- ✅ **S4**: `system_start_command("/TETRIS_T.HE2")` 후 1.5 s yield. tetris_t
+  는 board redraw + line-clear 를 5회 반복 후 자체 종료 (api_end). 인터랙션 없음.
+- ✅ S5: `sheet_slide(g_sht_mouse, x, y)` 1000회 — sheet_slide 핫패스만
+  exercise. PS/2 fifo 경로는 시뮬레이션 안 함 (의도적).
+
+**`tetris_t.he2`** ([harib27f/tetris_t/tetris_t.c](../harib27f/tetris_t/tetris_t.c)) — work6 Phase 5 신규 앱:
+- 일반 tetris 의 `redraw_field` / `clear_lines` 로직만 추출.
+- 매 iteration: board 셋업 (윗 9 row 격자 + 마지막 row 가득) → redraw + refresh →
+  `clear_lines()` 트리거 → redraw + refresh.
+- `ITERATIONS = 5` 회 반복 후 `api_end()` 종료.
+- 인터랙션 없이 결정적으로 line-clear redraw 비용을 측정.
+- `bench scenario` 가 자동으로 launch 후 종료까지 wait.
 
 **측정 정확도**:
-- S1/S2 는 실제 cons_runcmd / start_menu_toggle 경로 그대로 → 수동 측정과 동일 결과.
-- S5 는 sheet_slide 직접 호출이라 mouse fifo 의 batching/PS/2 디코딩은 빠짐. 따라서
-  수동 마우스 이동 측정값과는 약간 다를 수 있음 (fifo overhead 빠진 만큼 더 빠름).
+- S1/S2/S3/S4 는 실제 syscall / 메뉴 / 콘솔 경로 그대로 → 수동 측정과 동일 결과.
+- S3 의 explorer 인터랙션 (디렉터리 클릭 등) 은 자동화 안 함 — 첫 화면 그리기까지만.
+- S5 는 sheet_slide 직접 호출이라 mouse fifo 의 batching/PS/2 디코딩은 빠짐.
+  수동 마우스 이동 측정값보다 fifo overhead 빠진 만큼 더 빠름. **상대 비교
+  (Phase X → Phase Y) 에는 충분**.
+
+**Phase 비교 워크플로우**:
+
+```bash
+# Phase N 측정
+git checkout <phase-N-commit>
+cmake --build cmake-build-release
+qemu-system-i386 -m 32 -accel tcg \
+    -fda cmake-build-release/haribote.img \
+    -hda cmake-build-release/data.img -boot a
+# QEMU 안: > bench scenario  → 종료
+python3 tools/modern/bxos_fat.py cp \
+    cmake-build-release/data.img:/SYSTEM/BENCH.LOG /tmp/p<N>.log
+
+# Phase 마다 동일 절차 → /tmp/p4.log, /tmp/p5.log, ... 비교
+```
 
 ## 측정 시나리오 (S1~S5)
 

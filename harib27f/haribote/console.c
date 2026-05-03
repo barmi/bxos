@@ -763,10 +763,25 @@ void cmd_mem(struct CONSOLE *cons, int memtotal)
  *   bench dump      — debug 창에 누적 표 출력
  *   bench mark <s>  — debug 창에 PIT tick 라벨 (시나리오 시작/끝 측정용)
  */
-/* work6 Phase 5: 자동화된 시나리오 실행. S1 (start menu toggle), S2 (dir × 10),
- * S5 (mouse 1000 step). S3 (explorer) / S4 (tetris) 는 GUI 인터랙션이 필요해
- * 자동화 어렵 — 수동 측정 유지. 각 시나리오는 reset → mark sN-start → 동작 →
- * mark sN-end → dump 의 표준 패턴. 마지막에 bench save 까지 자동. */
+/* work6 Phase 5: 자동화된 시나리오 실행. S1~S5 모두 자동:
+ *   S1 = start_menu_toggle() x10
+ *   S2 = cons_runcmd("dir") x10
+ *   S3 = system_start_command("/EXPLORER.HE2") + 일정 시간 대기
+ *   S4 = system_start_command("/TETRIS_T.HE2") + 종료 대기
+ *   S5 = sheet_slide(g_sht_mouse, ...) x1000
+ * 각 시나리오: reset → mark start → 동작 → 필요 시 wait → mark end → dump.
+ * 마지막에 bench save 까지 자동. */
+
+/* 다른 task (explorer / tetris_t) 가 작업할 시간을 주기 위해 일정 PIT tick
+ * 동안 io_hlt 로 yield 한다. PIT 인터럽트마다 task_switch 가 일어나 다른
+ * task 가 CPU 를 받아 그리기 작업을 진행. 본 console task 는 hlt 로 sleep. */
+static void bench_scenario_wait(int ticks)
+{
+	unsigned int target = timerctl.count + (unsigned int) ticks;
+	while ((unsigned int) timerctl.count < target) {
+		io_hlt();
+	}
+}
 static void cmd_bench_scenario(struct CONSOLE *cons, int *fat, int memtotal)
 {
 	char buf[80];
@@ -808,6 +823,45 @@ static void cmd_bench_scenario(struct CONSOLE *cons, int *fat, int memtotal)
 	dbg_putstr0(buf, COL8_FFFF00);
 	bench_dump();
 	cons_putstr0(cons, "bench scenario: S2 done\n");
+
+	/* ── S3: explorer 첫 그리기 ──
+	 * `/EXPLORER.HE2` 를 launch 하고 일정 시간 (~600ms) 동안 yield 해서 explorer
+	 * 가 첫 화면을 그리도록 한다. 그 사이에 hrb_api / refreshmap / refreshsub /
+	 * putfont8 등이 explorer 의 syscall 호출로 카운트된다. */
+	bench_reset();
+	sprintf(buf, "[bench mark] tick=%d  s3-start (auto)\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	{
+		char path[16];
+		strcpy(path, "/EXPLORER.HE2");
+		system_start_command(path, memtotal);
+	}
+	bench_scenario_wait(60);	/* 600ms */
+	sprintf(buf, "[bench mark] tick=%d  s3-end\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	bench_dump();
+	cons_putstr0(cons, "bench scenario: S3 done\n");
+
+	/* ── S4: tetris_t (line clear redraw N회 자동) ──
+	 * tetris_t 는 인터랙션 없이 N 회 line clear redraw 후 api_end 로 종료.
+	 * 충분히 큰 wait 으로 종료까지 대기. */
+	bench_reset();
+	sprintf(buf, "[bench mark] tick=%d  s4-start (auto)\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	{
+		char path[16];
+		strcpy(path, "/TETRIS_T.HE2");
+		system_start_command(path, memtotal);
+	}
+	bench_scenario_wait(150);	/* 1.5s — tetris_t 가 5회 반복 redraw 끝낼 시간 */
+	sprintf(buf, "[bench mark] tick=%d  s4-end\n", (int) timerctl.count);
+	bench_log_putstr(buf);
+	dbg_putstr0(buf, COL8_FFFF00);
+	bench_dump();
+	cons_putstr0(cons, "bench scenario: S4 done\n");
 
 	/* ── S5: 마우스 1000 step (sheet_slide 직접 호출) ──
 	 * 일반 mouse fifo 경로는 PS/2 패킷 디코드를 거쳐서 자동화가 복잡하므로
