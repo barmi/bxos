@@ -645,7 +645,119 @@ Phase 4 는 호환 mode 라 큰 변화 없어야 정상. **회귀 0건 확인이
 * `task_alloc` 초기화 버그 수정도 사이드 결과 — 더 이상 `dir` 이 (no data disk
   mounted) 로 실패하지 않음.
 
-### 표 — Phase 5 (taskbar/scrollwin/마우스 부분 redraw) 후
+### 표 — Phase 5 (taskbar/scrollwin/마우스 부분 redraw) 후 (2026-05-03, **`bench scenario` 자동 측정 도입**)
+
+> ⚠️ **측정 방법 전환**: Phase 1~4 의 수동 측정 (사용자가 Ctrl+Esc/dir/마우스 직접
+> 조작) 과 달리 Phase 5 부터는 `bench scenario` 자동 실행. 자동/수동의 워크로드와
+> 시간 분포가 본질적으로 달라 **Phase 4 ↔ Phase 5 의 직접 숫자 비교는 무의미**.
+> Phase 5 결과는 **자동 측정의 새 baseline**으로 두고, Phase 6 부터 같은 자동
+> 절차로 누적 비교.
+>
+> 자동화 차이점:
+> - **S1**: 수동 = Ctrl+Esc 10회를 사람 속도로 (~18 sec elapsed). 자동 =
+>   `start_menu_toggle()` 10회 즉시 (~10 ms elapsed). 사이의 idle 시간 / clock
+>   tick / scrollwin idle 호출이 자동에서는 거의 없음.
+> - **S2**: 동일 (cons_runcmd("dir") 10회 — 수동/자동 동일 경로).
+> - **S3**: 수동 = explorer 띄우고 사용자가 트리 펼침 등 인터랙션. 자동 = 첫
+>   화면 그리기까지 600 ms 만 측정.
+> - **S4**: 수동 = 실제 tetris 플레이로 한 라인 클리어. 자동 = `tetris_t.he2` 가
+>   결정적 5회 line clear 반복.
+> - **S5**: 수동 = mouse fifo + PS/2 디코딩 + hover 처리 포함. 자동 =
+>   `sheet_slide()` 직접 호출 — fifo 오버헤드 없음. 따라서 자동 S5 = sheet_slide
+>   blit 비용만.
+
+#### Phase 5 — 모든 카운터 한눈에 보기 (auto)
+
+| counter | S1 menu×10 | S2 dir×10 | S3 explorer | S4 tetris-line | S5 mouse |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` calls / total | 10 / 1.7 M | 0 / 0 | 1 / 0.3 M | 2 / 0.4 M | 2,000 / 5.6 M |
+| `refreshsub` calls / total | 10 / 4.8 M | 9,903 / 271.8 M | 2 / 1.3 M | 18 / 4.3 M | 2,000 / 7.3 M |
+| `sheet_slide` calls / total | 15 / 0.006 M | 0 / 0 | 1 / 0 | 1 / 0.001 M | 1,001 / 13.4 M |
+| `boxfill8` calls / total | 125 / 1.8 M | 0 / 0 | 108 / 0.9 M | 5,482 / 2.9 M | 0 / 0 |
+| `putfont8` calls / total | 6,850 / 2.0 M | 426,171 / 75.0 M | 11,810 / 2.9 M | 11,664 / 3.5 M | 8,027 / 1.5 M |
+| `putfonts8_asc` calls / total | 0 / 0 | 0 / 0 | 39 / 0.06 M | 2 / 0.008 M | 0 / 0 |
+| `taskbar` calls / total | 0 / 0 | 0 / 0 | 0 / 0 | 1 / 0.4 M | 0 / 0 |
+| `scrollwin` calls / total | 519 / 42.8 M | 20,258 / 1,432.0 M | 502 / 49.1 M | 529 / 63.5 M | 494 / 29.3 M |
+| `hrb_api` calls / total | 0 / 0 | 0 / 0 | 235 / 3.2 M | 5,457 / 7.8 M | 0 / 0 |
+| **Σ total cycles** | **53.1 M** | **1,778.7 M** | **57.8 M** | **82.9 M** | **57.1 M** |
+
+#### Phase 5 시나리오 별 marks
+
+| | s_N-start | s_N-end | elapsed | dump pit_tick |
+|---|---:|---:|---:|---:|
+| S1 | 1,755 | 1,756 | **1** (~10 ms) | 1,757 |
+| S2 | 1,761 | 1,902 | **141** (~1.4 s) | 1,903 |
+| S3 | 1,906 | 1,967 | **61** (~610 ms — 의도된 wait) | 1,967 |
+| S4 | 1,972 | 2,123 | **151** (~1.5 s — 의도된 wait) | 2,124 |
+| S5 | 2,130 | 2,131 | **1** (~10 ms) | 2,132 |
+
+총 측정 시간: 약 **3.8 초** (이전 수동 측정 5~10 분 대비 ~100배 빠름).
+
+#### Phase 5 핵심 관찰
+
+**1. `scrollwin avg cycles 가 극적으로 감소**
+
+Phase 5 의 부분 redraw (line-only + scrollbar 분리) 가 즉시 효과 보임:
+
+| counter | Phase 4 manual avg | Phase 5 auto avg |
+|---|---:|---:|
+| S2 `scrollwin` | 1,331 K | **70.6 K** (-94.7% / 18.8x faster) |
+| S3 `scrollwin` | 1,991 K | **97.7 K** |
+| S4 `scrollwin` | 2,064 K | **120 K** |
+| S5 `scrollwin` | 2,037 K | **59.3 K** |
+
+scrollwin 한 호출이 ~1.4 M cycles → ~70~120 K cycles 로 줄어듦. **dir × 10 같은
+텍스트 출력 시나리오에서 가장 큰 절감**. 이게 Phase 5 의 핵심 성과.
+
+워크로드 차이 영향 일부 있으나 (auto 가 더 짧음), avg cycles 는 호출당 비용이라
+워크로드와 무관. 부분 redraw 가 의도대로 동작 검증됨.
+
+**2. `refreshsub` avg 도 감소**
+
+| counter | Phase 4 manual avg | Phase 5 auto avg |
+|---|---:|---:|
+| S2 `refreshsub` | 519 K | **27.4 K** |
+| S5 `refreshsub` | 237 K | **3.6 K** |
+
+scrollwin 안에서 sheet_refresh → refreshsub 호출 시 영역이 작아짐 (한 line 만)
+→ refreshsub 자체도 빨라짐.
+
+**3. `sheet_slide` 의 same-coord skip 효과는 자동 S5 에서 직접 확인 불가**
+
+자동 S5 는 매번 좌표를 1px 움직이므로 same-coord skip 이 발동 안 됨. 실제 마우스
+이동에서 발동되는 효과는 별도 검증 필요. 다만 자동 S5 의 sheet_slide avg = 13.4 K
+(Phase 4 manual S5 의 148 K 대비 작음) — 이건 **자동에서는 mouse fifo 디코딩 /
+hover dispatch / taskbar redraw 부담이 빠진 결과**. sheet_slide 자체의 핵심
+비용 (refreshmap + refreshsub × 2) 이 보임.
+
+**4. `boxfill8` 호출 없음 (S2/S5)**
+
+Phase 5 의 scrollwin 부분 redraw 가 boxfill8 을 직접 호출하지 않고 `sht->buf[]` 에
+직접 fill. boxfill8 카운터 0. 의도된 결과.
+
+**5. `taskbar` 호출 거의 0**
+
+자동 시나리오는 사용자 인터랙션이 없어 hover 변동 / clock tick 시점 외엔 taskbar
+redraw 미발생. 시나리오 자체가 짧아 clock tick (1~60s) 도 거의 안 잡힘.
+
+#### Phase 5 자동 baseline 정의
+
+Phase 6 부터는 같은 `bench scenario` 절차로 측정해 이 표와 비교:
+
+| 시나리오 | Phase 5 auto Σ | 의의 |
+|---|---:|---|
+| S1 menu×10 | 53.1 M | menu/taskbar redraw 코어 비용 |
+| S2 dir×10 | **1,778.7 M** | **scrollwin / 텍스트 출력 (dominant)** |
+| S3 explorer | 57.8 M | hrb_api + 윈도우 그리기 |
+| S4 tetris-line | 82.9 M | hrb_api + boxfilwin 보드 redraw |
+| S5 mouse | 57.1 M | sheet_slide / refreshmap / refreshsub 코어 |
+
+**다음 큰 절감 후보**:
+- S2 의 1.78 G 중 80% 가 `scrollwin` (1.43 G). 추가 개선 가능 (Phase 7 polish 시).
+- S2 의 `putfont8` 426 K 호출 / 75 M cycles. avg 175 cycles/call 로 이미 매우 작음.
+- S4 의 `hrb_api` 5,457 calls / 7.8 M (avg 1.4 K). Phase 6 의 `api_blit_rect` /
+  `api_text_run` / batch 가 직접 영향. tetris_t 도 Phase 6 syscall 사용으로
+  업데이트 가능.
 
 ### 표 — Phase 6 (앱 측 syscall 추가) 후
 
