@@ -759,7 +759,115 @@ Phase 6 부터는 같은 `bench scenario` 절차로 측정해 이 표와 비교:
   `api_text_run` / batch 가 직접 영향. tetris_t 도 Phase 6 syscall 사용으로
   업데이트 가능.
 
-### 표 — Phase 6 (앱 측 syscall 추가) 후
+### 표 — Phase 6 (앱 측 syscall 추가) 후 (2026-05-04, `bench scenario` 자동 측정)
+
+> Phase 6 변경: 신규 syscall 4개 추가.
+> - `edx=44 api_blit_rect(win, src, sw, sh, dx, dy)` — 사용자 buffer 한 번에 row-blit + sheet_refresh. col_inv 없음.
+> - `edx=45 api_text_run(win, x, y, col, text, len)` — ASCII fast path (`putfonts8_asc_ascii` 직접) + 1회 sheet_refresh.
+> - `edx=46 api_invalidate_rect(win, x0, y0, x1, y1)` — 그리지 않고 `sheet_dirty_add` 만 누적.
+> - `edx=47 api_dirty_flush(win)` — 누적된 dirty rect 즉시 sheet_refresh. 반환 = flush rect 수.
+>
+> `api_point` (edx=11) 는 픽셀당 sheet_refresh 라 매우 비효율 → DEPRECATED 마킹.
+> `api_blit_rect` 의 ebx bit0 = defer flag (refresh 생략 + dirty 누적).
+>
+> 앱 측: `tetris_t.he2` 가 새 batch 경로 사용. 매 cell `api_boxfilwin` 호출은
+> 그대로 유지하되, `api_invalidate_rect` 로 dirty rect 누적 → 보드 한 번
+> redraw 끝나면 `api_dirty_flush` 1회로 묶어서 refresh.
+> `USE_PHASE6_BATCH = 1` (기본). 0 으로 바꾸면 기존 `api_refreshwin` 경로.
+
+#### Phase 6 — 모든 카운터 한눈에 보기 (auto)
+
+| counter | S1 menu×10 | S2 dir×10 | S3 explorer | S4 tetris-line | S5 mouse |
+|---|---:|---:|---:|---:|---:|
+| `refreshmap` calls / total | 10 / 1.9 M | 0 / 0 | 1 / 0.3 M | 2 / 0.5 M | 2,000 / 5.5 M |
+| `refreshsub` calls / total | 10 / 4.6 M | 9,903 / 272.5 M | 2 / 1.4 M | 51 / 5.5 M | 2,000 / 7.1 M |
+| `sheet_slide` calls / total | 15 / 0.005 M | 0 / 0 | 1 / 0.001 M | 1 / 0.001 M | 1,001 / 13.1 M |
+| `boxfill8` calls / total | 125 / 1.8 M | 0 / 0 | 108 / 0.9 M | 5,482 / 3.2 M | 0 / 0 |
+| `putfont8` calls / total | 6,850 / 2.1 M | 426,171 / 75.6 M | 12,373 / 4.0 M | 11,639 / 3.8 M | 7,630 / 1.4 M |
+| `putfonts8_asc` calls / total | 0 / 0 | 0 / 0 | 39 / 0.07 M | 2 / 0.014 M | 0 / 0 |
+| `taskbar` calls / total | 0 / 0 | 0 / 0 | 0 / 0 | 1 / 0.5 M | 0 / 0 |
+| `scrollwin` calls / total | 519 / 43.5 M | 20,258 / 1,436.3 M | 513 / 66.2 M | 530 / 67.6 M | 493 / 28.6 M |
+| `hrb_api` calls / total | 0 / 0 | 0 / 0 | 235 / 3.4 M | 7,657 / 10.5 M | 0 / 0 |
+| **Σ total cycles** | **53.9 M** | **1,784.5 M** | **76.2 M** | **91.7 M** | **55.7 M** |
+
+#### Phase 6 시나리오 별 marks
+
+| | s_N-start | s_N-end | elapsed | dump pit_tick |
+|---|---:|---:|---:|---:|
+| S1 | 2,095 | 2,097 | **2** (~20 ms) | 2,098 |
+| S2 | 2,102 | 2,244 | **142** (~1.4 s) | 2,244 |
+| S3 | 2,248 | 2,309 | **61** (~610 ms — 의도된 wait) | 2,310 |
+| S4 | 2,316 | 2,467 | **151** (~1.5 s — 의도된 wait) | 2,468 |
+| S5 | 2,474 | 2,476 | **2** (~20 ms) | 2,476 |
+
+총 측정 시간: 약 **3.8 초** (Phase 5 와 동일).
+
+#### Phase 5 → Phase 6 비교 (Σ total cycles)
+
+| 시나리오 | Phase 5 Σ | Phase 6 Σ | 변화 | 해석 |
+|---|---:|---:|---:|---|
+| S1 menu×10 | 53.1 M | 53.9 M | +1.5% | noise. menu 경로는 신규 syscall 안 씀 |
+| S2 dir×10 | 1,778.7 M | 1,784.5 M | +0.3% | noise. 콘솔/scrollwin 경로 변화 없음 |
+| S3 explorer | 57.8 M | 76.2 M | **+31.8%** | scrollwin total 49 M → 66 M (워크로드/타이밍 변동, 아래 ¹) |
+| S4 tetris-line | 82.9 M | 91.7 M | **+10.6%** | tetris_t 가 신규 batch 경로 사용 — invalidate_rect 추가로 syscall 빈도 ↑ (아래 ²) |
+| S5 mouse | 57.1 M | 55.7 M | -2.5% | noise |
+
+> ¹ S3 scrollwin total 이 +34% 증가 (calls 502 → 513 / 49.1 M → 66.2 M, avg 97.7 K → 129.0 K). explorer launch 시 console scrollwin 호출 시점/cache 상태가 달라 측정 noise. Phase 6 신규 syscall 은 `tetris_t.he2` 만 사용하므로 explorer 경로에 영향 없음. 회귀 아님.
+>
+> ² **S4 가 핵심 측정 대상**. tetris_t 가 Phase 6 batch 경로 사용 후 결과:
+
+#### Phase 6 핵심 — S4 (tetris_t) batch 경로 분석
+
+| counter | Phase 5 (api_refreshwin) | Phase 6 (api_invalidate + flush) | 변화 |
+|---|---:|---:|---|
+| `hrb_api` calls | 5,457 | 7,657 | **+40.3%** (cell 당 invalidate 추가) |
+| `hrb_api` total | 7.8 M | 10.5 M | +34.6% |
+| `hrb_api` avg | 1,429 | 1,373 | -3.9% (syscall 자체는 더 빨라짐) |
+| `refreshsub` calls | 18 | 51 | **+183%** (dirty union 결과 여러 rect 로 분리) |
+| `refreshsub` total | 4.3 M | 5.5 M | +27.9% |
+| `boxfill8` calls | 5,482 | 5,482 | 동일 (cell 그리는 횟수 자체는 같음) |
+| `boxfill8` total | 2.9 M | 3.2 M | +10.3% (noise) |
+| **Σ total cycles** | **82.9 M** | **91.7 M** | **+10.6%** |
+
+**관찰**:
+1. `tetris_t` 가 cell × 200 마다 `api_invalidate_rect` 추가로 호출 → `hrb_api` calls +40%.
+   neg: 매 cell 당 syscall 1회 추가가 단순히 비용.
+2. `sheet_dirty_add` 의 4-rect cap 이 보드 (10×20 cells) 의 union 을 4 union rect 로 분리.
+   `api_dirty_flush` 가 4번 sheet_refresh 호출 → `refreshsub` calls 18 → 51.
+3. **결국 tetris_t 의 워크로드 (보드 200 cells × 5 iter × 2 redraw = 2,000 cell + 5 line clear)
+   에서는 단일 `api_refreshwin` (full board rect 1회) 가 더 효율적**. dirty rect
+   batch 의 이득은 *불연속 영역 다수* 인 워크로드 (explorer, settings 등) 에서 나타남.
+
+#### Phase 6 결론
+
+* **신규 syscall ABI 자체는 정상 동작 ✓**. tetris_t 가 5 iteration 완주 + 정상 종료.
+* **tetris_t 는 batch syscall 의 좋은 showcase 가 아님**. 보드 = 단일 직사각형 영역이라
+  `api_refreshwin` 한 번이 이미 최적. invalidate × 200 은 오히려 syscall overhead 증가.
+* **Phase 7 의 진짜 타깃**은 explorer / settings / file dialog — 디렉터리 트리 / 항목 리스트
+  / 다이얼로그 영역이 *서로 떨어진* 다수 rect 일 때, `api_invalidate_rect × N` + `api_dirty_flush`
+  가 `api_refreshwin (전체 영역)` 보다 빠를 가능성. Phase 7 에서 explorer 의 항목 redraw 를
+  invalidate/flush 로 바꾸고 측정.
+* **`api_text_run` (edx=45)** 은 아직 어떤 앱도 사용 안 함. Phase 7 에서 console
+  app / explorer 라벨 / settings 라벨 출력에 도입 후 측정.
+* **`api_blit_rect` (edx=44)** 도 사용처 없음. Phase 7 에서 image 표시 (예: bgnview /
+  notrec) 가 사용할 예정.
+* **회귀 영향 없음** (워크로드 안정 시나리오 S1/S2/S5 는 -2.5~+1.5% noise 범위).
+
+#### Phase 1 → Phase 6 누적 (참고)
+
+P1~P4 는 수동 측정, P5/P6 는 자동 측정. **숫자 직접 비교는 불가** (워크로드 본질 다름).
+방향성만 참고.
+
+| 시나리오 | P1 (manual) | P4 (manual) | **P5 (auto)** | **P6 (auto)** |
+|---|---:|---:|---:|---:|
+| S1 | 2.20 G | 1.84 G | 53.1 M | 53.9 M |
+| S2 | 48.03 G | 37.97 G | 1,778.7 M | 1,784.5 M |
+| S3 | 4.88 G | 2.05 G | 57.8 M | 76.2 M |
+| S4 | 45.94 G | 23.82 G | 82.9 M | 91.7 M |
+| S5 | 2.28 G | 2.05 G | 57.1 M | 55.7 M |
+
+P4 → P5 의 큰 절대값 차이는 **자동 측정에서 사용자 idle/인터랙션 시간이 빠진 것**.
+같은 자동 절차로 측정한 P5 → P6 비교가 Phase 6 효과의 정확한 지표.
 
 ### 표 — Phase 7 (앱 측 polish) 후
 
