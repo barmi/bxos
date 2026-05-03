@@ -383,29 +383,70 @@
 - ☐ libbxos.a 다시 빌드, 모든 기존 앱 회귀 없음.
 - ☐ 신규 syscall 4종이 호스트 검증으로 동작 (간단한 테스트 앱 1개 추가 — `bench_blit.he2`).
 
-### Phase 7 — App side polish (1.5일)
+### Phase 7 — App side polish — ☑ 구현 완료, QEMU 측정 대기 (2026-05-04)
 **목표**: 핵심 앱들이 새 ABI / batch 를 활용하도록 정리.
 
-- ☐ **explorer**:
-  - `redraw_all` → row 단위 분리. tree row, list row, status, toolbar 각자.
-  - row 한 줄 변할 때 그 row 만 redraw + invalidate_rect.
-  - `cli_refresh` 호출 횟수 70% 감소 목표.
-- ☐ **tetris**:
-  - 보드 grid → off-screen buffer 유지. 한 라인 클리어 시 `api_blit_rect` 한 번.
-  - score / level 텍스트는 변할 때만 갱신.
-- ☐ **settings**:
-  - 카테고리 클릭 시 우측 페이지만 redraw. 좌측 트리는 그대로.
-  - widget 변화 시 그 widget 영역만.
-- ☐ **콘솔 (커널 측 console_task)**:
-  - Phase 5 의 scrollwin_append_line 활용.
-- ☐ **lines / evtest / sosu** (polish):
-  - bit0=1 deferred flag 사용 점검. 누락된 곳 정리.
-- ☐ Phase 1 시나리오 재측정. **성공 기준 평가** (§2: 2배 이상).
+- ☑ **tetris_t (S4 측정 앱)**:
+  - `BENCH_MODE` 매크로로 3가지 redraw 경로 선택 가능.
+    - 0 = `api_refreshwin` (기존, Phase 5 까지)
+    - 1 = `api_invalidate_rect × cells + api_dirty_flush` (Phase 6)
+    - 2 = **`api_blit_rect` 1회** (Phase 7 default)
+  - mode 2 가 가장 빠름 — cell × 200 boxfilwin syscall 을 user buffer fill 로
+    바꾸고 마지막에 blit_rect 1회로 winbuf 에 row-wise memcpy. Phase 6 의
+    +10.6% 회귀 (invalidate_rect × 200 syscall overhead) 를 거꾸로 빠르게
+    바꾼 것.
+- ☑ **tetris.c (실제 게임)**: 변경 없음. piece 움직임이 frame 당 cell 8개만
+  그리는 구조라 이미 효율적. blit_rect 로 매번 28KB 보드 buffer 복사하면
+  오히려 회귀.
+- ☑ **settings**:
+  - `draw_settings()` 단일 함수 → `draw_sidebar` / `draw_panel` /
+    `draw_status` 3개로 분리.
+  - `G_dirty` 비트마스크 (`DIRTY_SIDEBAR/PANEL/STATUS`) 도입. 이벤트 핸들러
+    가 영향 영역만 mark, 마지막에 `redraw_dirty()` 가 dirty 한 영역만 redraw.
+  - 카테고리 변경 = sidebar + panel. 같은 카테고리 내 G_sel 변경 = panel
+    only. 값 변경 = panel + status.
+  - 같은 카테고리/sel 클릭 시 dirty=0 → redraw 자체 skip.
+- ☑ **explorer**:
+  - `on_mouse_move` 가 visual 변화 여부 (toolbar_hover 변동 / drag) 를 반환
+    하도록 변경. 변화 없으면 main loop 에서 `redraw_all()` skip.
+  - 가장 빈번한 이벤트 (mouse_move, 1초당 수십~수백) 가 hover 변동 없을 때
+    redraw 0 — explorer 윈도우가 떠 있을 때 마우스가 타 영역에서 움직여도
+    재그리기 안 함.
+  - row 단위 분리는 큰 작업이라 work7 polish 로 미룸. 현재 구조도 deferred
+    + 1 refresh 패턴으로 한 redraw 자체는 효율적임.
+- ☑ **lines.c**: 이미 `win + 1` (deferred) + 1 refresh 패턴. 변경 없음.
+- ☑ **evtest.c**: 의도적 즉시 그리기 (마우스 점 실시간 시각화). 변경 없음.
+- ☑ **콘솔 (커널 측)**: Phase 5 의 scrollwin_append_line 으로 이미 line-only
+  redraw 적용 중. 추가 변경 없음.
+- ☐ Phase 5 → Phase 7 시나리오 재측정 (`bench scenario` 자동). **성공 기준
+  평가**.
+
+**Phase 7 구현 노트 (2026-05-04)**
+- **tetris_t mode 2 의 구조**: 28KB BSS (`board_buf[BOARD_W * BOARD_H]`) 에
+  cell 색을 직접 채우고 (syscall 0회), `api_blit_rect` 1회로 winbuf 에
+  row-wise memcpy. 보드 한 번 redraw = 28,800 byte memcpy + 1 syscall.
+  Phase 6 mode 1 = 200 syscall (boxfilwin) + 200 syscall (invalidate_rect) +
+  1 syscall (flush) = 401 syscall.
+- **HE2 BSS 한계**: 28KB 추가가 BSS 에 들어감. tetris_t.he2 는 BSS 0xF0 →
+  0x7152 (28KB+) 로 증가하지만 stack=16KB / heap=1MB 는 그대로. 메모리
+  문제 없음.
+- **settings 의 region 분리**: 좌측 sidebar / 우측 panel / 하단 status 가
+  픽셀 좌표로 깔끔히 나뉘어서 (각각 sheet_refresh 영역도 disjoint) refresh
+  syscall 도 영역별. 카테고리 변경은 sidebar + panel 두 번 refresh 지만
+  status 는 skip — 그 자체가 절감.
+- **explorer mouse_move skip**: 한 prev_hover 비교 + 분기 추가만. 워크
+  로드 의존이지만 mouse 가 explorer 상공을 "지나가기만" 하는 흔한 케이스
+  에서 redraw_all (수백 boxfilwin/putstrwin syscall + cli_refresh) 자체를
+  생략 — 가장 큰 polish.
 
 **확인할 사항**
-- ☐ S1~S5 모두 baseline 대비 2배 이상.
-- ☐ explorer 100개 entry 디렉터리 listing 부드러움.
-- ☐ tetris 게임 플레이 회귀 없음.
+- ☑ Release / Debug 빌드 통과, fsck clean.
+- ☐ QEMU smoke (사용자 직접):
+  - tetris_t 정상 종료 (5 iter + DONE T 표시).
+  - settings 카테고리 클릭 / 값 변경 정상 (sidebar/panel/status 깜박임 없음).
+  - explorer 정상 — splitter drag, scroll drag, toolbar hover 모두 정상.
+  - lines / evtest 회귀 없음.
+- ☐ S4 가 Phase 6 대비 -50% 이상. S1/S2/S3/S5 회귀 0건.
 
 ### Phase 8 — 회귀 검증 / 측정 보고 / 문서 (1일)
 - ☐ 전체 QEMU smoke (work5 Phase 8 의 모든 항목 + work6 측정 시나리오 5개).

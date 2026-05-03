@@ -1988,8 +1988,12 @@ static void on_mouse_down(int cx, int cy)
     }
 }
 
-static void on_mouse_move(int cx, int cy, int button)
+/* mouse_move 처리. 시각적 변화가 있을 때 1, 없으면 0 — 호출자가 redraw_all skip
+ * 결정에 사용. mouse_move 는 가장 자주 발생하는 이벤트라 hover/drag 변화 없을
+ * 때 redraw_all 안 부르는 게 큰 절감 (work6 Phase 7). */
+static int on_mouse_move(int cx, int cy, int button)
 {
+    int prev_hover = G.toolbar_hover;
     G.toolbar_hover = toolbar_button_at(cx, cy);
     if (G.dragging_splitter) {
         set_cursor_shape(BX_CURSOR_RESIZE_WE);
@@ -1998,16 +2002,19 @@ static void on_mouse_move(int cx, int cy, int button)
         } else {
             G.dragging_splitter = 0;
         }
+        return 1;
     } else if (G.dragging_scroll != SCROLL_NONE) {
         if ((button & 1) != 0) {
             update_scroll_drag(cy);
         } else {
             G.dragging_scroll = SCROLL_NONE;
         }
+        return 1;
     } else {
         set_cursor_shape(hit_pane(cx, cy) == HIT_SPLITTER ?
                 BX_CURSOR_RESIZE_WE : BX_CURSOR_ARROW);
     }
+    return G.toolbar_hover != prev_hover;
 }
 
 static void on_mouse_up(int cx, int cy)
@@ -2121,18 +2128,19 @@ void HariMain(void)
     redraw_all();
 
     for (;;) {
+        int needs_redraw = 1;
         if (api_getevent(&ev, 1) != 1) continue;
         if (ev.type == BX_EVENT_KEY) {
             on_key(ev.key);
         } else if (ev.type == BX_EVENT_MOUSE_DOWN) {
             if (ev.button & 1) on_mouse_down(ev.x, ev.y);
         } else if (ev.type == BX_EVENT_MOUSE_MOVE) {
-            on_mouse_move(ev.x, ev.y, ev.button);
+            needs_redraw = on_mouse_move(ev.x, ev.y, ev.button);
         } else if (ev.type == BX_EVENT_MOUSE_UP) {
             on_mouse_up(ev.x, ev.y);
         } else if (ev.type == BX_EVENT_RESIZE) {
             on_resize(ev.w, ev.h);
         }
-        redraw_all();
+        if (needs_redraw) redraw_all();
     }
 }

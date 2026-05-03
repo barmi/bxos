@@ -82,10 +82,17 @@ static const struct SettingSpec g_settings[] = {
 #define N_CATEGORIES	((int)(sizeof g_categories / sizeof g_categories[0]))
 #define N_SETTINGS	((int)(sizeof g_settings / sizeof g_settings[0]))
 
+/* work6 Phase 7 — partial redraw bits. 한 이벤트가 영향을 준 영역만 다시 그림. */
+#define DIRTY_SIDEBAR	0x1
+#define DIRTY_PANEL	0x2
+#define DIRTY_STATUS	0x4
+#define DIRTY_ALL	(DIRTY_SIDEBAR | DIRTY_PANEL | DIRTY_STATUS)
+
 static char *G_buf;
 static int G_win;
 static int G_cat;
 static int G_sel;
+static int G_dirty;
 static char G_values[N_SETTINGS][32];
 static char G_status[64];
 
@@ -318,31 +325,31 @@ static void change_setting(int idx, int delta)
 		if (c >= g_settings[idx].n_choices) c = 0;
 		scpy(G_values[idx], g_settings[idx].choices[c].value, sizeof G_values[idx]);
 		settings_save();
+		G_dirty |= DIRTY_PANEL | DIRTY_STATUS;
 	} else if (g_settings[idx].type == SET_TYPE_BOOL) {
 		scpy(G_values[idx], streq(G_values[idx], "true") ? "false" : "true",
 				sizeof G_values[idx]);
 		settings_save();
+		G_dirty |= DIRTY_PANEL | DIRTY_STATUS;
 	} else if (g_settings[idx].type == SET_TYPE_INT) {
 		v = value_int(idx) + delta;
 		if (v < g_settings[idx].int_min) v = g_settings[idx].int_min;
 		if (v > g_settings[idx].int_max) v = g_settings[idx].int_max;
 		itoa_dec(v, G_values[idx]);
 		settings_save();
+		G_dirty |= DIRTY_PANEL | DIRTY_STATUS;
 	} else if (g_settings[idx].type == SET_TYPE_ACTION) {
 		scpy(G_status, g_settings[idx].help, sizeof G_status);
+		G_dirty |= DIRTY_STATUS;
 	}
 }
 
-static void draw_settings(void)
+static void draw_sidebar(void)
 {
-	int i, row, idx, x, y, c, checked, n;
-	char num[16];
-
-	box(0, 0, WIN_W - 7, WIN_H - 25, COL_LGRAY);
-	box(0, 0, SIDE_W - 1, WIN_H - 25, COL_DGRAY);
-	box(1, 1, SIDE_W - 3, WIN_H - 27, COL_LGRAY);
+	int i, y;
+	box(0, 0, SIDE_W - 1, WIN_H - 44, COL_DGRAY);
+	box(1, 1, SIDE_W - 3, WIN_H - 46, COL_LGRAY);
 	text(12, 8, COL_BLACK, "Settings");
-
 	for (i = 0; i < N_CATEGORIES; i++) {
 		y = 34 + i * ROW_H;
 		if (i == G_cat) {
@@ -352,8 +359,15 @@ static void draw_settings(void)
 			text(16, y, COL_BLACK, g_categories[i].label);
 		}
 	}
+	api_refreshwin(G_win, FRAME_L, FRAME_T,
+			FRAME_L + SIDE_W, FRAME_T + WIN_H - 44);
+}
 
-	box(SIDE_W, 0, WIN_W - 7, WIN_H - 25, COL_WHITE);
+static void draw_panel(void)
+{
+	int i, row, idx, x, y, c, checked, n;
+	char num[16];
+	box(SIDE_W, 0, WIN_W - 7, WIN_H - 44, COL_WHITE);
 	text(SIDE_W + 18, 12, COL_BLACK, g_categories[G_cat].label);
 	line(SIDE_W + 18, 31, WIN_W - 26, 31, COL_DGRAY);
 	line(SIDE_W + 18, 32, WIN_W - 26, 32, COL_LGRAY);
@@ -407,16 +421,33 @@ static void draw_settings(void)
 		row++;
 	}
 
+	api_refreshwin(G_win, FRAME_L + SIDE_W, FRAME_T,
+			FRAME_L + WIN_W - 7, FRAME_T + WIN_H - 44);
+}
+
+static void draw_status(void)
+{
 	box(0, WIN_H - 43, WIN_W - 7, WIN_H - 25, COL_LGRAY);
 	text(8, WIN_H - 39, COL_NAVY, G_status);
-	api_refreshwin(G_win, 3, 21, WIN_W - 3, WIN_H - 3);
+	api_refreshwin(G_win, FRAME_L, FRAME_T + WIN_H - 43,
+			FRAME_L + WIN_W - 7, FRAME_T + WIN_H - 25);
+}
+
+static void redraw_dirty(void)
+{
+	if (G_dirty & DIRTY_SIDEBAR) draw_sidebar();
+	if (G_dirty & DIRTY_PANEL)   draw_panel();
+	if (G_dirty & DIRTY_STATUS)  draw_status();
+	G_dirty = 0;
 }
 
 static void choose_category(int cat)
 {
 	if (cat < 0 || cat >= N_CATEGORIES) return;
+	if (G_cat == cat) return;
 	G_cat = cat;
 	G_sel = 0;
+	G_dirty |= DIRTY_SIDEBAR | DIRTY_PANEL;
 }
 
 static void on_key(int key)
@@ -427,9 +458,9 @@ static void on_key(int key)
 		api_end();
 	}
 	if (key == 0x80) {
-		if (G_sel > 0) G_sel--;
+		if (G_sel > 0) { G_sel--; G_dirty |= DIRTY_PANEL; }
 	} else if (key == 0x81) {
-		if (G_sel < n - 1) G_sel++;
+		if (G_sel < n - 1) { G_sel++; G_dirty |= DIRTY_PANEL; }
 	} else if (key == 0x82) {
 		if (G_cat > 0) choose_category(G_cat - 1);
 	} else if (key == 0x83) {
@@ -457,13 +488,14 @@ static void on_mouse_down(int x, int y)
 	row = (y - 42) / 48;
 	idx = setting_index_at(row);
 	if (idx < 0) return;
-	G_sel = row;
+	if (G_sel != row) { G_sel = row; G_dirty |= DIRTY_PANEL; }
 	relx = x - (SIDE_W + 18);
 	if (g_settings[idx].type == SET_TYPE_ENUM) {
 		int c = relx / 58;
 		if (0 <= c && c < g_settings[idx].n_choices) {
 			scpy(G_values[idx], g_settings[idx].choices[c].value, sizeof G_values[idx]);
 			settings_save();
+			G_dirty |= DIRTY_PANEL | DIRTY_STATUS;
 		}
 	} else if (g_settings[idx].type == SET_TYPE_INT) {
 		if (20 <= (y - (46 + row * 48)) && (y - (46 + row * 48)) < 40) {
@@ -502,7 +534,9 @@ void HariMain(void)
 	G_sel = 0;
 	settings_load();
 	select_cmdline_category();
-	draw_settings();
+	/* 첫 그리기는 전 영역. 이후엔 이벤트가 dirty 비트만 세팅 → 그 영역만 redraw. */
+	G_dirty = DIRTY_ALL;
+	redraw_dirty();
 	for (;;) {
 		if (api_getevent(&ev, 1) != 1) continue;
 		if (ev.type == BX_EVENT_KEY) {
@@ -510,6 +544,6 @@ void HariMain(void)
 		} else if (ev.type == BX_EVENT_MOUSE_DOWN) {
 			if (ev.button & 1) on_mouse_down(ev.x, ev.y);
 		}
-		draw_settings();
+		if (G_dirty != 0) redraw_dirty();
 	}
 }
