@@ -254,6 +254,13 @@ void sheet_slide(struct SHEET *sht, int vx0, int vy0)
 	struct SHTCTL *ctl = sht->ctl;
 	int old_vx0 = sht->vx0, old_vy0 = sht->vy0;
 	bench_enter(BENCH_SHEET_SLIDE);
+	/* work6 Phase 5: 같은 정수 좌표면 즉시 skip. 마우스 sheet 가 같은 픽셀에
+	 * 다시 슬라이드 호출될 때 no-op (PS/2 mouse 가 0 변화량 패킷 보내거나,
+	 * mx/my clip 으로 좌표가 동일한 경우). 마우스 hot path 에서 가장 큰 절감. */
+	if (vx0 == old_vx0 && vy0 == old_vy0) {
+		bench_leave(BENCH_SHEET_SLIDE);
+		return;
+	}
 	sht->vx0 = vx0;
 	sht->vy0 = vy0;
 	if (sht->height >= 0) { /* 만약 표시중이라면, 새로운 레이어의 정보에 따라 화면을 다시 그린다 */

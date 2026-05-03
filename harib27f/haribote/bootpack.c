@@ -456,6 +456,50 @@ void taskbar_full_redraw(int start_hover, int start_pressed)
 	return;
 }
 
+/* work6 Phase 5: 시계 tick 처럼 tray 영역만 변하는 hot path 용 partial refresh.
+ * buf_back 은 row memset 이라 전부 다시 그려도 빠르지만, sheet_refresh 의 픽셀
+ * 비용이 크므로 refresh rect 를 tray 만으로 좁힌다. show_seconds=true 면 1Hz 로
+ * 호출되므로 절감이 의미 있음. */
+void taskbar_redraw_clock_only(void)
+{
+	int scrnx, scrny;
+	int tray_w, tray_left;
+	int sy0, sy1;
+	if (g_sht_back == 0 || g_buf_back == 0) return;
+	bench_enter(BENCH_TASKBAR);
+	scrnx = g_sht_back->bxsize;
+	scrny = g_sht_back->bysize;
+	tray_w = g_clock_show_seconds ? 68 : TASKBAR_TRAY_W;
+	tray_left = scrnx - TASKBAR_TRAY_R_PAD - tray_w;
+	sy0 = scrny - TASKBAR_START_Y_PAD_TOP;
+	sy1 = scrny - TASKBAR_START_Y_PAD_BOT + 1;
+	/* taskbar_redraw 는 row 당 memset 이라 빠르다. buf_back 는 그대로 전부
+	 * 다시 그리고 sheet_refresh 만 tray rect 로 좁혀 blit 비용 절감. */
+	taskbar_redraw((char *) g_buf_back, scrnx, scrny,
+			g_taskbar_start_hover, g_taskbar_start_pressed);
+	sheet_refresh(g_sht_back, tray_left, sy0,
+			scrnx - TASKBAR_TRAY_R_PAD, sy1);
+	bench_leave(BENCH_TASKBAR);
+}
+
+/* Start 버튼 hover/press 변동 시. 좌측 60×24 영역만 sheet_refresh. */
+void taskbar_redraw_start_only(int start_hover, int start_pressed)
+{
+	int scrnx, scrny;
+	int sy0, sy1;
+	if (g_sht_back == 0 || g_buf_back == 0) return;
+	bench_enter(BENCH_TASKBAR);
+	g_taskbar_start_hover = start_hover;
+	g_taskbar_start_pressed = start_pressed;
+	scrnx = g_sht_back->bxsize;
+	scrny = g_sht_back->bysize;
+	sy0 = scrny - TASKBAR_START_Y_PAD_TOP;
+	sy1 = scrny - TASKBAR_START_Y_PAD_BOT + 1;
+	taskbar_redraw((char *) g_buf_back, scrnx, scrny, start_hover, start_pressed);
+	sheet_refresh(g_sht_back, 0, sy0, TASKBAR_START_X1 + 2, sy1);
+	bench_leave(BENCH_TASKBAR);
+}
+
 int taskbar_winlist_hit(int mx, int my)
 {
 	int i;
@@ -1639,7 +1683,8 @@ void HariMain(void)
 					g_clock_seconds = (g_clock_seconds + 60) % (24 * 60 * 60);
 					timer_settime(clock_timer, 60 * 100);
 				}
-				taskbar_full_redraw(start_hover, start_pressed);
+				/* work6 Phase 5: tray 영역만 refresh — show_seconds=true 면 1Hz */
+				taskbar_redraw_clock_only();
 			}
 			if (768 <= i && i <= 2279) {
 				/* console / app / taskmgr close 등 윈도우 목록 변동 가능 — 다시 그림 */

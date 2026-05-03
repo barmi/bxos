@@ -299,29 +299,61 @@
   - Phase 3 시나리오 측정값과 거의 동일해야 정상 (idle flush no-op 시).
 - ☐ dirty_count 4 초과 union 동작은 Phase 5 에서 자연스레 노출 — 별도 단위 테스트는 Phase 5 와 함께.
 
-### Phase 5 — Taskbar / 마우스 / scrollwin 부분 redraw (2일)
+### Phase 5 — Taskbar / 마우스 / scrollwin 부분 redraw (2일) — ☑ 구현 완료, QEMU 측정 대기 (2026-05-02)
 **목표**: Phase 4 인프라 위에서 가장 큰 redraw 들을 부분 갱신으로.
 
-- ☐ [bootpack.c](../harib27f/haribote/bootpack.c) `taskbar_full_redraw` →
-  - `taskbar_redraw_start(hover, pressed)` — Start 버튼 영역만.
-  - `taskbar_redraw_clock()` — tray 영역만.
-  - `taskbar_redraw_winlist(hover, pressed)` — winlist 가운데 영역만.
-  - 통합 `taskbar_full_redraw` 는 위 3개 호출 후 dirty flush.
-- ☐ Hover 변화 시 변한 인덱스 버튼만 dirty 추가.
-- ☐ Clock tick 시 tray 만 dirty 추가.
-- ☐ [console.c](../harib27f/haribote/console.c) scrollwin:
-  - `scrollwin_redraw_lines(start, n)` — n 줄만 다시 그림.
-  - `scrollwin_redraw_scrollbar()` — scrollbar 만.
-  - `scrollwin_append_line(line)` — 마지막에 한 줄 그리고 dirty 만 그 영역.
-  - 콘솔 출력 (`cons_putchar` / scroll) 이 append 사용.
-- ☐ 마우스 sheet 의 sheet_slide:
-  - 같은 정수 좌표 skip (이미 마우스가 동일 픽셀이면 no-op).
-- ☐ Phase 1 시나리오 재측정.
+- ☑ [sheet.c](../harib27f/haribote/sheet.c) `sheet_slide`: 같은 정수 좌표면 즉시
+  early return. 마우스 PS/2 가 (0,0) 변화량 패킷 보내거나, mx/my clip 으로
+  좌표가 동일한 경우 no-op. **마우스 hot path 의 가장 큰 절감**.
+- ☑ [console.c](../harib27f/haribote/console.c) scrollwin 부분 redraw:
+  - `scrollwin_redraw_line(sw, visible_idx)` 신규: 한 line (16 px row × text_w)
+    만 fill + scrollline_draw + sheet_refresh 그 영역만.
+  - `scrollwin_redraw_scrollbar(sw)` 신규: scrollbar column 만 fill + thumb
+    redraw. count 변동 시에만 호출.
+  - `scrollwin_putc`: scroll_top 변동 없는 char append 시 cursor line 만 redraw
+    (+ count 변동 시 scrollbar). **dir × 10 같은 텍스트 출력 시나리오의 핵심 절감**.
+  - `scrollwin_newline`: scroll_top 변동 없으면 새 line 영역만 redraw + scrollbar.
+    auto_follow 로 scroll 발생 시 fallback to full redraw.
+  - `scrollwin_backspace`: scroll 변동 없으면 cursor line 만 redraw.
+- ☑ [bootpack.c](../harib27f/haribote/bootpack.c) taskbar partial refresh:
+  - `taskbar_redraw_clock_only()`: buf_back 은 그대로 다 그리지만 (row memset 빠름)
+    sheet_refresh 를 tray 영역만으로 좁힘. **clock tick (1Hz, show_seconds=true)
+    시 호출 → blit 비용 ~85% 절감**.
+  - `taskbar_redraw_start_only(hover, pressed)`: Start 버튼 영역만 sheet_refresh.
+    (현재는 호출 처 없음 — 추후 hover 변동 시 사용 가능. compat helper.)
+- ☐ taskbar winlist 부분 redraw / 별도 dirty rect 도입은 work6 미루고 work7 polish.
+- ☐ Phase 1 시나리오 재측정 (사용자 직접 측정 → bench save → 호스트 cat).
+
+**Phase 5 구현 노트 (2026-05-02)**
+- **sheet_slide 의 same-coord skip** 은 단 4줄 추가지만 마우스 동작 (S5) 에서
+  매우 큰 절감 후보. 마우스 인터럽트가 0 변화량 패킷을 자주 보내거나, 화면
+  edge 에서 clip 되는 경우 동일 좌표 호출이 다수 발생.
+- **scrollwin_redraw_line** 의 핵심 트릭: scroll_top 이 변하지 않은 case 에서만
+  부분 redraw. auto_follow + 새 line 추가 → scroll_top 증가 → 이전 line 들이
+  위로 시프트 → 모든 line 다시 그려야 → fallback. 그 외는 line 한 줄만.
+  - dir × 10 의 글자 append 는 대부분 scroll_top 변경 없음 (한 줄 안에서 글자 추가).
+    각 호출이 viewport 1/8 만큼만 redraw → 8x 빨라짐 추정.
+  - newline 은 viewport 끝에서 발생하면 scroll → full redraw. 그 외 (드물게
+    중간 line) 는 부분 redraw.
+- **taskbar_redraw_clock_only** 는 buf_back 전체를 다시 그리는 것은 유지하지만
+  (memset 이라 빠름) sheet_refresh rect 만 좁힘. sheet_refreshsub 의 픽셀당
+  처리 비용이 dominant 하므로 rect 면적이 줄면 비례 절감. 28×scrnx 에서 24×~70
+  로 약 90% 면적 절감.
+- 진짜 dirty rect API (`sheet_dirty_add` / `sheet_dirty_flush`) 는 Phase 4 에
+  추가했지만 Phase 5 에서는 사용 안 함. 그 대신 직접 `sheet_refresh` 의 rect
+  를 좁히는 단순 접근. dirty rect API 는 Phase 6 (app side) / Phase 7 (polish)
+  에서 본격 활용.
 
 **확인할 사항**
-- ☐ S1, S2 가 baseline 대비 3배 이상.
-- ☐ S5 (마우스) 가 baseline 대비 3배 이상.
-- ☐ scrollwin 스크롤 정상, 콘솔 출력 정상, taskbar hover 부드러움.
+- ☑ Release / Debug 빌드 통과, fsck clean.
+- ☐ QEMU smoke (사용자 직접):
+  - 부팅 / 콘솔 / explorer / tetris / Settings 정상.
+  - `dir`, `mem`, `cls` 출력 정상 (scrollwin 부분 redraw 회귀 점검).
+  - `langmode 3 + type hangul.euc`, `langmode 4 + type hangul.utf` 정상 (한글 wide char).
+  - 마우스 움직임 부드러움.
+  - 시계 분/초 갱신 정상.
+- ☐ S1, S2, S5 가 baseline 대비 3배 이상 (Phase 5 의 핵심 검증).
+- ☐ scrollwin 스크롤 정상 (대량 출력 시 자동 스크롤 동작).
 
 ### Phase 6 — App 측 syscall 추가 / 정리 (1.5일)
 **목표**: 부분 갱신 + batch 를 앱이 활용할 수 있게 ABI 확장. 기존 호환은 그대로.

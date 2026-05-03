@@ -2650,9 +2650,73 @@ void scrollwin_scroll_to(struct SCROLLWIN *sw, int new_top)
 	scrollwin_redraw(sw);
 }
 
+/* work6 Phase 5: 한 visible line 만 다시 그린다. 16 px 높이 row 의 텍스트
+ * 영역만 fill + scrollline_draw + sheet_refresh. 전체 viewport 대비 (vis × 1)
+ * 비율로 빨라진다. scrollbar 는 변경 없음. */
+static void scrollwin_redraw_line(struct SCROLLWIN *sw, int visible_idx)
+{
+	struct SHEET *sht = sw->sht;
+	int tw, x, y, yy, line_idx, ht;
+	if (sht == 0) return;
+	tw = scrollwin_text_w(sw);
+	yy = sw->y0 + visible_idx * 16;
+	ht = (sw->y0 + sw->ht) - yy;
+	if (ht > 16) ht = 16;
+	if (ht <= 0) return;
+	bench_enter(BENCH_SCROLLWIN);
+	for (y = yy; y < yy + ht; y++) {
+		for (x = sw->x0; x < sw->x0 + tw; x++) {
+			sht->buf[x + y * sht->bxsize] = sw->bc;
+		}
+	}
+	line_idx = sw->scroll_top + visible_idx;
+	if (line_idx < sw->count) {
+		struct SCROLLLINE *ln = scrollwin_line_at(sw, line_idx);
+		scrollline_draw(sw, ln, yy);
+	}
+	sheet_refresh(sht, sw->x0, yy, sw->x0 + tw, yy + ht);
+	bench_leave(BENCH_SCROLLWIN);
+}
+
+/* scrollbar thumb 만 다시 그린다. count 가 늘었을 때 thumb 크기/위치가 바뀌므로
+ * 호출. 전체 viewport 가 아닌 scrollbar column 만. */
+static void scrollwin_redraw_scrollbar(struct SCROLLWIN *sw)
+{
+	struct SHEET *sht = sw->sht;
+	int x, y, vis, scrollbar_x, track_h, thumb_h, thumb_y, max_top;
+	if (sht == 0) return;
+	bench_enter(BENCH_SCROLLWIN);
+	vis = scrollwin_visible_lines(sw);
+	scrollbar_x = sw->x0 + scrollwin_text_w(sw);
+	for (y = sw->y0; y < sw->y0 + sw->ht; y++) {
+		for (x = scrollbar_x; x < sw->x0 + sw->wd; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_848484;
+		}
+	}
+	max_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	if (sw->count <= vis) {
+		thumb_h = sw->ht;
+		thumb_y = sw->y0;
+	} else {
+		track_h = sw->ht;
+		thumb_h = (track_h * vis) / sw->count;
+		if (thumb_h < 8) thumb_h = 8;
+		thumb_y = sw->y0 + ((track_h - thumb_h) * sw->scroll_top) / max_top;
+	}
+	for (y = thumb_y; y < thumb_y + thumb_h && y < sw->y0 + sw->ht; y++) {
+		for (x = scrollbar_x + 1; x < sw->x0 + sw->wd - 1; x++) {
+			sht->buf[x + y * sht->bxsize] = COL8_FFFFFF;
+		}
+	}
+	sheet_refresh(sht, scrollbar_x, sw->y0, sw->x0 + sw->wd, sw->y0 + sw->ht);
+	bench_leave(BENCH_SCROLLWIN);
+}
+
 static void scrollwin_newline(struct SCROLLWIN *sw)
 {
 	int idx = sw->head;
+	int prev_count = sw->count;
+	int prev_scroll_top = sw->scroll_top;
 	sw->lines[idx].len = 0;
 	sw->head = (sw->head + 1) % SCROLL_MAX_LINES;
 	if (sw->count < SCROLL_MAX_LINES) {
@@ -2663,6 +2727,17 @@ static void scrollwin_newline(struct SCROLLWIN *sw)
 		int vis = scrollwin_visible_lines(sw);
 		sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
 	}
+	/* work6 Phase 5: scroll_top 이 안 바뀐 (= 화면이 shift 되지 않은) 경우엔
+	 * 새 line 의 영역만 비우고 scrollbar 만 갱신. 그렇지 않으면 viewport 가
+	 * 위로 시프트되어 모든 line 다시 그려야 하므로 full redraw fallback. */
+	if (sw->scroll_top == prev_scroll_top) {
+		int vis_idx = sw->count - 1 - sw->scroll_top;
+		if (vis_idx >= 0 && vis_idx < scrollwin_visible_lines(sw)) {
+			scrollwin_redraw_line(sw, vis_idx);
+			if (sw->count != prev_count) scrollwin_redraw_scrollbar(sw);
+			return;
+		}
+	}
 	scrollwin_redraw(sw);
 }
 
@@ -2671,6 +2746,7 @@ void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
 	struct SCROLLLINE *ln;
 	int max_chars = scrollwin_text_cols(sw);
 	struct TASK *task = task_now();
+	int prev_scroll_top, prev_count, vis_idx;
 	if (task != 0) {
 		sw->langmode = task->langmode;
 	}
@@ -2694,6 +2770,8 @@ void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
 		scrollwin_newline(sw);
 		ln = scrollwin_cur_line(sw);
 	}
+	prev_scroll_top = sw->scroll_top;
+	prev_count = sw->count;
 	ln->text[ln->len] = (unsigned char) chr;
 	ln->color[ln->len] = (unsigned char) fc;
 	ln->len++;
@@ -2701,6 +2779,16 @@ void scrollwin_putc(struct SCROLLWIN *sw, int chr, int fc)
 	if (sw->auto_follow) {
 		int vis = scrollwin_visible_lines(sw);
 		sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
+	}
+	/* work6 Phase 5: scroll 변동 없는 char append 는 그 line 만 redraw.
+	 * dir × 10 같은 텍스트 출력 dominant 시나리오에서 가장 큰 절감. */
+	if (sw->scroll_top == prev_scroll_top) {
+		vis_idx = (sw->count - 1) - sw->scroll_top;
+		if (vis_idx >= 0 && vis_idx < scrollwin_visible_lines(sw)) {
+			scrollwin_redraw_line(sw, vis_idx);
+			if (sw->count != prev_count) scrollwin_redraw_scrollbar(sw);
+			return;
+		}
 	}
 	scrollwin_redraw(sw);
 }
@@ -2715,12 +2803,22 @@ void scrollwin_puts(struct SCROLLWIN *sw, char *s, int c)
 void scrollwin_backspace(struct SCROLLWIN *sw)
 {
 	struct SCROLLLINE *ln = scrollwin_cur_line(sw);
+	int prev_scroll_top, vis_idx;
 	if (ln->len > 0) {
+		prev_scroll_top = sw->scroll_top;
 		ln->len--;
 		sw->cx = ln->len;
 		if (sw->auto_follow) {
 			int vis = scrollwin_visible_lines(sw);
 			sw->scroll_top = (sw->count > vis) ? (sw->count - vis) : 0;
+		}
+		/* work6 Phase 5: scroll 변동 없는 backspace 는 cursor line 만 redraw. */
+		if (sw->scroll_top == prev_scroll_top) {
+			vis_idx = (sw->count - 1) - sw->scroll_top;
+			if (vis_idx >= 0 && vis_idx < scrollwin_visible_lines(sw)) {
+				scrollwin_redraw_line(sw, vis_idx);
+				return;
+			}
 		}
 		scrollwin_redraw(sw);
 	}
