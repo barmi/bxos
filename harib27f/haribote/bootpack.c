@@ -482,24 +482,6 @@ void taskbar_redraw_clock_only(void)
 	bench_leave(BENCH_TASKBAR);
 }
 
-/* Start 버튼 hover/press 변동 시. 좌측 60×24 영역만 sheet_refresh. */
-void taskbar_redraw_start_only(int start_hover, int start_pressed)
-{
-	int scrnx, scrny;
-	int sy0, sy1;
-	if (g_sht_back == 0 || g_buf_back == 0) return;
-	bench_enter(BENCH_TASKBAR);
-	g_taskbar_start_hover = start_hover;
-	g_taskbar_start_pressed = start_pressed;
-	scrnx = g_sht_back->bxsize;
-	scrny = g_sht_back->bysize;
-	sy0 = scrny - TASKBAR_START_Y_PAD_TOP;
-	sy1 = scrny - TASKBAR_START_Y_PAD_BOT + 1;
-	taskbar_redraw((char *) g_buf_back, scrnx, scrny, start_hover, start_pressed);
-	sheet_refresh(g_sht_back, 0, sy0, TASKBAR_START_X1 + 2, sy1);
-	bench_leave(BENCH_TASKBAR);
-}
-
 int taskbar_winlist_hit(int mx, int my)
 {
 	int i;
@@ -1118,11 +1100,11 @@ void HariMain(void)
 				sheet_slide(sht, new_wx, new_wy);
 				new_wx = 0x7fffffff;
 			} else {
-				/* work6 Phase 4: idle 진입 직전 누적 dirty rect flush.
-				 * Phase 5 의 부분 redraw 가 sheet_dirty_add 만 호출하고
-				 * flush 를 미루면 여기서 일괄 처리. 호환 mode 에서는 dirty 가
-				 * 거의 비어 있어 no-op. */
-				sheet_dirty_flush_all(shtctl);
+				/* work6 마무리: idle dirty flush 호출 제거. Phase 5 의 부분
+				 * redraw 는 결국 dirty rect API 안 쓰고 직접 sheet_refresh 좁힘
+				 * 방식 사용 → idle path 의 256-sheet 순회는 효과 0. dirty
+				 * 모델은 syscall 핸들러 (api_invalidate_rect/dirty_flush) 가
+				 * 호출 즉시 자체 flush 하므로 idle 보조 flush 불필요. */
 				task_sleep(task_a);
 				io_sti();
 			}

@@ -26,10 +26,18 @@
 #define CELL        12              /* cell size in pixels */
 #define FX0         8               /* field origin x (in window) */
 #define FY0         30              /* field origin y (in window) */
-#define WIN_W       (FX0 + FW * CELL + 70)   /* = 198 */
-#define WIN_H       (FY0 + FH * CELL + 12)   /* = 282 */
+#define BOARD_W     (FW * CELL)
+#define BOARD_H     (FH * CELL)
+#define WIN_W       (FX0 + BOARD_W + 70)     /* = 198 */
+#define WIN_H       (FY0 + BOARD_H + 12)     /* = 282 */
 
 static unsigned char field[FH][FW];
+
+/* work6 마무리: line-clear 후 보드 전체 redraw 시 cell × 200 boxfilwin 대신
+ * 사용자 buffer 에 직접 채우고 api_blit_rect 1회로 옮김 (tetris_t 측정 결과
+ * 적용). piece 움직임 (cell 4개 erase + 4개 draw) 은 boxfilwin 그대로 — 작은
+ * rect 4~8개를 매 frame 28 KB memcpy 로 바꾸면 오히려 회귀. */
+static unsigned char board_buf[BOARD_W * BOARD_H];
 
 /* 7 pieces × 4 rotations × 4 cells × (dx,dy) */
 static const signed char pieces[7][4][4][2] = {
@@ -127,17 +135,36 @@ static void draw_piece(int win, int type, int rot, int x, int y, int col)
     }
 }
 
+/* board_buf 안의 한 cell 영역에 색 + (col != 0 일 때) 검정 테두리 채움. */
+static void board_buf_cell(int cx, int cy, int col)
+{
+    int x0 = cx * CELL, y0 = cy * CELL;
+    int x, y;
+    unsigned char c = (unsigned char) col;
+    for (y = 0; y < CELL; y++) {
+        unsigned char *row = board_buf + (y0 + y) * BOARD_W + x0;
+        int border_y = (col != 0) && (y == 0 || y == CELL - 1);
+        for (x = 0; x < CELL; x++) {
+            int border_x = (col != 0) && (x == 0 || x == CELL - 1);
+            row[x] = (border_y || border_x) ? 0 : c;
+        }
+    }
+}
+
+/* line-clear 후 보드 전체 redraw — api_blit_rect 1회로 처리.
+ * deferred (win | 1) 로 호출 → 이후 piece 그리기 + refresh_field 한 번이 묶음. */
 static void redraw_field(int win)
 {
     int x, y;
     for (y = 0; y < FH; y++)
         for (x = 0; x < FW; x++)
-            draw_cell(win, x, y, field[y][x]);
+            board_buf_cell(x, y, field[y][x]);
+    api_blit_rect(win | 1, board_buf, BOARD_W, BOARD_H, FX0, FY0);
 }
 
 static void refresh_field(int win)
 {
-    api_refreshwin(win, FX0, FY0, FX0 + FW * CELL, FY0 + FH * CELL);
+    api_refreshwin(win, FX0, FY0, FX0 + BOARD_W, FY0 + BOARD_H);
 }
 
 static int clear_lines(void)

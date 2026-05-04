@@ -696,7 +696,6 @@ void taskbar_full_redraw(int start_hover, int start_pressed);
  * 빠름), sheet_refresh rect 만 좁혀 blit 비용 절감. 시계 tick 같은 high-freq
  * hot path 에서 효과적. */
 void taskbar_redraw_clock_only(void);
-void taskbar_redraw_start_only(int start_hover, int start_pressed);
 void taskbar_mark_dirty(void);
 void alt_tab_cycle(int prev);
 int taskbar_winlist_hit(int mx, int my);

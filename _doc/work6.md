@@ -448,6 +448,47 @@
   - lines / evtest 회귀 없음.
 - ☐ S4 가 Phase 6 대비 -50% 이상. S1/S2/S3/S5 회귀 0건.
 
+### work6 종료 정리 (Phase 8 마무리, 2026-05-04)
+
+Phase 1~7 의 측정값을 다시 보면서 **실제 효과 없이 오버헤드만 있는 부분** 정리:
+
+#### 적용된 변경 (유지) — 측정으로 효과 확인됨
+
+| Phase | 변경 | 효과 |
+|---|---|---|
+| 2 | `memset`/`memcpy` rep stosb/movsb | 모든 hot path 누적 효과 |
+| 2 | `boxfill8` row memset | P1→P3 누적 -23% |
+| 2 | `sheet_refreshsub` run-length memcpy | avg -34~-42% |
+| 2 | `putfonts8_asc_ascii` ascii fast path | langmode==0 위임 |
+| 3 | `sheet_refreshmap` unified memset | S1 -74% |
+| 3 | `putfont8` 256-mask lookup | avg -27~-38% (모든 시나리오) |
+| 5 | `scrollwin_redraw_line` + scrollbar 분리 | S2 scrollwin avg 1.4 M → 70 K (-95%) |
+| 5 | `sheet_slide` same-coord skip | mouse hot path |
+| 5 | `taskbar_redraw_clock_only` | clock tick 시 영역 ~85% 감소 |
+| 6 | `api_blit_rect` (edx 44) | tetris_t / tetris 의 board redraw 에 사용 |
+| 7 | settings sidebar/panel/status 분리 + dirty bitmask | 사용자 체감 응답성 |
+| 7 | explorer `on_mouse_move` hover-skip | mouse 가 윈도우 위 지나갈 때 redraw 0 |
+| 7 (마무리) | tetris.c 에 board_buf + api_blit_rect | line-clear 후 redraw 의 cell × 200 boxfilwin → 1 blit_rect |
+
+#### 되돌린 / 제거한 변경 — 효과 없이 오버헤드만 발생
+
+| 항목 | 진단 | 처리 |
+|---|---|---|
+| HariMain idle 의 `sheet_dirty_flush_all(shtctl)` 호출 | dirty rect 호출처가 syscall 핸들러뿐이고 syscall 자체가 즉시 자체 flush — idle 보조 flush 는 매번 호출되지만 256-sheet 순회만 하고 work 0. P3→P4 의 5~17% 회귀의 한 원인. | **호출 제거** ([bootpack.c HariMain](../harib27f/haribote/bootpack.c)). `sheet_dirty_flush_all` 함수 자체는 향후 사용 가능성 위해 유지. |
+| `taskbar_redraw_start_only(hover, pressed)` | 정의만 있고 호출처 0 (Phase 5 에 compat helper 표기). | **함수 제거** — bootpack.c 정의 + bootpack.h 선언 모두. hover 변동 시 부분 redraw 가 정말 필요하면 work7 에서 추가. |
+
+#### 유지하되 사용처 0 (ABI 약속 / 미래 polish 여지)
+
+| 항목 | 사용처 | 결정 |
+|---|---|---|
+| `api_text_run` (edx 45) | 0 (어떤 앱도 사용 안 함) | ABI 잠금된 syscall — work7 에서 explorer 라벨 / settings 라벨 / 콘솔이 도입 검토 |
+| `api_invalidate_rect` (edx 46) / `api_dirty_flush` (edx 47) | tetris_t 의 `BENCH_MODE = 1` 분기에만 (default = 2 이라 실제 빌드는 0 호출) | ABI 잠금 — disjoint 영역 다수 redraw 워크로드에 적합. 그런 워크로드 (예: explorer row update) polish 는 work7. |
+| `sheet_dirty_*` 인프라 + SHEET 의 `dirty_count` + `dirty_rect[4][4]` (8 KB) | 위 syscall 의 커널 구현만 | 메모리 8 KB 추가는 그대로. ABI 일관성 유지. |
+
+#### tetris_t.c 정리
+
+`BENCH_MODE` 매크로 3-mode (0=refreshwin / 1=invalidate+flush / 2=blit_rect) 그대로 유지. **벤치 비교용 학술 가치** 가 있음 (P5 → P6 → P7 측정 비교의 근거). default = 2 (가장 빠른 경로).
+
 ### Phase 8 — 회귀 검증 / 측정 보고 / 문서 — ☑ 문서 완료, QEMU smoke 대기 (2026-05-04)
 - ☐ 전체 QEMU smoke (work5 Phase 8 의 모든 항목 + work6 측정 시나리오 5개).
 - ☑ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 `bench` 명령 / 새 syscall 효과 단락 추가.
