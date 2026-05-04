@@ -448,15 +448,15 @@
   - lines / evtest 회귀 없음.
 - ☐ S4 가 Phase 6 대비 -50% 이상. S1/S2/S3/S5 회귀 0건.
 
-### Phase 8 — 회귀 검증 / 측정 보고 / 문서 (1일)
+### Phase 8 — 회귀 검증 / 측정 보고 / 문서 — ☑ 문서 완료, QEMU smoke 대기 (2026-05-04)
 - ☐ 전체 QEMU smoke (work5 Phase 8 의 모든 항목 + work6 측정 시나리오 5개).
-- ☐ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 `bench` 명령 / 새 syscall 효과 단락.
-- ☐ [README.utf8.md](../README.utf8.md) 에 "성능 / 측정" 한 단락.
-- ☐ [SETUP-MAC.md](../SETUP-MAC.md) 에 `bench` 사용법.
-- ☐ [he2/README.md](../he2/README.md) edx 1~47 갱신, deprecation 메모.
-- ☐ [he2/docs/HE2-FORMAT.md](../he2/docs/HE2-FORMAT.md) 신규 syscall 표.
-- ☐ 신규 [_doc/work6-bench.md](work6-bench.md): baseline / phase 별 측정값 + S1~S5 정의.
-- ☐ work6.md / work6-handoff.md 체크박스 갱신.
+- ☑ [BXOS-COMMANDS.md](../BXOS-COMMANDS.md) 에 `bench` 명령 / 새 syscall 효과 단락 추가.
+- ☑ [README.utf8.md](../README.utf8.md) 에 "성능 / 측정 (work6)" 단락 추가.
+- ☑ [SETUP-MAC.md](../SETUP-MAC.md) 에 `bench` 사용법 단락 (2.7) 추가.
+- ☑ [he2/README.md](../he2/README.md) edx 1~47 갱신 + `api_point` deprecation 메모.
+- ☑ [he2/docs/HE2-FORMAT.md](../he2/docs/HE2-FORMAT.md) syscall 표 1~47 갱신 (Phase 6 작업 시 완료).
+- ☑ [_doc/work6-bench.md](work6-bench.md) — baseline (P1 manual) + Phase 1~7 측정값 + S1~S5 정의 + 분석.
+- ☑ work6.md / work6-handoff.md 체크박스 갱신.
 
 ## 4. 마일스톤 / 검증 시나리오
 

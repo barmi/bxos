@@ -8,11 +8,13 @@
   C 라이브러리 (`libbxos`). 어셈블리 파일은 진입점 `crt0.S` 단 하나.
   기존 27개(edx 1~27) 에 work1~4 에서 file write/delete (28~30),
   cwd (31), 파일관리 (32~39), 윈도우 이벤트/리사이즈 (40~43) 를 추가해
-  현재 edx 1~43 을 사용한다. **work5 는 신규 사용자 syscall 0개** —
-  Start Menu / taskbar / 시계 / Run / About 은 모두 커널 내부 widget 이고,
-  Settings 앱(`SETTINGS.HE2`)은 기존 file syscall(28~30, 32~39)만 써서
-  `/SYSTEM/SETTINGS.CFG` 를 read/write 한다. 자세한 표는
-  [`docs/HE2-FORMAT.md`](docs/HE2-FORMAT.md#syscall-디스패치-edx).
+  현재 edx 1~47 을 사용한다. work5 는 신규 사용자 syscall 0개. **work6**
+  에서 GUI 효율화용 4개 추가 (44 `api_blit_rect`, 45 `api_text_run`,
+  46 `api_invalidate_rect`, 47 `api_dirty_flush`) — `api_refreshwin` 반복
+  호출의 syscall 빈도를 줄이는 batch / dirty rect 모델. 동시에
+  `api_point` (11) 는 deprecated 표기 (픽셀당 syscall + refresh 라 매우 느림 —
+  `api_blit_rect` 또는 `api_invalidate_rect`+`api_dirty_flush` 권장).
+  자세한 표는 [`docs/HE2-FORMAT.md`](docs/HE2-FORMAT.md#syscall-디스패치-edx).
 * **빌드**: i686-elf-gcc + ld + Python — wine, nask, obj2bim, bim2hrb 불필요.
 * **호환성**: 앱 소스(`harib27f/<name>/<name>.c`) 는 한 줄도 수정하지 않고
   그대로 재컴파일된다 (`#include "apilib.h"` 가 그대로 동작).
@@ -84,7 +86,7 @@ he2_add_app(myapp
 | 헤더 안의 magic 위치| 가운데 (재배치 위험)                 | 맨 앞 (POSIX `file` 와 호환)     |
 | Entry              | 항상 `0x1B` (E9 JMP rel32 트릭)      | 명시적 `entry_off` 필드          |
 | 진입 트램폴린      | 27 NASM 파일 + obj2bim/bim2hrb       | `crt0.S` 1 개                    |
-| Syscall 래퍼       | 27개 NASM 파일 + golib00.exe         | `syscall.c` 1 개 (inline asm, edx 1~43) |
+| Syscall 래퍼       | 27개 NASM 파일 + golib00.exe         | `syscall.c` 1 개 (inline asm, edx 1~47) |
 | `[CS:0x20]` 같은 트릭| 있음 (`api_initmalloc` 의 malloc 영역)| 없음. 모두 링커 심볼 + 헤더 필드 |
 | 빌드 의존성        | Wine(`obj2bim.exe`,`bim2hrb.exe`)    | i686-elf-gcc + GNU ld + python3  |
 | 압축               | OSASKCMP                             | (현재 단계) 비압축               |

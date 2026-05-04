@@ -58,6 +58,12 @@ cmake --build build/cmake     # haribote.img(FDD, 1.44MB) + data.img(HDD, 32MB)
 * `Alt+Tab` / `Alt+Shift+Tab` 으로 visible 윈도우 순환. taskbar 가운데 버튼 클릭으로도 focus 이동.
 * 메뉴 트리는 `/SYSTEM/MENU.CFG` 에 INI-like 로 선언 — 자세한 형식은 [`_doc/menu-config.md`](_doc/menu-config.md).
 
+### 성능 / 측정 (work6)
+
+work6 에서 GUI hot path 의 RDTSC 사이클 측정 인프라가 추가됐습니다. 콘솔에서 `bench scenario` 한 명령으로 5개 표준 시나리오 (Start menu / `dir` / explorer / tetris / mouse) 를 자동 측정하고 결과를 `/SYSTEM/BENCH.LOG` 에 저장합니다. 호스트에서 `bxos_fat.py cp` 로 추출해 phase 별 비교에 사용합니다.
+
+또한 4개 신규 syscall 이 추가됐습니다 — `api_blit_rect` (raw rect blit), `api_text_run` (ASCII fast path), `api_invalidate_rect` + `api_dirty_flush` (dirty rect batch). 자세한 사용법과 phase 별 성능 결과는 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#성능-측정--bench-work6) / [`_doc/work6-bench.md`](_doc/work6-bench.md) / [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md) 참고.
+
 ### 한글 표시 (EUC-KR / UTF-8)
 
 부팅 후 `data.img` 의 `HANGUL.FNT` 폰트가 ATA 경로로 로드되어 0x0fe0 번지에 등록되고, 한글 출력을 지원합니다.

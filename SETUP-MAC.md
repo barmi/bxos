@@ -240,6 +240,25 @@ fsck_msdos -n build/cmake/data.img
 
 추가된 사용자 syscall (edx 32~43) 과 event ABI 는 [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md) 의 syscall 표에 정리되어 있습니다.
 
+### 2.7 GUI 성능 측정 (`bench`, work6)
+
+work6 에서 GUI hot path 의 RDTSC 사이클 측정 인프라가 추가됐습니다. 부팅 후 콘솔에서 한 명령으로 5개 시나리오 자동 측정 후 결과를 호스트로 추출할 수 있습니다.
+
+```text
+QEMU 안 (콘솔):
+> bench scenario        # S1~S5 자동 실행 + /SYSTEM/BENCH.LOG 자동 저장
+> shutdown              # writeback flush
+```
+
+```bash
+# 호스트
+python3 tools/modern/bxos_fat.py cp \
+    build/cmake/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log
+cat /tmp/bench.log
+```
+
+수동 측정 / 단일 카운터 토글 / 마크 / dump 등 자세한 사용법은 [`BXOS-COMMANDS.md`](BXOS-COMMANDS.md#성능-측정--bench-work6) 참고. Phase 별 누적 결과와 분석은 [`_doc/work6-bench.md`](_doc/work6-bench.md). work6 에서 추가된 신규 syscall (`api_blit_rect` 등 edx 44~47) 의 ABI 는 [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md).
+
 ## 3. 알려진 이슈 / 수정 이력
 
 CMake 빌드는 내부적으로 NASM 입력 변환 / HRB 헤더 / 폰트 / FAT 이미지 도구를 [`tools/modern/`](tools/modern/) 의 Python 스크립트로 호출합니다. 그 과정에서 옛 코드 / 옛 빌드체인과 차이가 났던 부분들:

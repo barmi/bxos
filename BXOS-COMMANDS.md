@@ -36,6 +36,7 @@ work5 부터는 부팅 직후 데스크톱이 비어 있고 화면 하단에 **S
 | `langmode 2` | 일본어 Shift-JIS 계열 모드로 전환합니다. |
 | `langmode 3` | 한국어 EUC-KR 모드로 전환합니다. |
 | `langmode 4` | 한국어 UTF-8 모드로 전환합니다. |
+| `bench` | GUI 성능 측정 (work6 신규). 자세한 사용법은 ["성능 측정 / bench"](#성능-측정--bench-work6) 단락 참고. |
 
 ### 경로 예시
 
@@ -268,3 +269,75 @@ python3 tools/modern/bxos_fat.py ls build/cmake/data.img:/SYSTEM
 python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/MENU.CFG /tmp/m.cfg && cat /tmp/m.cfg
 python3 tools/modern/bxos_fat.py cp build/cmake/data.img:/SYSTEM/SETTINGS.CFG /tmp/s.cfg && cat /tmp/s.cfg
 ```
+
+## 성능 측정 / bench (work6)
+
+work6 에서 GUI hot path 의 RDTSC 사이클 수와 PIT tick 을 측정하는 인프라가 추가됐습니다. 9개 핵심 함수 (`refreshmap`, `refreshsub`, `sheet_slide`, `boxfill8`, `putfont8`, `putfonts8_asc`, `taskbar`, `scrollwin`, `hrb_api`) 를 카운팅하고, 결과를 `/SYSTEM/BENCH.LOG` 텍스트 파일로 추출합니다.
+
+### 콘솔 명령
+
+| subcmd | 동작 |
+|---|---|
+| `bench` | 현재 상태 (on/off, pit_tick, log size). |
+| `bench on` / `bench off` | 측정 토글. off 일 때 hot path 추가 비용 0 (early return). |
+| `bench reset` | 카운터 0 초기화 (log 버퍼는 보존). |
+| `bench dump` | 9개 카운터 표를 debug 창 + RAM log 버퍼에 출력. |
+| `bench mark <text>` | `[bench mark] tick=N <text>` → debug + log. 시나리오 시작/끝 표시용. |
+| `bench save` | log 버퍼를 `/SYSTEM/BENCH.LOG` 에 truncate + write. |
+| `bench logclear` | log 버퍼 비움. |
+| **`bench scenario`** | **5개 측정 시나리오 (S1~S5) 자동 실행 + 저장까지 한 번에**. |
+
+### `bench scenario` 자동 측정 (권장)
+
+수동 입력 없이 한 명령으로 모든 시나리오 측정 + 결과 저장.
+
+```text
+QEMU 안:
+> bench scenario
+  ↓ 약 3.8 초 안에:
+  s1 (start menu × 10)
+  s2 (dir × 10)
+  s3 (explorer launch + 600 ms wait)
+  s4 (tetris_t.he2 launch + 1.5 s wait)
+  s5 (sheet_slide × 1000)
+  → /SYSTEM/BENCH.LOG 자동 저장
+> shutdown    ← QEMU 정상 종료 (writeback flush)
+```
+
+호스트에서 결과 추출:
+
+```bash
+python3 tools/modern/bxos_fat.py cp \
+    build/cmake/data.img:/SYSTEM/BENCH.LOG /tmp/bench.log
+cat /tmp/bench.log     ← mark + dump 텍스트 그대로
+```
+
+각 시나리오 정의와 phase 별 누적 결과는 [`_doc/work6-bench.md`](_doc/work6-bench.md) 참고.
+
+### 수동 측정
+
+특정 인터랙션 (사용자 마우스 이동, 실제 tetris 플레이 등) 의 비용을 측정하려면:
+
+```text
+> bench on
+> bench logclear         (선택)
+> bench reset
+> bench mark s-start
+... 측정 대상 인터랙션 ...
+> bench mark s-end
+> bench dump
+> bench save
+```
+
+### work6 에서 추가된 신규 syscall (앱 작성용)
+
+GUI 효율화를 위한 4개 syscall — 기존 `api_refreshwin` 반복 호출보다 효율적인 batch 경로. 자세한 ABI 는 [`he2/docs/HE2-FORMAT.md`](he2/docs/HE2-FORMAT.md) 참고.
+
+| edx | 이름 | 용도 |
+|---|---|---|
+| 44 | `api_blit_rect(win, src, sw, sh, dx, dy)` | 사용자 buffer 의 sw×sh 영역을 윈도우 (dx,dy) 에 raw row-blit. 보드/이미지/오프스크린 버퍼링에 적합. |
+| 45 | `api_text_run(win, x, y, col, text, len)` | ASCII 전용 fast path 으로 길이 텍스트 1회 출력 + dirty 1개. |
+| 46 | `api_invalidate_rect(win, x0, y0, x1, y1)` | 그리지 않고 dirty rect 만 누적 (sheet 당 max 4개, 5번째는 외접 합집합). |
+| 47 | `api_dirty_flush(win)` | 누적된 dirty rect 를 즉시 sheet_refresh 로 한 번에 갱신. |
+
+`api_point` (edx=11) 은 deprecated — 픽셀당 syscall + refresh 라 매우 비효율. 신규 코드는 위 syscall 사용 권장.
